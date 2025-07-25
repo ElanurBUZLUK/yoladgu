@@ -17,6 +17,8 @@ class User(Base):
 
     solutions = relationship("Solution", back_populates="user")
     study_plans = relationship("StudyPlan", back_populates="user")
+    responses = relationship("StudentResponse", back_populates="student")
+    profile = relationship("StudentProfile", uselist=False, back_populates="student")
 
 class Subject(Base):
     __tablename__ = "subjects"
@@ -46,6 +48,7 @@ class Question(Base):
 
     topic = relationship("Topic", back_populates="questions")
     solutions = relationship("Solution", back_populates="question")
+    responses = relationship("StudentResponse", back_populates="question")
 
 class Solution(Base):
     __tablename__ = "solutions"
@@ -82,3 +85,31 @@ class PlanItem(Base):
 
     plan = relationship("StudyPlan", back_populates="items")
     # subject ve topic ilişkileri istersen eklenebilir 
+
+class StudentResponse(Base):
+    __tablename__ = "student_responses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"))
+    question_id = Column(Integer, ForeignKey("questions.id"))
+    answer = Column(String, nullable=False)
+    is_correct = Column(Boolean, nullable=False)
+    response_time = Column(Float)
+    confidence_level = Column(Integer)
+    feedback = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    student = relationship("User", back_populates="responses")
+    question = relationship("Question", back_populates="responses")
+
+class StudentProfile(Base):
+    __tablename__ = "student_profiles"
+
+    student_id = Column(Integer, ForeignKey("users.id"), primary_key=True, index=True)
+    level = Column(Float)
+    min_level = Column(Float)
+    max_level = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    student = relationship("User", back_populates="profile") 
