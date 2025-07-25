@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "huggingface": {
+      "command": "npx",
+      "args": ["-y", "huggingface-mcp-server", "--transport", "stdio"],
+      "env": {}
+    }
+  }
+} 
