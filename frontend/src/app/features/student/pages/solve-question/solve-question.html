@@ -1,0 +1,17 @@
+<div class="solve-question-container">
+  <div *ngIf="loading">Yükleniyor...</div>
+  <ng-container *ngIf="!loading && question">
+    <div class="question-text">{{ question.text }}</div>
+    <div class="options">
+      <button *ngFor="let option of question.options"
+              class="option-btn"
+              [ngClass]="{ 'active': selectedOption === option }"
+              (click)="selectOption(option)">
+        {{ option }}
+      </button>
+    </div>
+    <button class="submit-btn" [disabled]="!selectedOption || showNext" (click)="submitAnswer()">Cevapla</button>
+    <div class="feedback" *ngIf="feedback">{{ feedback }}</div>
+    <button class="next-btn" *ngIf="showNext" (click)="loadNextQuestion()">Sıradaki Soru</button>
+  </ng-container>
+</div>
