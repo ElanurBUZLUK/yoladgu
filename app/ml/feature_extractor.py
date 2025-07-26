@@ -54,25 +54,109 @@ class UserFeatureExtractor:
         return correct / len(recent_solutions)
 
     def _get_avg_response_time(self, user_id: int) -> float:
-        # TODO: SQL query for average response time
-        return 4200.0
+        # Kullanıcının ortalama cevap süresi
+        from app.db.models import StudentResponse
+        from sqlalchemy import func
+        
+        result = (
+            self.db.query(func.avg(StudentResponse.response_time))
+            .filter(StudentResponse.student_id == user_id)
+            .filter(StudentResponse.response_time.isnot(None))
+            .scalar()
+        )
+        return float(result) if result else 0.0
 
     def _get_topic_mastery(self, user_id: int, topic: str) -> float:
-        # TODO: SQL query for topic-specific success rate
-        return 0.6
+        # Belirli bir konudaki başarı oranı
+        from app.db.models import StudentResponse, Question, Subject
+        
+        result = (
+            self.db.query(StudentResponse)
+            .join(Question, StudentResponse.question_id == Question.id)
+            .join(Subject, Question.subject_id == Subject.id)
+            .filter(StudentResponse.student_id == user_id)
+            .filter(Subject.name.ilike(f"%{topic}%"))
+            .all()
+        )
+        
+        if not result:
+            return 0.0
+        
+        correct = sum(1 for r in result if r.is_correct)
+        return correct / len(result)
 
     def _get_consecutive_correct(self, user_id: int) -> int:
-        # TODO: SQL query for consecutive correct answers
-        return 3
+        # Ardışık doğru cevap sayısı
+        from app.db.models import StudentResponse
+        
+        responses = (
+            self.db.query(StudentResponse)
+            .filter(StudentResponse.student_id == user_id)
+            .order_by(StudentResponse.created_at.desc())
+            .all()
+        )
+        
+        consecutive = 0
+        for response in responses:
+            if response.is_correct:
+                consecutive += 1
+            else:
+                break
+        
+        return consecutive
 
     def _get_session_count(self, user_id: int) -> int:
-        # TODO: SQL query for session question count
-        return 12
+        # Mevcut oturumdaki soru sayısı (son 30 dakika)
+        from app.db.models import StudentResponse
+        from datetime import datetime, timedelta
+        
+        thirty_minutes_ago = datetime.utcnow() - timedelta(minutes=30)
+        
+        count = (
+            self.db.query(StudentResponse)
+            .filter(StudentResponse.student_id == user_id)
+            .filter(StudentResponse.created_at >= thirty_minutes_ago)
+            .count()
+        )
+        
+        return count
 
     def _get_time_since_last(self, user_id: int) -> float:
-        # TODO: SQL query for time since last question
-        return 1800.0
+        # Son sorudan bu yana geçen süre (saniye)
+        from app.db.models import StudentResponse
+        from datetime import datetime
+        
+        last_response = (
+            self.db.query(StudentResponse)
+            .filter(StudentResponse.student_id == user_id)
+            .order_by(StudentResponse.created_at.desc())
+            .first()
+        )
+        
+        if not last_response:
+            return 0.0
+        
+        time_diff = datetime.utcnow() - last_response.created_at
+        return time_diff.total_seconds()
 
     def _get_difficulty_trend(self, user_id: int) -> float:
-        # TODO: SQL query for difficulty trend
-        return 0.1 
+        # Zorluk seviyesi trendi (son 10 soruda)
+        from app.db.models import StudentResponse, Question
+        
+        recent_responses = (
+            self.db.query(StudentResponse, Question.difficulty_level)
+            .join(Question, StudentResponse.question_id == Question.id)
+            .filter(StudentResponse.student_id == user_id)
+            .order_by(StudentResponse.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        
+        if len(recent_responses) < 2:
+            return 0.0
+        
+        # Son 5 soru ile önceki 5 sorunun ortalama zorluk farkı
+        recent_avg = sum(r[1] for r in recent_responses[:5]) / 5
+        older_avg = sum(r[1] for r in recent_responses[5:]) / 5
+        
+        return recent_avg - older_avg 

@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 class SubjectBase(BaseModel):
     name: str
@@ -13,9 +13,9 @@ class SubjectUpdate(BaseModel):
     description: Optional[str] = None
 
 class SubjectInDB(SubjectBase):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
-    class Config:
-        orm_mode = True
 
 class SubjectResponse(SubjectInDB):
     pass 

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 class StudyPlanBase(BaseModel):
     name: str
@@ -16,10 +16,10 @@ class StudyPlanUpdate(BaseModel):
     target_success: Optional[float] = None
 
 class StudyPlanInDB(StudyPlanBase):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     user_id: int
-    class Config:
-        orm_mode = True
 
 class StudyPlanResponse(StudyPlanInDB):
     pass 

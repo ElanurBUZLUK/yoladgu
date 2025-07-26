@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 class SolutionBase(BaseModel):
     question_id: int
@@ -17,10 +17,10 @@ class SolutionUpdate(BaseModel):
     duration: Optional[float] = None
 
 class SolutionInDB(SolutionBase):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     user_id: int
-    class Config:
-        orm_mode = True
 
 class SolutionResponse(SolutionInDB):
     pass 

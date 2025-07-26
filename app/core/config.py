@@ -1,25 +1,27 @@
 from pydantic_settings import BaseSettings
-from pydantic import AnyHttpUrl, validator
+from pydantic import AnyHttpUrl, field_validator, ConfigDict
 from typing import List, Optional
 import os
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+    
     PROJECT_NAME: str = "Question Recommendation System"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
 
-    SECRET_KEY: str
+    SECRET_KEY: str = "your-secret-key-here"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
     # PostgreSQL Configuration
-    POSTGRES_SERVER: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+psycopg2://kullanici:sifre@localhost:5432/veritabani")
+    POSTGRES_SERVER: str = "localhost"
+    POSTGRES_USER: str = "kullanici"
+    POSTGRES_PASSWORD: str = "sifre"
+    POSTGRES_DB: str = "veritabani"
+    DATABASE_URL: str = "postgresql+psycopg2://kullanici:sifre@localhost:5432/veritabani"
 
     # Redis Configuration
     REDIS_HOST: str = "localhost"
@@ -37,23 +39,21 @@ class Settings(BaseSettings):
     RECOMMENDATION_BATCH_SIZE: int = 100
     LEARNING_RATE: float = 0.01
 
-    @validator("DATABASE_URL", pre=True)
-    def assemble_db_connection(cls, v, values):
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def assemble_db_connection(cls, v, info):
         if v:
             return v
-        return f"postgresql://{values['POSTGRES_USER']}:" \
-               f"{values['POSTGRES_PASSWORD']}@" \
-               f"{values['POSTGRES_SERVER']}/" \
-               f"{values['POSTGRES_DB']}"
+        values = info.data
+        return f"postgresql://{values.get('POSTGRES_USER', 'kullanici')}:" \
+               f"{values.get('POSTGRES_PASSWORD', 'sifre')}@" \
+               f"{values.get('POSTGRES_SERVER', 'localhost')}/" \
+               f"{values.get('POSTGRES_DB', 'veritabani')}"
 
     @property
     def redis_url(self) -> str:
         if self.REDIS_PASSWORD:
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
 
 settings = Settings() 

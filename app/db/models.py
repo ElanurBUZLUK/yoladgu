@@ -1,8 +1,14 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, Enum
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
+import enum
 
 Base = declarative_base()
+
+class UserRole(enum.Enum):
+    STUDENT = "student"
+    TEACHER = "teacher"
+    ADMIN = "admin"
 
 class User(Base):
     __tablename__ = "users"
@@ -11,7 +17,7 @@ class User(Base):
     last_name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(String, default="student")  # student, teacher, admin
+    role = Column(Enum(UserRole), default=UserRole.STUDENT)
     grade = Column(String)  # Sınıf bilgisi
     last_login = Column(DateTime, default=datetime.utcnow)
 
@@ -38,6 +44,16 @@ class Topic(Base):
     subject = relationship("Subject", back_populates="topics")
     questions = relationship("Question", back_populates="topic")
 
+class Skill(Base):
+    __tablename__ = "skills"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text)
+    difficulty_level = Column(Integer, default=1)
+    subject_id = Column(Integer, ForeignKey("subjects.id"))
+
+    question_skills = relationship("QuestionSkill", back_populates="skill")
+
 class Question(Base):
     __tablename__ = "questions"
     id = Column(Integer, primary_key=True, index=True)
@@ -49,6 +65,17 @@ class Question(Base):
     topic = relationship("Topic", back_populates="questions")
     solutions = relationship("Solution", back_populates="question")
     responses = relationship("StudentResponse", back_populates="question")
+    question_skills = relationship("QuestionSkill", back_populates="question")
+
+class QuestionSkill(Base):
+    __tablename__ = "question_skills"
+    id = Column(Integer, primary_key=True, index=True)
+    question_id = Column(Integer, ForeignKey("questions.id"))
+    skill_id = Column(Integer, ForeignKey("skills.id"))
+    weight = Column(Float, default=1.0)
+
+    question = relationship("Question", back_populates="question_skills")
+    skill = relationship("Skill", back_populates="question_skills")
 
 class Solution(Base):
     __tablename__ = "solutions"
