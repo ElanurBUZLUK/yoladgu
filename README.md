@@ -106,6 +106,9 @@ ng serve
 
 ### Test Çalıştırma
 ```bash
+# Bağımlılıkları yükle
+pip install -r backend/requirements.txt
+
 # Tüm testleri çalıştır
 pytest tests/ -v
 
@@ -114,6 +117,21 @@ pytest tests/test_api.py -v
 
 # Coverage ile çalıştır
 pytest tests/ --cov=app --cov-report=html
+```
+
+### AI CLI Tool (Hibrit Yaklaşım)
+```bash
+# LLM bağlantısını test et
+python features/ai_cli.py test-connection --provider openai
+
+# Batch işlemleri
+python features/ai_cli.py generate-hint --question "2+2=?" --subject "matematik"
+python features/ai_cli.py ingest-website --url "https://example.com" --subject "matematik" --topic "trigonometri"
+python features/ai_cli.py ingest-csv --file "questions.csv" --subject "matematik"
+
+# Runtime işlemleri
+python features/ai_cli.py generate-adaptive-hint --question "Trigonometri sorusu" --level 3 --correct
+python features/ai_cli.py analyze-difficulty --question "Karmaşık matematik sorusu" --subject "matematik"
 ```
 
 ### Test Kategorileri
@@ -135,6 +153,22 @@ Backend çalıştıktan sonra API dokümantasyonuna erişin:
 - `POST /api/v1/recommendations/` - Soru önerisi
 - `POST /api/v1/responses/` - Cevap kaydetme
 
+### AI Endpoint'leri (Hibrit Yaklaşım)
+#### Batch İşlemleri
+- `POST /api/v1/ai/generate-hint` - Temel soru ipucu üretimi
+- `POST /api/v1/ai/generate-explanation` - Temel soru açıklaması üretimi
+- `POST /api/v1/ai/analyze-question-difficulty` - İlk zorluk analizi
+- `POST /api/v1/ai/ingest-from-website` - Web sitesinden soru içe aktarma
+- `POST /api/v1/ai/ingest-from-csv` - CSV dosyasından soru içe aktarma
+- `POST /api/v1/ai/batch-enrich-questions` - Mevcut soruları toplu zenginleştirme
+
+#### Runtime İşlemleri
+- `POST /api/v1/ai/adaptive-hint` - Öğrenci durumuna göre adaptif ipucu
+- `POST /api/v1/ai/contextual-explanation` - Öğrenci cevabına göre bağlamsal açıklama
+- `POST /api/v1/ai/generate-feedback` - AI geri bildirimi
+- `POST /api/v1/ai/generate-study-recommendation` - Çalışma önerisi
+- `GET /api/v1/ai/llm-status` - LLM servis durumu
+
 ## 🤖 Machine Learning Modelleri
 
 ### River Model
@@ -146,6 +180,19 @@ Backend çalıştıktan sonra API dokümantasyonuna erişin:
 - **Amaç**: Multi-armed bandit ile keşif-sömürü dengesi
 - **Algoritma**: Linear Upper Confidence Bound
 - **Özellikler**: Contextual bandit, confidence intervals
+
+### LLM Integration (Hibrit Yaklaşım)
+- **OpenAI GPT**: Soru ipuçları, açıklamalar ve AI geri bildirimi
+- **HuggingFace**: Alternatif LLM provider desteği
+- **Batch İşlemi**: 
+  - Soru içe aktarma sırasında ön zenginleştirme
+  - İlk zorluk analizi ve temel ipucu/açıklama üretimi
+  - Maliyet optimizasyonu için toplu işlem
+- **Runtime İşlemi**:
+  - Dinamik zorluk ayarı (öğrenci performansına göre)
+  - Adaptif ipucu üretimi (öğrenci durumuna göre)
+  - Bağlamsal açıklama (öğrenci cevabına göre)
+  - Gerçek zamanlı kişiselleştirme
 
 ## 📊 Özellik Çıkarımı
 
@@ -191,6 +238,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 MODEL_CACHE_DIR=./models
 RECOMMENDATION_BATCH_SIZE=100
 LEARNING_RATE=0.01
+
+# LLM API Keys
+OPENAI_API_KEY=your_openai_api_key_here
+HUGGINGFACE_API_TOKEN=your_huggingface_token_here
 ```
 
 ## 🚀 Production Deployment

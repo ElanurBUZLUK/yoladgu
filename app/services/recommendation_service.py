@@ -130,14 +130,18 @@ class RecommendationService:
         self.linucb_bandit.update(question_id, student_features, question_features, reward)
         self._save_model()
 
-    def get_recommendations(self, db: Session, student_id: int, n_recommendations: int = 10) -> List[Dict[str, Any]]:
+    async def get_recommendations(self, db: Session, student_id: int, n_recommendations: int = 10) -> List[Dict[str, Any]]:
+        """Öğrenci için soru önerileri üret (Hibrit yaklaşım)"""
         cache_key = f"recommendations:{student_id}:{self.model_type}"
         cached = self.redis_client.get(cache_key)
         if cached:
             return json.loads(cached.decode('utf-8'))
+        
         student_features = self.get_student_features(db, student_id)
+        student_level = student_features.get('level', 1)
         questions = db.query(Question).filter(Question.is_active == True).all()
         recommendations = []
+        
         if self.model_type == 'linucb':
             candidate_questions = []
             for question in questions:
@@ -147,16 +151,28 @@ class RecommendationService:
                 ).first()
                 if answered:
                     continue
+                
+                # Runtime: Dinamik zorluk ayarı
+                adjusted_difficulty = await self._adjust_question_difficulty_runtime(
+                    question, student_level, student_features
+                )
+                
                 question_features = self.get_question_features(db, question.id)
+                question_features['adjusted_difficulty'] = adjusted_difficulty
                 q_dict = {'id': question.id, **question_features}
                 candidate_questions.append(q_dict)
+            
             if not candidate_questions:
                 return []
+            
             selected_id = self.linucb_bandit.select_question(student_features, candidate_questions)
             selected_question = next(q for q in questions if q.id == selected_id)
+            
             recommendations.append({
                 'question_id': selected_question.id,
                 'score': 1.0,
+                'adjusted_difficulty': adjusted_difficulty,
+                'original_difficulty': selected_question.difficulty_level,
                 'question': {
                     "id": selected_question.id,
                     "content": selected_question.content,
@@ -175,7 +191,6 @@ class RecommendationService:
             })
         else:
             for question in questions:
-                # Öğrencinin daha önce cevapladığı soruları tekrar önerme (isteğe bağlı)
                 answered = db.query(StudentResponse).filter(
                     StudentResponse.student_id == student_id,
                     StudentResponse.question_id == question.id
@@ -183,17 +198,20 @@ class RecommendationService:
                 if answered:
                     continue
 
+                # Runtime: Dinamik zorluk ayarı
+                adjusted_difficulty = await self._adjust_question_difficulty_runtime(
+                    question, student_level, student_features
+                )
+
                 question_features = self.get_question_features(db, question.id)
+                question_features['adjusted_difficulty'] = adjusted_difficulty
                 combined_features = {**student_features, **question_features}
 
-                # predict_one'a gönderilen x'in sadece nümerik ve one-hot encode edilebilir olması lazım
-                # Modelin beklediği formatta özellik seti oluşturmak önemlidir
-                # Bu kısım modelin eğitimine göre daha detaylı ele alınabilir
-                river_score = self.river_model.predict_proba_one(combined_features).get(1, 0.5) # Olasılığı al
+                river_score = self.river_model.predict_proba_one(combined_features).get(1, 0.5)
 
                 # Kural tabanlı ek skorlar
                 student_avg_difficulty = student_features.get('avg_difficulty', 2.5)
-                difficulty_match = 1 - abs(question.difficulty_level - student_avg_difficulty) / 5
+                difficulty_match = 1 - abs(adjusted_difficulty - student_avg_difficulty) / 5
                 skill_match = 0
                 question_skills = db.query(QuestionSkill).filter(
                     QuestionSkill.question_id == question.id
@@ -201,20 +219,21 @@ class RecommendationService:
                 if question_skills:
                     total_weight = sum(qs.weight for qs in question_skills)
                     for qs in question_skills:
-                        skill_mastery = student_features.get(f'skill_{qs.skill_id}_mastery', 0.5) # Bilinmeyen için 0.5 varsayalım
-                        skill_match += (1 - skill_mastery) * qs.weight # Ustalığı düşük olan skilli öner
+                        skill_mastery = student_features.get(f'skill_{qs.skill_id}_mastery', 0.5)
+                        skill_match += (1 - skill_mastery) * qs.weight
                     skill_match /= total_weight if total_weight > 0 else 1
 
                 # Final skor (ağırlıklar ayarlanabilir)
                 final_score = (river_score * 0.4) + (difficulty_match * 0.3) + (skill_match * 0.3)
 
-                # Pydantic modelleri JSON serileştirmesi için uygun değil, bu yüzden elle dict oluşturuyoruz
                 recommendations.append({
                     'question_id': question.id,
                     'score': final_score,
                     'river_score': river_score,
                     'difficulty_match': difficulty_match,
                     'skill_match': skill_match,
+                    'adjusted_difficulty': adjusted_difficulty,
+                    'original_difficulty': question.difficulty_level,
                     'question': {
                         "id": question.id,
                         "content": question.content,
@@ -263,6 +282,102 @@ class RecommendationService:
 
         # Öğrenci özellikleri değiştiği için cache'i temizle
         self.redis_client.delete(f"recommendations:{student_id}")
+
+    async def _adjust_question_difficulty_runtime(self, question, student_level: int, student_features: Dict[str, Any]) -> int:
+        """Runtime'da soru zorluğunu ayarla"""
+        try:
+            from app.services.llm_service import llm_service
+            
+            # Öğrenci performans verilerini hazırla
+            performance_data = {
+                'recent_accuracy': student_features.get('last20_accuracy', 0.5),
+                'avg_response_time': student_features.get('avg_response_time', 0),
+                'weak_topics': student_features.get('weak_topics', []),
+                'strong_topics': student_features.get('strong_topics', [])
+            }
+            
+            # LLM ile dinamik zorluk ayarı
+            adjustment = await llm_service.adjust_difficulty_runtime(
+                question.content,
+                student_level,
+                question.difficulty_level,
+                performance_data
+            )
+            
+            return adjustment.get('adjusted_difficulty', question.difficulty_level)
+            
+        except Exception as e:
+            # Fallback: Basit mantık
+            accuracy = student_features.get('last20_accuracy', 0.5)
+            if accuracy > 0.8 and question.difficulty_level < 5:
+                return question.difficulty_level + 1
+            elif accuracy < 0.4 and question.difficulty_level > 1:
+                return question.difficulty_level - 1
+            else:
+                return question.difficulty_level
+    
+    async def get_adaptive_hint(self, question_id: int, student_id: int, db: Session) -> str:
+        """Öğrenci durumuna göre adaptif ipucu al"""
+        try:
+            from app.services.llm_service import llm_service
+            
+            # Öğrenci ve soru bilgilerini al
+            question = db.query(Question).filter(Question.id == question_id).first()
+            student_features = self.get_student_features(db, student_id)
+            
+            if not question:
+                return "Soru bulunamadı."
+            
+            # Öğrenci durumunu analiz et
+            student_level = student_features.get('level', 1)
+            recent_accuracy = student_features.get('last20_accuracy', 0.5)
+            avg_response_time = student_features.get('avg_response_time', 0)
+            
+            # Öğrenci zorlanıyor mu?
+            student_struggling = recent_accuracy < 0.4 or avg_response_time > 60000  # 60 saniye
+            
+            # Adaptif ipucu üret
+            adaptive_hint = await llm_service.generate_adaptive_hint(
+                question.content,
+                student_level,
+                student_features.get('hints_used', 0),
+                student_struggling
+            )
+            
+            return adaptive_hint
+            
+        except Exception as e:
+            # Fallback: Veritabanındaki hazır ipucu
+            question = db.query(Question).filter(Question.id == question_id).first()
+            return question.hint if question and question.hint else "İpucu bulunamadı."
+    
+    async def get_contextual_explanation(self, question_id: int, student_id: int, 
+                                       student_answer: str, db: Session) -> str:
+        """Öğrencinin cevabına göre bağlamsal açıklama al"""
+        try:
+            from app.services.llm_service import llm_service
+            
+            # Öğrenci ve soru bilgilerini al
+            question = db.query(Question).filter(Question.id == question_id).first()
+            student_features = self.get_student_features(db, student_id)
+            
+            if not question:
+                return "Soru bulunamadı."
+            
+            # Bağlamsal açıklama üret
+            contextual_explanation = await llm_service.generate_contextual_explanation(
+                question.content,
+                question.correct_answer,
+                student_answer,
+                student_features.get('level', 1)
+            )
+            
+            return contextual_explanation
+            
+        except Exception as e:
+            # Fallback: Veritabanındaki hazır açıklama
+            question = db.query(Question).filter(Question.id == question_id).first()
+            return question.explanation if question and question.explanation else "Açıklama bulunamadı."
 
 # Global instance
 recommendation_service = RecommendationService() 
