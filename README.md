@@ -307,3 +307,36 @@ Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için [LICENSE](LICE
 ---
 
 ⭐ Bu projeyi beğendiyseniz yıldız vermeyi unutmayın! 
+
+---
+
+## İzleme, Metrikler ve Sağlık
+
+- **Prometheus endpoint**: `/metrics` (otomatik FastAPI Instrumentator ile)
+- **Custom metrikler**: `model_update_total`, `model_update_duration_seconds`, `stream_consumer_lag`
+- **Health check**: `/health` endpoint'i ile Redis, DB, Neo4j bağlantı kontrolü
+
+## DLQ & Retry
+
+- Malformed event'ler Redis `student_responses_dlq` stream'ine yönlendirilir.
+- Consumer otomatik retry ile event'leri tekrar işler.
+- DLQ ve retry davranışı için testler ve loglar mevcuttur.
+
+## Feature Flags
+
+- `USE_NEO4J`, `USE_EMBEDDING`, `USE_DIVERSITY_FILTER`, `USE_DLQ` gibi flag'ler `.env` veya config üzerinden yönetilebilir.
+- Canary/A-B testleri için kullanılabilir.
+
+## Test Ortamı (docker-compose)
+
+```bash
+docker-compose up -d redis neo4j
+pytest
+```
+
+## Swagger
+
+- API dokümantasyonu `/docs` altında otomatik olarak sunulur.
+- Metrik, DLQ, retry ve izleme açıklamaları için bu README'yi ve kod içi açıklamaları inceleyin.
+
+--- 

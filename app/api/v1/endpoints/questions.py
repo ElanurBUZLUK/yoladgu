@@ -4,10 +4,13 @@ from typing import List, Optional
 from app.db.database import get_db
 from app.db.models import Question, Subject, Skill, QuestionSkill, StudentResponse
 from app.schemas.question import QuestionCreate, QuestionUpdate, QuestionResponse, QuestionRecommendation
-from app.services.recommendation_service import recommendation_service
+from app.services.recommendation_service import recommendation_service, add_question_to_neo4j, compute_embedding
 from app.crud.user import get_current_user
 from app.db.models import User
 import time
+import json
+import redis
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -68,7 +71,8 @@ def create_question(
         options=question.options,
         correct_answer=question.correct_answer,
         explanation=question.explanation,
-        tags=question.tags
+        tags=question.tags,
+        bert_sim=compute_embedding(question.content)
     )
     
     db.add(db_question)
@@ -88,6 +92,8 @@ def create_question(
                 db.add(question_skill)
         
         db.commit()
+        # --- Neo4j'e de ekle ---
+        add_question_to_neo4j(db_question.id, list(question.skill_ids.keys()))
     
     return db_question
 
@@ -173,13 +179,18 @@ def submit_answer(
     db.commit()
     db.refresh(student_response)
     
-    # Process response for recommendation system
-    try:
-        recommendation_service.process_student_response(
-            db, current_user.id, question_id, answer, is_correct, response_time
-        )
-    except Exception as e:
-        print(f"Error processing response for recommendations: {e}")
+    # --- Yeni: Asenkron güncelleme için Redis Stream’e event yaz ---
+    r = redis.Redis.from_url(settings.redis_url)
+    event = {
+        "student_id": current_user.id,
+        "question_id": question_id,
+        "is_correct": is_correct,
+        "response_time": response_time,
+        "feedback": feedback,
+        "timestamp": time.time()
+    }
+    r.xadd("student_responses_stream", event)
+    # --------------------------------------------------------------
     
     return {
         "is_correct": is_correct,

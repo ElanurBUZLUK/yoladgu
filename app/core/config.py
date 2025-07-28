@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     RECOMMENDATION_BATCH_SIZE: int = 100
     LEARNING_RATE: float = 0.01
 
+    # Feature Flags
+    USE_NEO4J: bool = True
+    USE_EMBEDDING: bool = True
+    USE_DIVERSITY_FILTER: bool = True
+    USE_DLQ: bool = True
+
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def assemble_db_connection(cls, v, info):

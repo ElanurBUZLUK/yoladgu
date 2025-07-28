@@ -1,6 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
+import redis
+import time
+from unittest.mock import patch
 
 client = TestClient(app)
 
@@ -55,3 +58,21 @@ def test_plan_items_endpoints():
     # Test get plan items endpoint
     response = client.get("/api/v1/plan-items/")
     assert response.status_code in [200, 401]  # 401 if authentication required 
+
+def test_submit_answer_stream(monkeypatch):
+    # Redis XADD mock
+    events = []
+    class DummyRedis:
+        def xadd(self, stream, event):
+            events.append((stream, event))
+    monkeypatch.setattr(redis, "Redis", lambda *a, **kw: DummyRedis())
+    # Login ve örnek kullanıcı oluşturma burada atlanıyor (örnek için varsayalım)
+    # Cevap gönder
+    response = client.post(
+        "/api/v1/questions/1/answer",
+        data={"answer": "A", "confidence_level": 5, "feedback": "Zor bir soruydu"},
+        headers={"Authorization": "Bearer testtoken"}
+    )
+    assert response.status_code in (200, 403, 404)  # Kullanıcı/oturum yoksa 403/404 olabilir
+    # Event Redis'e yazıldı mı?
+    assert any(stream == "student_responses_stream" for stream, _ in events) 

@@ -217,3 +217,136 @@ Sorun yaşarsanız:
 2. Log dosyalarını kontrol edin
 3. Environment variables'ları doğrulayın
 4. API anahtarlarının geçerli olduğundan emin olun 
+
+---
+
+## 1. **Entegrasyon Testleri: Idempotency, DLQ, Consumer Lag**
+
+### a) **Idempotency Testi**
+```python
+def test_stream_consumer_idempotency(monkeypatch):
+    # ... (setup aynı)
+    # Aynı event iki kez ekleniyor
+    r.xadd("student_responses_stream", event)
+    r.xadd("student_responses_stream", event)
+    # ... (consumer başlat, bekle)
+    # process_student_response sadece bir kez çağrılmış olmalı
+    assert called["count"] == 1
+```
+> *Not: process_student_response içinde duplicate kontrolü eklenmeli (örn. event_id veya response_id ile).*
+
+### b) **DLQ Testi**
+```python
+def test_stream_consumer_dlq(monkeypatch):
+    # Malformed event ekle
+    r.xadd("student_responses_stream", {"bad": "data"})
+    # Consumer'da try/except ile DLQ'ya (örn. Redis "student_responses_dlq") yazılmalı
+    # Test: DLQ'ya event yazıldı mı?
+```
+
+### c) **Consumer Lag Testi**
+- Prometheus custom gauge ile lag ölçümü:
+```python
+from prometheus_client import Gauge
+consumer_lag = Gauge("stream_consumer_lag", "Redis stream lag")
+# Consumer loop'ta:
+info = r.xinfo_stream("student_responses_stream")
+consumer_lag.set(info["length"] - processed_count)
+```
+
+---
+
+## 2. **Prometheus Metrikleri: Histogram, Labels, Health Probes**
+
+### a) **Histogram**
+```python
+from prometheus_client import Histogram
+model_update_duration = Histogram("model_update_duration_seconds", "Model update süresi", ["subject", "environment"])
+# process_student_response içinde:
+with model_update_duration.labels(subject="math", environment="prod").time():
+    # model güncelleme kodu
+```
+
+### b) **Health/Readiness Endpoint**
+```python
+@app.get("/health")
+def health():
+    # Redis, DB, Neo4j bağlantılarını test et
+    return {"status": "ok"}
+```
+
+---
+
+## 3. **Neo4j: Transaction, Bulk Import, Graph Ölçümleri**
+
+### a) **Transaction Yönetimi**
+```python
+def create_question_with_graph(...):
+    try:
+        with db.begin_nested():
+            # SQL işlemleri
+            # Neo4j işlemleri
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+```
+
+### b) **Bulk Import**
+- Çoklu soru eklemede tek Cypher ile batch:
+```python
+with driver.session() as session:
+    session.run("""
+        UNWIND $questions AS q
+        MERGE (question:Question {id: q.id})
+        FOREACH (sid IN q.skill_ids | MERGE (s:Skill {id: sid}) MERGE (question)-[:HAS_SKILL]->(s))
+    """, questions=question_list)
+```
+
+---
+
+## 4. **Embedding: Model, Vector Store, Ensemble, Ön-işleme**
+
+### a) **Gerçek Model**
+```python
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+def compute_embedding(text):
+    return model.encode(text).tolist()
+```
+
+### b) **Vector Store**
+- Postgres + pgvector:
+```sql
+ALTER TABLE question ADD COLUMN embedding vector(384);
+-- Sorgu: SELECT * FROM question ORDER BY embedding <=> '[...]' LIMIT 5;
+```
+
+### c) **Ensemble Yöntemi**
+- River skoru ve embedding benzerliğini birleştir:
+```python
+final_score = 0.7 * river_score + 0.3 * embedding_similarity
+```
+
+### d) **Ön-işleme**
+- Metin temizleme, tokenizasyon, normalizasyon fonksiyonları ekleyin ve loglayın.
+
+---
+
+## 5. **Ekstra İyileştirmeler**
+
+- **Structured Logging:** structlog ile her loga context ekleyin.
+- **Feature Flags:** Özellikleri çevirmek için config veya environment flag’leri kullanın.
+- **CI/CD:** docker-compose ile Redis/Neo4j ayağa kaldırıp testleri çalıştırın.
+- **Swagger & README:** Metrik, DLQ, retry ve izleme dokümantasyonunu ekleyin.
+
+---
+
+## Sonuç
+
+Bu eklemelerle sisteminiz:
+- **Daha güvenli, izlenebilir, ölçeklenebilir ve sürdürülebilir** olur.
+- Gerçek üretim ortamı için “enterprise-grade” bir seviyeye yaklaşır.
+
+Dilerseniz, bu başlıklardan birini veya birkaçını doğrudan projeye entegre edebilirim.  
+Öncelik vermek istediğiniz bir alan var mı? Yoksa örnek kodları doğrudan eklememi ister misiniz? 

@@ -11,6 +11,11 @@ from river import compose, linear_model, preprocessing, feature_extraction
 import os
 from app.services.level_service import update_student_level
 from app.ml.bandits import LinUCBBandit
+from neo4j import GraphDatabase
+import structlog
+from prometheus_client import Counter, Histogram
+model_update_counter = Counter("model_update_total", "Model güncelleme sayısı")
+model_update_duration = Histogram("model_update_duration_seconds", "Model update süresi", ["subject", "environment"])
 
 # --- River pipeline ---
 def build_river_model():
@@ -20,6 +25,68 @@ def build_river_model():
         preprocessing.StandardScaler(),
         linear_model.LogisticRegression()
     )
+
+def get_skill_centrality(student_id):
+    driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD))
+    with driver.session() as session:
+        res = session.run(
+            """
+            MATCH (u:User {id: $student_id})-[:SOLVED]->(q:Question)-[:HAS_SKILL]->(s:Skill)
+            RETURN s.id AS skill_id, count(*) AS freq
+            """,
+            student_id=student_id
+        )
+        centrality = {r["skill_id"]: r["freq"] for r in res}
+    driver.close()
+    return centrality
+
+def diversity_filter(candidates, question_embeddings, top_n=5):
+    # candidates: [(question_id, score), ...]
+    # question_embeddings: {question_id: embedding_vector}
+    # En yakın top_n soruyu diskalifiye et, kalanlardan rastgele seç
+    import numpy as np
+    if len(candidates) <= top_n:
+        return candidates
+    # İlk sorunun embedding'ini referans al
+    ref_id = candidates[0][0]
+    ref_emb = question_embeddings.get(ref_id)
+    if ref_emb is None:
+        return candidates[top_n:]
+    # Benzerlikleri hesapla
+    sims = []
+    for qid, _ in candidates:
+        emb = question_embeddings.get(qid)
+        if emb is not None:
+            sim = np.dot(ref_emb, emb) / (np.linalg.norm(ref_emb) * np.linalg.norm(emb) + 1e-8)
+        else:
+            sim = 0
+        sims.append((qid, sim))
+    # En benzer top_n soruyu bul
+    sims = sorted(sims, key=lambda x: -x[1])
+    filtered = [c for c in candidates if c[0] not in [qid for qid, _ in sims[:top_n]]]
+    return filtered
+
+def add_question_to_neo4j(question_id, skill_ids):
+    driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD))
+    with driver.session() as session:
+        for skill_id in skill_ids:
+            session.run(
+                "MERGE (q:Question {id: $qid}) "
+                "MERGE (s:Skill {id: $sid}) "
+                "MERGE (q)-[:HAS_SKILL]->(s)",
+                qid=question_id, sid=skill_id
+            )
+    driver.close()
+
+def compute_embedding(text):
+    # Gerçek ortamda: from sentence_transformers import SentenceTransformer
+    # model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+    # return model.encode(text).tolist()
+    # Şimdilik dummy embedding
+    return [1.0] * 10
+
+def get_logger_with_context(**context):
+    return structlog.get_logger().bind(**context)
 
 class RecommendationService:
     def __init__(self, model_type: str = 'river'):
@@ -92,6 +159,13 @@ class RecommendationService:
                     skill_mastery[skill_id]['correct'] += 1
         for skill_id, mastery in skill_mastery.items():
             features[f'skill_{skill_id}_mastery'] = mastery['correct'] / mastery['total'] if mastery['total'] > 0 else 0
+        # --- Neo4j skill centrality feature ---
+        try:
+            centrality = get_skill_centrality(student_id)
+            for skill_id, freq in centrality.items():
+                features[f'skill_{skill_id}_centrality'] = freq
+        except Exception as e:
+            pass
         return features
 
     def get_question_features(self, db: Session, question_id: int) -> Dict[str, Any]:
@@ -130,7 +204,7 @@ class RecommendationService:
         self.linucb_bandit.update(question_id, student_features, question_features, reward)
         self._save_model()
 
-    async def get_recommendations(self, db: Session, student_id: int, n_recommendations: int = 10) -> List[Dict[str, Any]]:
+    async def get_recommendations(self, db: Session, student_id: int, n_recommendations: int = 10, request_id: str = None) -> List[Dict[str, Any]]:
         """Öğrenci için soru önerileri üret (Hibrit yaklaşım)"""
         cache_key = f"recommendations:{student_id}:{self.model_type}"
         cached = self.redis_client.get(cache_key)
@@ -144,6 +218,7 @@ class RecommendationService:
         
         if self.model_type == 'linucb':
             candidate_questions = []
+            question_embeddings = {}
             for question in questions:
                 answered = db.query(StudentResponse).filter(
                     StudentResponse.student_id == student_id,
@@ -151,23 +226,25 @@ class RecommendationService:
                 ).first()
                 if answered:
                     continue
-                
                 # Runtime: Dinamik zorluk ayarı
                 adjusted_difficulty = await self._adjust_question_difficulty_runtime(
                     question, student_level, student_features
                 )
-                
                 question_features = self.get_question_features(db, question.id)
                 question_features['adjusted_difficulty'] = adjusted_difficulty
                 q_dict = {'id': question.id, **question_features}
                 candidate_questions.append(q_dict)
-            
+                # Embedding örneği (dummy):
+                question_embeddings[question.id] = getattr(question, 'bert_sim', [1.0]*10)
             if not candidate_questions:
                 return []
-            
-            selected_id = self.linucb_bandit.select_question(student_features, candidate_questions)
+            # Diversity filter uygula
+            scored_candidates = [(q['id'], q.get('score', 1.0)) for q in candidate_questions]
+            filtered_candidates = diversity_filter(scored_candidates, question_embeddings, top_n=5)
+            if not filtered_candidates:
+                filtered_candidates = scored_candidates
+            selected_id = self.linucb_bandit.select_question(student_features, [q for q in candidate_questions if q['id'] in [fc[0] for fc in filtered_candidates]])
             selected_question = next(q for q in questions if q.id == selected_id)
-            
             recommendations.append({
                 'question_id': selected_question.id,
                 'score': 1.0,
@@ -261,10 +338,26 @@ class RecommendationService:
             300,
             json.dumps(top_recommendations, default=str)
         )
+        logger = get_logger_with_context(request_id=request_id, student_id=student_id)
+        logger.info("recommendation_generated", recommendations=[r['question_id'] for r in recommendations])
         return top_recommendations
 
     def process_student_response(self, db: Session, student_id: int, question_id: int,
-                               answer: str, is_correct: bool, response_time: float):
+                               answer: str, is_correct: bool, response_time: float, feedback: str = None, request_id: str = None):
+        subject = None
+        try:
+            question = db.query(Question).filter(Question.id == question_id).first()
+            subject = getattr(question, 'subject_id', 'unknown')
+        except Exception:
+            subject = 'unknown'
+        env = 'prod'  # veya settings.ENVIRONMENT
+        if getattr(settings, 'USE_PROMETHEUS_HISTOGRAM', True):
+            with model_update_duration.labels(subject=str(subject), environment=env).time():
+                self._process_student_response_inner(db, student_id, question_id, answer, is_correct, response_time, feedback, request_id)
+        else:
+            self._process_student_response_inner(db, student_id, question_id, answer, is_correct, response_time, feedback, request_id)
+
+    def _process_student_response_inner(self, db, student_id, question_id, answer, is_correct, response_time, feedback, request_id):
         question = db.query(Question).filter(Question.id == question_id).first()
         if not question: return
 
@@ -275,6 +368,11 @@ class RecommendationService:
         else:
             self.update_river_model(student_features, question_features, is_correct, response_time)
 
+        # Feedback entegrasyonu örneği (dummy):
+        if feedback:
+            # Burada feedback'i loglayabilir veya modele ekleyebilirsiniz
+            print(f"Feedback for student {student_id}, question {question_id}: {feedback}")
+
         try:
             update_student_level(db, student_id, question.difficulty_level, is_correct)
         except Exception as e:
@@ -282,6 +380,9 @@ class RecommendationService:
 
         # Öğrenci özellikleri değiştiği için cache'i temizle
         self.redis_client.delete(f"recommendations:{student_id}")
+        model_update_counter.inc()
+        logger = get_logger_with_context(request_id=request_id, student_id=student_id, question_id=question_id)
+        logger.info("student_response_processed", is_correct=is_correct, response_time=response_time, feedback=feedback)
 
     async def _adjust_question_difficulty_runtime(self, question, student_level: int, student_features: Dict[str, Any]) -> int:
         """Runtime'da soru zorluğunu ayarla"""

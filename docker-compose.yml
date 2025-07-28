@@ -1,0 +1,19 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    command: pytest
+    depends_on:
+      - redis
+      - neo4j
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+  neo4j:
+    image: neo4j:latest
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+    environment:
+      - NEO4J_AUTH=neo4j/password 
