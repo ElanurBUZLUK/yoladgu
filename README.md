@@ -1,342 +1,253 @@
-# Question Recommendation System
+# Yoladgu - Öğrenci Merkezli Dinamik Soru Öneri Sistemi
 
-Akıllı soru öneri sistemi - öğrencilerin seviyelerine uygun sorular öneren yapay zeka tabanlı platform.
+Bu proje, öğrencilerin bilgi seviyelerini gerçek zamanlı takip eden, kişiselleştirilmiş soru önerileri sunan ve makine öğrenmesi ile sürekli kendini geliştiren bir eğitim platformudur.
 
 ## 🚀 Özellikler
 
-- **Akıllı Öneri Sistemi**: River ve LinUCB algoritmaları ile kişiselleştirilmiş soru önerileri
-- **Seviye Takibi**: Öğrenci performansına göre dinamik seviye güncellemesi
-- **Çoklu Model Desteği**: River (online learning) ve LinUCB (bandit) modelleri
-- **Gerçek Zamanlı Öğrenme**: Öğrenci cevaplarına göre sürekli model güncellemesi
-- **Kapsamlı API**: RESTful API ile tam entegrasyon
-- **Test Sistemi**: Kapsamlı unit ve integration testleri
+### Ana Özellikler
+- **Kişiselleştirilmiş Soru Önerileri**: Öğrencinin geçmiş performansına göre uygun sorular önerir
+- **Gerçek Zamanlı Öğrenme**: Her cevap ile model anında güncellenir
+- **Dinamik Zorluk Ayarı**: Öğrenci seviyesine göre soru zorluğu otomatik ayarlanır
+- **LLM Destekli İpuçları**: Yapay zeka ile kişiselleştirilmiş ipucu ve açıklamalar
+- **Çoklu Model Yaklaşımı**: River (online learning) + LinUCB (bandit) hibrit algoritma
 
-## 🏗️ Teknoloji Stack
+### Gelişmiş Özellikler
+- **Asenkron İşleme**: Redis Streams ile yüksek performanslı event işleme
+- **Embedding Tabanlı Öneriler**: SBERT ile semantik soru benzerliği
+- **Graph Tabanlı Özellikler**: Neo4j ile skill centrality analizi
+- **Öneri Çeşitliliği**: Embedding benzerliği ile diversity filtering
+- **İzlenebilirlik**: Prometheus metrikleri ve structured logging
+- **Güvenilirlik**: DLQ, retry, idempotency ile hata toleransı
 
-### Backend
-- **FastAPI**: Modern, hızlı web framework
-- **SQLAlchemy**: ORM ve database yönetimi
-- **PostgreSQL**: Ana veritabanı
-- **Redis**: Cache ve session yönetimi
-- **River**: Online machine learning kütüphanesi
-- **Pydantic**: Data validation ve serialization
+## 🏗️ Mimari
 
-### Frontend
-- **Angular**: Modern web framework
-- **TypeScript**: Type-safe JavaScript
-- **Material Design**: UI/UX framework
+### Teknoloji Stack
+- **Backend**: FastAPI (Python)
+- **Veritabanı**: PostgreSQL + pgvector (embedding storage)
+- **Cache/Queue**: Redis + Redis Streams
+- **Graph Database**: Neo4j (skill relationships)
+- **ML Models**: River (online learning), LinUCB (bandit)
+- **Embedding**: Sentence Transformers (SBERT)
+- **Monitoring**: Prometheus + FastAPI Instrumentator
+- **Logging**: Structured logging (structlog)
 
-### DevOps & Testing
-- **Pytest**: Test framework
-- **Uvicorn**: ASGI server
-- **Docker**: Containerization (opsiyonel)
+### Sistem Mimarisi
+```
+Frontend (React/Angular) 
+    ↓
+FastAPI Backend
+    ↓
+├── PostgreSQL (users, questions, responses)
+├── Redis Streams (async processing)
+├── Neo4j (skill graph)
+└── ML Models (River + LinUCB)
+```
 
-## 📦 Kurulum
+## 📊 API Endpoints
+
+### Soru ve Öneri
+- `GET /api/v1/questions/recommendations/` - Kişiselleştirilmiş soru önerileri
+- `GET /api/v1/questions/recommendations/next-question` - Bir sonraki önerilen soru
+- `POST /api/v1/questions/{id}/answer` - Cevap gönderme (asenkron işleme)
+- `GET /api/v1/questions/` - Soru listesi
+- `POST /api/v1/questions/` - Yeni soru ekleme (embedding otomatik hesaplanır)
+
+### LLM Destekli Özellikler
+- `POST /api/v1/ai/adaptive-hint` - Kişiselleştirilmiş ipucu
+- `POST /api/v1/ai/contextual-explanation` - Bağlamsal açıklama
+- `POST /api/v1/ai/analyze-question-difficulty` - Zorluk analizi
+- `POST /api/v1/ai/batch-enrich-questions` - Toplu soru zenginleştirme
+
+### Sistem Durumu
+- `GET /health` - Sistem sağlık kontrolü (Redis, DB, Neo4j)
+- `GET /metrics` - Prometheus metrikleri
+
+## 🔧 Kurulum
 
 ### Gereksinimler
-- Python 3.12+
-- PostgreSQL 12+
+- Python 3.8+
+- PostgreSQL 14+ (pgvector extension ile)
 - Redis 6+
-- Node.js 18+ (frontend için)
+- Neo4j 4+
 
-### Backend Kurulumu
+### Adım Adım Kurulum
 
-1. **Repository'yi klonlayın:**
+1. **Repository'yi klonlayın**
 ```bash
 git clone https://github.com/ElanurBUZLUK/yoladgu.git
 cd yoladgu
 ```
 
-2. **Virtual environment oluşturun:**
+2. **Bağımlılıkları yükleyin**
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# veya
-venv\Scripts\activate  # Windows
+pip install -r requirements.txt
 ```
 
-3. **Bağımlılıkları yükleyin:**
+3. **Veritabanını hazırlayın**
 ```bash
-pip install -r backend/requirements.txt
-```
-
-4. **Environment değişkenlerini ayarlayın:**
-```bash
-cp .env.example .env
-# .env dosyasını düzenleyin
-```
-
-5. **Veritabanını kurun:**
-```bash
-# PostgreSQL'de veritabanı oluşturun
-createdb veritabani
+# PostgreSQL'de pgvector extension'ını yükleyin (superuser gerekli)
+sudo -u postgres psql -d yoladgu -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 # Migration'ları çalıştırın
 alembic upgrade head
 ```
 
-6. **Backend'i başlatın:**
+4. **Environment değişkenlerini ayarlayın**
 ```bash
-# Ana dizinden
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-# veya backend dizininden
-cd backend
-python run.py
+cp .env.example .env
+# .env dosyasını düzenleyin
 ```
 
-### Frontend Kurulumu
-
-1. **Frontend dizinine gidin:**
+5. **Servisleri başlatın**
 ```bash
-cd frontend
+# Redis ve Neo4j'yi başlatın
+docker-compose up -d redis neo4j
+
+# Stream consumer'ı başlatın (arka planda)
+python -m app.services.stream_consumer &
+
+# Ana uygulamayı başlatın
+uvicorn app.main:app --reload
 ```
 
-2. **Bağımlılıkları yükleyin:**
+## 🧪 Test
+
+### Test Ortamı
 ```bash
-npm install
+# Test ortamını başlatın
+docker-compose up -d redis neo4j
+
+# Testleri çalıştırın
+pytest
+
+# Coverage raporu
+pytest --cov=app --cov-report=html
 ```
 
-3. **Development server'ı başlatın:**
-```bash
-ng serve
+### Test Kapsamı
+- **Unit Tests**: API endpoints, servisler, modeller
+- **Integration Tests**: Redis Streams, DLQ, retry mekanizması
+- **End-to-End Tests**: Tam öneri akışı
+
+## 📈 İzleme ve Metrikler
+
+### Prometheus Metrikleri
+- `model_update_total` - Model güncelleme sayısı
+- `model_update_duration_seconds` - Model güncelleme süresi
+- `stream_consumer_lag` - Redis stream lag
+- FastAPI otomatik metrikleri (request count, duration, etc.)
+
+### Logging
+- **Structured Logging**: Her log context (request_id, student_id, question_id) ile
+- **Log Seviyeleri**: INFO, WARNING, ERROR
+- **Merkezi Log Entegrasyonu**: ELK, Loki, vs. için hazır
+
+### Health Checks
+- `/health` endpoint'i Redis, PostgreSQL ve Neo4j bağlantılarını kontrol eder
+- Kubernetes probe'ları için uygun
+
+## 🔄 Asenkron İşleme
+
+### Redis Streams
+- Öğrenci cevapları Redis Stream'e yazılır
+- Arka planda consumer bu event'leri işler
+- Model güncellemeleri asenkron yapılır
+
+### DLQ (Dead Letter Queue)
+- Başarısız event'ler `student_responses_dlq` stream'ine yazılır
+- Retry mekanizması ile 3 kez denenir
+- Malformed event'ler otomatik olarak DLQ'ya yönlendirilir
+
+### Idempotency
+- Aynı event'in tekrar işlenmesi engellenir
+- Event ID tabanlı duplicate detection
+
+## 🤖 Makine Öğrenmesi
+
+### Hibrit Model Yaklaşımı
+1. **River (Online Learning)**
+   - Her cevap ile anında öğrenme
+   - Logistic Regression pipeline
+   - Öğrenci ve soru özelliklerini birleştirir
+
+2. **LinUCB (Contextual Bandit)**
+   - Keşif/istismar dengesi
+   - Exploration: Yeni soru tipleri dener
+   - Exploitation: En iyi performans gösteren soruları seçer
+
+### Özellik Mühendisliği
+- **Öğrenci Özellikleri**: Başarı oranı, cevap süresi, konu bazlı doğruluk
+- **Soru Özellikleri**: Zorluk, tip, konu, skill ağırlıkları
+- **Graph Özellikleri**: Neo4j'den skill centrality
+- **Embedding Özellikleri**: SBERT ile semantik benzerlik
+
+### Ensemble Skor
+```python
+final_score = 0.7 * river_score + 0.3 * embedding_similarity
 ```
 
-## 🧪 Testler
+## 🔧 Feature Flags
 
-### Test Çalıştırma
-```bash
-# Bağımlılıkları yükle
-pip install -r backend/requirements.txt
+Sistem davranışını kontrol etmek için environment değişkenleri:
+- `USE_NEO4J` - Graph tabanlı özellikleri aktif/pasif
+- `USE_EMBEDDING` - Embedding tabanlı önerileri aktif/pasif
+- `USE_DIVERSITY_FILTER` - Öneri çeşitliliği filtreleme
+- `USE_DLQ` - Dead Letter Queue aktif/pasif
+- `USE_PROMETHEUS_HISTOGRAM` - Detaylı metrikler
 
-# Tüm testleri çalıştır
-pytest tests/ -v
+## 📚 Kullanım Örnekleri
 
-# Belirli test dosyasını çalıştır
-pytest tests/test_api.py -v
+### Öğrenci Akışı
+1. Öğrenci giriş yapar
+2. Sistem kişiselleştirilmiş soru önerisi sunar
+3. Öğrenci soruyu çözer ve cevabını gönderir
+4. Cevap asenkron olarak işlenir, model güncellenir
+5. Bir sonraki soru önerisi daha da kişiselleştirilmiş olur
 
-# Coverage ile çalıştır
-pytest tests/ --cov=app --cov-report=html
-```
+### Öğretmen Akışı
+1. Öğretmen yeni soru ekler
+2. Sistem otomatik olarak embedding hesaplar
+3. Soru Neo4j'de skill ilişkileri ile bağlanır
+4. Soru öneri havuzuna eklenir
 
-### AI CLI Tool (Hibrit Yaklaşım)
-```bash
-# LLM bağlantısını test et
-python features/ai_cli.py test-connection --provider openai
-
-# Batch işlemleri
-python features/ai_cli.py generate-hint --question "2+2=?" --subject "matematik"
-python features/ai_cli.py ingest-website --url "https://example.com" --subject "matematik" --topic "trigonometri"
-python features/ai_cli.py ingest-csv --file "questions.csv" --subject "matematik"
-
-# Runtime işlemleri
-python features/ai_cli.py generate-adaptive-hint --question "Trigonometri sorusu" --level 3 --correct
-python features/ai_cli.py analyze-difficulty --question "Karmaşık matematik sorusu" --subject "matematik"
-```
-
-### Test Kategorileri
-- **Unit Tests**: `tests/test_basic.py`
-- **API Tests**: `tests/test_api.py`
-- **CRUD Tests**: `tests/test_crud.py`
-- **Service Tests**: `tests/test_services.py`
-
-## 📚 API Dokümantasyonu
-
-Backend çalıştıktan sonra API dokümantasyonuna erişin:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-### Ana Endpoint'ler
-- `GET /health` - Sistem durumu
-- `POST /api/v1/auth/login` - Kullanıcı girişi
-- `GET /api/v1/questions/` - Soru listesi
-- `POST /api/v1/recommendations/` - Soru önerisi
-- `POST /api/v1/responses/` - Cevap kaydetme
-
-### AI Endpoint'leri (Hibrit Yaklaşım)
-#### Batch İşlemleri
-- `POST /api/v1/ai/generate-hint` - Temel soru ipucu üretimi
-- `POST /api/v1/ai/generate-explanation` - Temel soru açıklaması üretimi
-- `POST /api/v1/ai/analyze-question-difficulty` - İlk zorluk analizi
-- `POST /api/v1/ai/ingest-from-website` - Web sitesinden soru içe aktarma
-- `POST /api/v1/ai/ingest-from-csv` - CSV dosyasından soru içe aktarma
-- `POST /api/v1/ai/batch-enrich-questions` - Mevcut soruları toplu zenginleştirme
-
-#### Runtime İşlemleri
-- `POST /api/v1/ai/adaptive-hint` - Öğrenci durumuna göre adaptif ipucu
-- `POST /api/v1/ai/contextual-explanation` - Öğrenci cevabına göre bağlamsal açıklama
-- `POST /api/v1/ai/generate-feedback` - AI geri bildirimi
-- `POST /api/v1/ai/generate-study-recommendation` - Çalışma önerisi
-- `GET /api/v1/ai/llm-status` - LLM servis durumu
-
-## 🤖 Machine Learning Modelleri
-
-### River Model
-- **Amaç**: Online learning ile sürekli öğrenme
-- **Algoritma**: Adaptive Random Forest
-- **Özellikler**: Gerçek zamanlı güncelleme, drift detection
-
-### LinUCB Model
-- **Amaç**: Multi-armed bandit ile keşif-sömürü dengesi
-- **Algoritma**: Linear Upper Confidence Bound
-- **Özellikler**: Contextual bandit, confidence intervals
-
-### LLM Integration (Hibrit Yaklaşım)
-- **OpenAI GPT**: Soru ipuçları, açıklamalar ve AI geri bildirimi
-- **HuggingFace**: Alternatif LLM provider desteği
-- **Batch İşlemi**: 
-  - Soru içe aktarma sırasında ön zenginleştirme
-  - İlk zorluk analizi ve temel ipucu/açıklama üretimi
-  - Maliyet optimizasyonu için toplu işlem
-- **Runtime İşlemi**:
-  - Dinamik zorluk ayarı (öğrenci performansına göre)
-  - Adaptif ipucu üretimi (öğrenci durumuna göre)
-  - Bağlamsal açıklama (öğrenci cevabına göre)
-  - Gerçek zamanlı kişiselleştirme
-
-## 📊 Özellik Çıkarımı
-
-Sistem şu özellikleri çıkarır:
-
-### Öğrenci Özellikleri
-- Toplam soru sayısı
-- Doğru cevap oranı
-- Ortalama cevap süresi
-- Güven seviyesi
-- Saat bazlı performans
-- Konu bazlı başarı oranları
-
-### Soru Özellikleri
-- Zorluk seviyesi
-- Soru tipi
-- Konu bilgisi
-- Skill ağırlıkları
-- Etiketler
-
-## 🔧 Konfigürasyon
-
-### Environment Variables
-```env
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/dbname
-POSTGRES_SERVER=localhost
-POSTGRES_USER=user
-POSTGRES_PASSWORD=pass
-POSTGRES_DB=dbname
-
-# Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=
-
-# Security
-SECRET_KEY=your-secret-key
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# ML Models
-MODEL_CACHE_DIR=./models
-RECOMMENDATION_BATCH_SIZE=100
-LEARNING_RATE=0.01
-
-# LLM API Keys
-OPENAI_API_KEY=your_openai_api_key_here
-HUGGINGFACE_API_TOKEN=your_huggingface_token_here
-```
-
-## 🚀 Production Deployment
-
-### Docker ile (Önerilen)
-```bash
-# Docker Compose ile tüm servisleri başlat
-docker-compose up -d
-
-# Sadece backend
-docker build -t yoladgu-backend .
-docker run -p 8000:8000 yoladgu-backend
-```
-
-### Manuel Deployment
-1. **Production server'da kurulum yapın**
-2. **Environment variables'ları ayarlayın**
-3. **Gunicorn ile başlatın:**
-```bash
-gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker
-```
-
-## 📈 Performans
-
-### Test Sonuçları
-- **API Response Time**: < 100ms
-- **Model Inference**: < 50ms
-- **Database Queries**: < 20ms
-- **Test Coverage**: > 80%
+## 🚀 Performans
 
 ### Ölçeklenebilirlik
-- **Concurrent Users**: 1000+
-- **Questions/Second**: 100+
-- **Model Updates/Second**: 50+
+- **Redis Streams**: Yüz binlerce event/saniye işleyebilir
+- **Asenkron Model Güncelleme**: API yanıt süresini etkilemez
+- **Horizontal Scaling**: Birden fazla consumer instance
+- **Caching**: Redis ile hızlı öneri erişimi
+
+### Optimizasyonlar
+- Model cache'leme (thread-safe)
+- Embedding pre-computation
+- Batch processing
+- Connection pooling
+
+## 🔒 Güvenlik
+
+- JWT tabanlı authentication
+- Role-based access control (student, teacher, admin)
+- Input validation ve sanitization
+- Rate limiting
 
 ## 🤝 Katkıda Bulunma
 
 1. Fork yapın
 2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
-3. Değişikliklerinizi commit edin (`git commit -m 'Add amazing feature'`)
-4. Branch'inizi push edin (`git push origin feature/amazing-feature`)
+3. Commit yapın (`git commit -m 'Add amazing feature'`)
+4. Push yapın (`git push origin feature/amazing-feature`)
 5. Pull Request oluşturun
 
-## 📝 Lisans
+## 📄 Lisans
 
-Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için [LICENSE](LICENSE) dosyasına bakın.
-
-## 👥 Geliştirici
-
-- **Elanur Buzluk** - [GitHub](https://github.com/ElanurBUZLUK)
-
-## 🙏 Teşekkürler
-
-- River ML kütüphanesi ekibine
-- FastAPI geliştiricilerine
-- Açık kaynak topluluğuna
+Bu proje MIT lisansı altında lisanslanmıştır.
 
 ## 📞 İletişim
 
-- **GitHub**: [@ElanurBUZLUK](https://github.com/ElanurBUZLUK)
-- **Email**: [email protected]
+- GitHub: [@ElanurBUZLUK](https://github.com/ElanurBUZLUK)
+- Proje Linki: [https://github.com/ElanurBUZLUK/yoladgu](https://github.com/ElanurBUZLUK/yoladgu)
 
 ---
 
 ⭐ Bu projeyi beğendiyseniz yıldız vermeyi unutmayın! 
-
----
-
-## İzleme, Metrikler ve Sağlık
-
-- **Prometheus endpoint**: `/metrics` (otomatik FastAPI Instrumentator ile)
-- **Custom metrikler**: `model_update_total`, `model_update_duration_seconds`, `stream_consumer_lag`
-- **Health check**: `/health` endpoint'i ile Redis, DB, Neo4j bağlantı kontrolü
-
-## DLQ & Retry
-
-- Malformed event'ler Redis `student_responses_dlq` stream'ine yönlendirilir.
-- Consumer otomatik retry ile event'leri tekrar işler.
-- DLQ ve retry davranışı için testler ve loglar mevcuttur.
-
-## Feature Flags
-
-- `USE_NEO4J`, `USE_EMBEDDING`, `USE_DIVERSITY_FILTER`, `USE_DLQ` gibi flag'ler `.env` veya config üzerinden yönetilebilir.
-- Canary/A-B testleri için kullanılabilir.
-
-## Test Ortamı (docker-compose)
-
-```bash
-docker-compose up -d redis neo4j
-pytest
-```
-
-## Swagger
-
-- API dokümantasyonu `/docs` altında otomatik olarak sunulur.
-- Metrik, DLQ, retry ve izleme açıklamaları için bu README'yi ve kod içi açıklamaları inceleyin.
-
---- 
