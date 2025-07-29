@@ -4,6 +4,7 @@ import requests
 import logging
 from typing import Dict, Any, Optional
 from enum import Enum
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +17,17 @@ class LLMProvider(str, Enum):
 class LLMService:
     """Hibrit LLM servisi - Batch ve Runtime işlemleri için"""
 
-    def __init__(self, provider: LLMProvider = LLMProvider.OPENAI):
-        self.provider = provider
-        self.openai_key = os.getenv("OPENAI_API_KEY")
-        self.hf_token = os.getenv("HUGGINGFACE_API_TOKEN")
-        self.hf_model = os.getenv("HUGGINGFACE_MODEL", "gpt2")
+    def __init__(self, provider: Optional[LLMProvider] = None):
+        # Config'den provider'ı al veya default kullan
+        if provider:
+            self.provider = provider
+        else:
+            provider_str = settings.LLM_PROVIDER.lower()
+            self.provider = LLMProvider.OPENAI if provider_str == "openai" else LLMProvider.HUGGINGFACE
+            
+        self.openai_key = settings.OPENAI_API_KEY
+        self.hf_token = settings.HUGGINGFACE_API_TOKEN
+        self.hf_model = settings.HUGGINGFACE_MODEL
 
     def _get_api_key(self) -> Optional[str]:
         """API anahtarını al"""

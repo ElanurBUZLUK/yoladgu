@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import AnyHttpUrl, field_validator, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 
 class Settings(BaseSettings):
@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Question Recommendation System"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
+    ENVIRONMENT: str = "development"
 
     SECRET_KEY: str = "your-secret-key-here"
     ALGORITHM: str = "HS256"
@@ -39,11 +40,46 @@ class Settings(BaseSettings):
     RECOMMENDATION_BATCH_SIZE: int = 100
     LEARNING_RATE: float = 0.01
 
+    # Embedding Configuration
+    EMBEDDING_MODEL: str = "paraphrase-MiniLM-L6-v2"
+    EMBEDDING_DIM: int = 384
+    EMBEDDING_BATCH_SIZE: int = 50
+
+    # LLM Configuration
+    OPENAI_API_KEY: Optional[str] = None
+    HUGGINGFACE_API_TOKEN: Optional[str] = None
+    HUGGINGFACE_MODEL: str = "microsoft/DialoGPT-medium"
+    LLM_PROVIDER: str = "huggingface"  # "openai" or "huggingface"
+    LLM_MODEL: str = "gpt-3.5-turbo"  # For OpenAI
+    LLM_MAX_TOKENS: int = 1000
+    LLM_TEMPERATURE: float = 0.7
+
+    # Ensemble Scoring Configuration
+    ENSEMBLE_WEIGHTS: Dict[str, float] = {
+        'river_score': 0.35,
+        'embedding_similarity': 0.25,
+        'skill_mastery': 0.20,
+        'difficulty_match': 0.15,
+        'neo4j_similarity': 0.05
+    }
+
     # Feature Flags
     USE_NEO4J: bool = True
     USE_EMBEDDING: bool = True
     USE_DIVERSITY_FILTER: bool = True
     USE_DLQ: bool = True
+    USE_ENSEMBLE_SCORING: bool = True
+    USE_PROMETHEUS_HISTOGRAM: bool = True
+
+    # Performance Configuration
+    CACHE_TTL: int = 300  # 5 minutes
+    MAX_RECOMMENDATIONS: int = 20
+    SIMILARITY_THRESHOLD: float = 0.6
+    MAX_DIFFICULTY_GAP: int = 2
+
+    # Logging Configuration
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "json"
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
@@ -61,5 +97,13 @@ class Settings(BaseSettings):
         if self.REDIS_PASSWORD:
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def is_development(self) -> bool:
+        return self.ENVIRONMENT.lower() == "development"
 
 settings = Settings() 
