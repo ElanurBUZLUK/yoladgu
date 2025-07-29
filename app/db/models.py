@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, Enum, JSON
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import enum
@@ -20,6 +20,8 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.STUDENT)
     grade = Column(String)  # Sınıf bilgisi
     last_login = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     solutions = relationship("Solution", back_populates="user")
     study_plans = relationship("StudyPlan", back_populates="user")
@@ -31,8 +33,11 @@ class Subject(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     description = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     topics = relationship("Topic", back_populates="subject")
+    skills = relationship("Skill", back_populates="subject")
 
 class Topic(Base):
     __tablename__ = "topics"
@@ -40,6 +45,8 @@ class Topic(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"))
     name = Column(String, nullable=False)
     description = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     subject = relationship("Subject", back_populates="topics")
     questions = relationship("Question", back_populates="topic")
@@ -51,18 +58,34 @@ class Skill(Base):
     description = Column(Text)
     difficulty_level = Column(Integer, default=1)
     subject_id = Column(Integer, ForeignKey("subjects.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     question_skills = relationship("QuestionSkill", back_populates="skill")
+    subject = relationship("Subject", back_populates="skills")
 
 class Question(Base):
     __tablename__ = "questions"
     id = Column(Integer, primary_key=True, index=True)
+    content = Column(Text, nullable=False)  # Ana soru metni
+    question_type = Column(String, default="multiple_choice")  # multiple_choice, true_false, open_ended
+    difficulty_level = Column(Integer, default=1)  # 1-5 arası zorluk
+    subject_id = Column(Integer, ForeignKey("subjects.id"))
     topic_id = Column(Integer, ForeignKey("topics.id"))
-    text = Column(Text, nullable=False)
-    difficulty = Column(String)  # kolay, orta, zor
-    correct_answer = Column(String)
+    options = Column(JSON)  # Şık seçenekleri
+    correct_answer = Column(String, nullable=False)
+    explanation = Column(Text)  # Çözüm açıklaması
+    tags = Column(JSON)  # Etiketler
+    created_by = Column(Integer, ForeignKey("users.id"))
+    is_active = Column(Boolean, default=True)
+    bert_sim = Column(JSON)  # Embedding vektörü (eski alan)
+    embedding = Column(Text)  # pgvector için embedding alanı
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     topic = relationship("Topic", back_populates="questions")
+    subject = relationship("Subject")
+    creator = relationship("User")
     solutions = relationship("Solution", back_populates="question")
     responses = relationship("StudentResponse", back_populates="question")
     question_skills = relationship("QuestionSkill", back_populates="question")
@@ -73,6 +96,7 @@ class QuestionSkill(Base):
     question_id = Column(Integer, ForeignKey("questions.id"))
     skill_id = Column(Integer, ForeignKey("skills.id"))
     weight = Column(Float, default=1.0)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     question = relationship("Question", back_populates="question_skills")
     skill = relationship("Skill", back_populates="question_skills")
@@ -85,6 +109,7 @@ class Solution(Base):
     solved_at = Column(DateTime, default=datetime.utcnow)
     is_correct = Column(Boolean)
     duration = Column(Float)  # saniye cinsinden
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="solutions")
     question = relationship("Question", back_populates="solutions")
@@ -94,8 +119,11 @@ class StudyPlan(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     name = Column(String, nullable=False)
+    description = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     target_success = Column(Float)  # % olarak hedef başarı
+    is_active = Column(Boolean, default=True)
 
     user = relationship("User", back_populates="study_plans")
     items = relationship("PlanItem", back_populates="plan")
@@ -109,9 +137,10 @@ class PlanItem(Base):
     question_count = Column(Integer)
     difficulty = Column(String)
     estimated_time = Column(Integer)  # dakika cinsinden
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     plan = relationship("StudyPlan", back_populates="items")
-    # subject ve topic ilişkileri istersen eklenebilir 
 
 class StudentResponse(Base):
     __tablename__ = "student_responses"
@@ -125,6 +154,7 @@ class StudentResponse(Base):
     confidence_level = Column(Integer)
     feedback = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     student = relationship("User", back_populates="responses")
     question = relationship("Question", back_populates="responses")
@@ -133,9 +163,12 @@ class StudentProfile(Base):
     __tablename__ = "student_profiles"
 
     student_id = Column(Integer, ForeignKey("users.id"), primary_key=True, index=True)
-    level = Column(Float)
-    min_level = Column(Float)
-    max_level = Column(Float)
+    level = Column(Float, default=1.0)
+    min_level = Column(Float, default=1.0)
+    max_level = Column(Float, default=5.0)
+    total_questions_answered = Column(Integer, default=0)
+    total_correct_answers = Column(Integer, default=0)
+    average_response_time = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

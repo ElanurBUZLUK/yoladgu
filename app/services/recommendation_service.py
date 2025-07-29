@@ -17,6 +17,19 @@ from prometheus_client import Counter, Histogram
 model_update_counter = Counter("model_update_total", "Model güncelleme sayısı")
 model_update_duration = Histogram("model_update_duration_seconds", "Model update süresi", ["subject", "environment"])
 
+from sentence_transformers import SentenceTransformer
+import threading
+
+# Modeli thread-safe şekilde cache'le
+_model = None
+_model_lock = threading.Lock()
+def get_sbert_model():
+    global _model
+    with _model_lock:
+        if _model is None:
+            _model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+        return _model
+
 # --- River pipeline ---
 def build_river_model():
     return compose.Pipeline(
@@ -78,12 +91,9 @@ def add_question_to_neo4j(question_id, skill_ids):
             )
     driver.close()
 
-def compute_embedding(text):
-    # Gerçek ortamda: from sentence_transformers import SentenceTransformer
-    # model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
-    # return model.encode(text).tolist()
-    # Şimdilik dummy embedding
-    return [1.0] * 10
+# Embedding hesaplama artık embedding_service'den geliyor
+from app.services.embedding_service import compute_embedding
+from app.services.ensemble_service import calculate_ensemble_score, filter_questions_by_thresholds, adjust_weights_dynamically
 
 def get_logger_with_context(**context):
     return structlog.get_logger().bind(**context)
@@ -205,141 +215,119 @@ class RecommendationService:
         self._save_model()
 
     async def get_recommendations(self, db: Session, student_id: int, n_recommendations: int = 10, request_id: str = None) -> List[Dict[str, Any]]:
-        """Öğrenci için soru önerileri üret (Hibrit yaklaşım)"""
-        cache_key = f"recommendations:{student_id}:{self.model_type}"
+        """Öğrenci için soru önerileri üret (Ensemble yaklaşım)"""
+        cache_key = f"recommendations:{student_id}:{self.model_type}:ensemble"
         cached = self.redis_client.get(cache_key)
         if cached:
             return json.loads(cached.decode('utf-8'))
         
         student_features = self.get_student_features(db, student_id)
         student_level = student_features.get('level', 1)
+        student_recent_performance = student_features.get('last20_accuracy', 0.5)
+        
+        # Öğrencinin son sorularını al
+        recent_responses = db.query(StudentResponse).filter(
+            StudentResponse.student_id == student_id
+        ).order_by(StudentResponse.created_at.desc()).limit(10).all()
+        
+        student_recent_questions = []
+        student_recent_question_ids = []
+        for response in recent_responses:
+            question = db.query(Question).filter(Question.id == response.question_id).first()
+            if question:
+                student_recent_questions.append(question.content)
+                student_recent_question_ids.append(question.id)
+        
+        # Ağırlıkları dinamik olarak ayarla
+        adjust_weights_dynamically(student_recent_performance, len(recent_responses))
+        
         questions = db.query(Question).filter(Question.is_active == True).all()
         recommendations = []
         
-        if self.model_type == 'linucb':
-            candidate_questions = []
-            question_embeddings = {}
-            for question in questions:
-                answered = db.query(StudentResponse).filter(
-                    StudentResponse.student_id == student_id,
-                    StudentResponse.question_id == question.id
-                ).first()
-                if answered:
-                    continue
-                # Runtime: Dinamik zorluk ayarı
-                adjusted_difficulty = await self._adjust_question_difficulty_runtime(
-                    question, student_level, student_features
-                )
-                question_features = self.get_question_features(db, question.id)
-                question_features['adjusted_difficulty'] = adjusted_difficulty
-                q_dict = {'id': question.id, **question_features}
-                candidate_questions.append(q_dict)
-                # Embedding örneği (dummy):
-                question_embeddings[question.id] = getattr(question, 'bert_sim', [1.0]*10)
-            if not candidate_questions:
-                return []
-            # Diversity filter uygula
-            scored_candidates = [(q['id'], q.get('score', 1.0)) for q in candidate_questions]
-            filtered_candidates = diversity_filter(scored_candidates, question_embeddings, top_n=5)
-            if not filtered_candidates:
-                filtered_candidates = scored_candidates
-            selected_id = self.linucb_bandit.select_question(student_features, [q for q in candidate_questions if q['id'] in [fc[0] for fc in filtered_candidates]])
-            selected_question = next(q for q in questions if q.id == selected_id)
-            recommendations.append({
-                'question_id': selected_question.id,
-                'score': 1.0,
+        for question in questions:
+            # Daha önce cevaplanmış soruları atla
+            answered = db.query(StudentResponse).filter(
+                StudentResponse.student_id == student_id,
+                StudentResponse.question_id == question.id
+            ).first()
+            if answered:
+                continue
+
+            # Runtime: Dinamik zorluk ayarı
+            adjusted_difficulty = await self._adjust_question_difficulty_runtime(
+                question, student_level, student_features
+            )
+
+            question_features = self.get_question_features(db, question.id)
+            question_features['adjusted_difficulty'] = adjusted_difficulty
+            combined_features = {**student_features, **question_features}
+
+            # River model skoru
+            river_score = self.river_model.predict_proba_one(combined_features).get(1, 0.5)
+
+            # Ensemble skor hesapla
+            ensemble_scores = calculate_ensemble_score(
+                river_score=river_score,
+                question_content=question.content,
+                question_id=question.id,
+                question_difficulty=question.difficulty_level,
+                student_id=student_id,
+                student_level=student_level,
+                student_recent_performance=student_recent_performance,
+                student_recent_questions=student_recent_questions,
+                student_recent_question_ids=student_recent_question_ids
+            )
+
+            recommendation = {
+                'question_id': question.id,
+                'ensemble_score': ensemble_scores['ensemble_score'],
+                'river_score': ensemble_scores['river_score'],
+                'embedding_similarity': ensemble_scores['embedding_similarity'],
+                'skill_mastery': ensemble_scores['skill_mastery'],
+                'difficulty_match': ensemble_scores['difficulty_match'],
+                'neo4j_similarity': ensemble_scores['neo4j_similarity'],
                 'adjusted_difficulty': adjusted_difficulty,
-                'original_difficulty': selected_question.difficulty_level,
+                'original_difficulty': question.difficulty_level,
                 'question': {
-                    "id": selected_question.id,
-                    "content": selected_question.content,
-                    "question_type": selected_question.question_type,
-                    "difficulty_level": selected_question.difficulty_level,
-                    "subject_id": selected_question.subject_id,
-                    "options": selected_question.options,
-                    "correct_answer": selected_question.correct_answer,
-                    "explanation": selected_question.explanation,
-                    "tags": selected_question.tags,
-                    "created_by": selected_question.created_by,
-                    "is_active": selected_question.is_active,
-                    "created_at": str(selected_question.created_at),
-                    "updated_at": str(selected_question.updated_at)
+                    "id": question.id,
+                    "content": question.content,
+                    "question_type": question.question_type,
+                    "difficulty_level": question.difficulty_level,
+                    "subject_id": question.subject_id,
+                    "options": question.options,
+                    "correct_answer": question.correct_answer,
+                    "explanation": question.explanation,
+                    "tags": question.tags,
+                    "created_by": question.created_by,
+                    "is_active": question.is_active,
+                    "created_at": str(question.created_at),
+                    "updated_at": str(question.updated_at)
                 }
-            })
-        else:
-            for question in questions:
-                answered = db.query(StudentResponse).filter(
-                    StudentResponse.student_id == student_id,
-                    StudentResponse.question_id == question.id
-                ).first()
-                if answered:
-                    continue
+            }
+            
+            recommendations.append(recommendation)
 
-                # Runtime: Dinamik zorluk ayarı
-                adjusted_difficulty = await self._adjust_question_difficulty_runtime(
-                    question, student_level, student_features
-                )
-
-                question_features = self.get_question_features(db, question.id)
-                question_features['adjusted_difficulty'] = adjusted_difficulty
-                combined_features = {**student_features, **question_features}
-
-                river_score = self.river_model.predict_proba_one(combined_features).get(1, 0.5)
-
-                # Kural tabanlı ek skorlar
-                student_avg_difficulty = student_features.get('avg_difficulty', 2.5)
-                difficulty_match = 1 - abs(adjusted_difficulty - student_avg_difficulty) / 5
-                skill_match = 0
-                question_skills = db.query(QuestionSkill).filter(
-                    QuestionSkill.question_id == question.id
-                ).all()
-                if question_skills:
-                    total_weight = sum(qs.weight for qs in question_skills)
-                    for qs in question_skills:
-                        skill_mastery = student_features.get(f'skill_{qs.skill_id}_mastery', 0.5)
-                        skill_match += (1 - skill_mastery) * qs.weight
-                    skill_match /= total_weight if total_weight > 0 else 1
-
-                # Final skor (ağırlıklar ayarlanabilir)
-                final_score = (river_score * 0.4) + (difficulty_match * 0.3) + (skill_match * 0.3)
-
-                recommendations.append({
-                    'question_id': question.id,
-                    'score': final_score,
-                    'river_score': river_score,
-                    'difficulty_match': difficulty_match,
-                    'skill_match': skill_match,
-                    'adjusted_difficulty': adjusted_difficulty,
-                    'original_difficulty': question.difficulty_level,
-                    'question': {
-                        "id": question.id,
-                        "content": question.content,
-                        "question_type": question.question_type,
-                        "difficulty_level": question.difficulty_level,
-                        "subject_id": question.subject_id,
-                        "options": question.options,
-                        "correct_answer": question.correct_answer,
-                        "explanation": question.explanation,
-                        "tags": question.tags,
-                        "created_by": question.created_by,
-                        "is_active": question.is_active,
-                        "created_at": question.created_at,
-                        "updated_at": question.updated_at
-                    }
-                })
-
-        recommendations.sort(key=lambda x: x['score'], reverse=True)
+        # Threshold'lara göre filtrele
+        recommendations = filter_questions_by_thresholds(
+            recommendations, student_level, student_recent_performance
+        )
+        
+        # Ensemble skora göre sırala
+        recommendations.sort(key=lambda x: x['ensemble_score'], reverse=True)
         top_recommendations = recommendations[:n_recommendations]
 
-        # Redis'e kaydederken Pydantic modellerini değil, serileştirilebilir dict'i kullan
-        # datetime objeleri için default converter ekle
+        # Cache'e kaydet
         self.redis_client.setex(
             cache_key,
-            300,
+            300,  # 5 dakika
             json.dumps(top_recommendations, default=str)
         )
+        
         logger = get_logger_with_context(request_id=request_id, student_id=student_id)
-        logger.info("recommendation_generated", recommendations=[r['question_id'] for r in recommendations])
+        logger.info("ensemble_recommendations_generated", 
+                   recommendations=[r['question_id'] for r in top_recommendations],
+                   ensemble_scores=[r['ensemble_score'] for r in top_recommendations])
+        
         return top_recommendations
 
     def process_student_response(self, db: Session, student_id: int, question_id: int,
