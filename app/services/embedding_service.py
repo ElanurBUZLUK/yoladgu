@@ -211,7 +211,7 @@ class EmbeddingService:
             
             return {
                 "total_questions": total_questions,
-                "questions_with_embedding": questions_without_embedding,
+                "questions_with_embedding": questions_with_embedding,  # Düzeltildi
                 "questions_without_embedding": questions_without_embedding,
                 "embedding_coverage": (questions_with_embedding / total_questions * 100) if total_questions > 0 else 0
             }

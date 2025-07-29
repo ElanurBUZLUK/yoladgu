@@ -1,6 +1,6 @@
 import os
 import json
-import requests
+import httpx  # requests yerine async httpx
 import logging
 from typing import Dict, Any, Optional
 from enum import Enum
@@ -75,13 +75,14 @@ class LLMService:
             "temperature": 0.7
         }
         
-        response = requests.post(
-            f"{self._get_base_url()}/chat/completions",
-            headers=headers,
-            json=data,
-            timeout=30
-        )
-        response.raise_for_status()
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self._get_base_url()}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            response.raise_for_status()
         
         result = response.json()
         return {
@@ -100,8 +101,9 @@ class LLMService:
         
         data = {"inputs": prompt}
         
-        response = requests.post(url, headers=headers, json=data, timeout=60)
-        response.raise_for_status()
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=data, timeout=60)
+            response.raise_for_status()
         
         result = response.json()
         if isinstance(result, list) and result:
