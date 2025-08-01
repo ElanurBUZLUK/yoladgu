@@ -385,16 +385,21 @@ class EnhancedEnsembleScoringService:
         
         try:
             # Son soruların benzer sorularını bul
-            similar_questions = []
+            similar_question_ids = []
             for recent_id in student_recent_question_ids[-3:]:  # Son 3 soru
                 from app.crud.question import get_similar_questions_from_neo4j
-                similar_ids = get_similar_questions_from_neo4j(recent_id, limit=5)
-                similar_questions.extend(similar_ids)
+                similar_data = get_similar_questions_from_neo4j(recent_id, limit=5)
+                # get_similar_questions_from_neo4j returns List[Dict] with question_id key
+                for item in similar_data:
+                    if isinstance(item, dict) and 'question_id' in item:
+                        similar_question_ids.append(item['question_id'])
+                    elif isinstance(item, int):  # Fallback for direct IDs
+                        similar_question_ids.append(item)
             
             # Mevcut sorunun benzerlik skorunu hesapla
-            if question_id in similar_questions:
+            if question_id in similar_question_ids:
                 # Benzerlik sıklığına göre skor
-                frequency = similar_questions.count(question_id)
+                frequency = similar_question_ids.count(question_id)
                 return min(1.0, frequency * 0.3)
             else:
                 return 0.3

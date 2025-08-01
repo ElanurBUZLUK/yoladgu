@@ -362,6 +362,30 @@ class EnhancedEmbeddingService(EmbeddingService):
         except Exception as e:
             logger.error("semantic_search_error", error=str(e))
             return []
+    
+    def find_similar_questions_by_id(self, question_id: int, db_session,
+                                   threshold: float = 0.8, limit: int = 10) -> List[Dict]:
+        """Helper method: Find similar questions by question ID"""
+        try:
+            # Get the question content
+            from app.db.models import Question
+            question = db_session.query(Question).filter(Question.id == question_id).first()
+            if not question:
+                logger.warning("question_not_found", question_id=question_id)
+                return []
+            
+            # Compute embedding for the question
+            query_embedding = self.compute_embedding(question.content)
+            if not query_embedding:
+                logger.error("embedding_computation_failed", question_id=question_id)
+                return []
+            
+            # Find similar questions using the embedding
+            return self.find_similar_questions(query_embedding, threshold=threshold, limit=limit)
+            
+        except Exception as e:
+            logger.error("find_similar_questions_by_id_error", question_id=question_id, error=str(e))
+            return []
 
     def dimensionality_reduction(self, texts: List[str], 
                                target_dims: int = 2) -> Tuple[np.ndarray, PCA]:

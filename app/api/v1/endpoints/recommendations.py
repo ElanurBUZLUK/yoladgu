@@ -312,10 +312,20 @@ async def get_similar_questions(
 ):
     """Get questions similar to a given question using embeddings"""
     try:
-        # Get similar questions using embedding service
-        similar_questions = enhanced_embedding_service.find_similar_questions(
-            db, question_id, limit=count, threshold=similarity_threshold
+        # Get similar questions using the fixed helper method
+        similar_questions = enhanced_embedding_service.find_similar_questions_by_id(
+            question_id, db, threshold=similarity_threshold, limit=count
         )
+        
+        if not similar_questions:
+            # Fallback to Neo4j if embedding fails
+            from app.crud.question import get_similar_questions_from_neo4j
+            neo4j_similar = get_similar_questions_from_neo4j(question_id, limit=count)
+            similar_questions = [{
+                "question_id": item["question_id"],
+                "similarity_score": min(1.0, item["shared_skills"] / 10.0),  # Normalize shared skills
+                "source": "neo4j"
+            } for item in neo4j_similar]
         
         return {
             "source_question_id": question_id,
