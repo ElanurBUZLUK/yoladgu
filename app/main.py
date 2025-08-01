@@ -14,8 +14,14 @@ from app.api.v1.endpoints import (
     subjects,
     plan_items,
     ai,
+    embeddings,
+    streams,
+    recommendations,
+    llm_assistant,
+    system_health,
 )
 from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Counter, Histogram, Gauge, Info, generate_latest, CONTENT_TYPE_LATEST
 from neo4j import GraphDatabase
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 import structlog
@@ -50,7 +56,31 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-Instrumentator().instrument(app).expose(app)
+# Initialize Prometheus monitoring - simplified approach
+instrumentator = Instrumentator()
+instrumentator.instrument(app)
+instrumentator.expose(app, endpoint="/metrics")
+
+# Custom metrics for Yoladgu
+yoladgu_requests_total = Counter(
+    'yoladgu_requests_total', 
+    'Total HTTP requests',
+    ['method', 'endpoint', 'status']
+)
+
+yoladgu_health_checks = Counter(
+    'yoladgu_health_checks_total',
+    'Total health checks performed',
+    ['service']
+)
+
+yoladgu_service_health = Gauge(
+    'yoladgu_service_health_status',
+    'Service health status (1=healthy, 0=unhealthy)',
+    ['service']
+)
+
+# Removed duplicate - handled by prometheus_monitoring
 
 # Set all CORS enabled origins
 if settings.BACKEND_CORS_ORIGINS:
@@ -81,10 +111,18 @@ app.include_router(topics.router, prefix=settings.API_V1_STR)
 app.include_router(subjects.router, prefix=settings.API_V1_STR)
 app.include_router(plan_items.router, prefix=settings.API_V1_STR)
 app.include_router(ai.router, prefix=settings.API_V1_STR)
+app.include_router(embeddings.router, prefix=settings.API_V1_STR + "/embeddings", tags=["embeddings"])
+app.include_router(streams.router, prefix=settings.API_V1_STR + "/streams", tags=["streams"])
+app.include_router(recommendations.router, prefix=settings.API_V1_STR, tags=["recommendations"])
+app.include_router(llm_assistant.router, prefix=settings.API_V1_STR, tags=["llm-assistant"])
+app.include_router(system_health.router, prefix=settings.API_V1_STR, tags=["system-health"])
 
 @app.get("/health")
 def health_check():
-    """Sistem sağlık kontrolü"""
+    """Gelişmiş sistem sağlık kontrolü with Prometheus metrics"""
+    import time
+    start_time = time.time()
+    
     health_status = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
@@ -145,10 +183,7 @@ def health_check():
     
     return health_status
 
-@app.get("/metrics")
-def get_metrics():
-    """Prometheus metrikleri"""
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+# Metrics endpoint is now handled by instrumentator
 
 @app.get("/ready")
 def readiness_check():

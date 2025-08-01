@@ -86,21 +86,25 @@ class EmbeddingService:
         return psycopg2.connect(db_url)
     
     def save_embedding_to_db(self, question_id: int, embedding: List[float]) -> bool:
-        """Embedding'i PostgreSQL'e kaydet"""
+        """Embedding'i PostgreSQL'e kaydet (JSON formatında)"""
         try:
+            import json
             conn = self.get_postgres_connection()
             cursor = conn.cursor()
             
+            # Embedding'i JSON string'e çevir
+            embedding_json = json.dumps(embedding)
+            
             cursor.execute(
                 "UPDATE questions SET embedding = %s WHERE id = %s",
-                (embedding, question_id)
+                (embedding_json, question_id)
             )
             
             conn.commit()
             cursor.close()
             conn.close()
             
-            logger.info("embedding_saved", question_id=question_id)
+            logger.info("embedding_saved", question_id=question_id, dimensions=len(embedding))
             return True
             
         except Exception as e:
@@ -108,18 +112,22 @@ class EmbeddingService:
             return False
     
     def save_embeddings_batch(self, question_embeddings: List[Tuple[int, List[float]]]) -> int:
-        """Toplu embedding kaydetme"""
+        """Toplu embedding kaydetme (JSON formatında)"""
         if not question_embeddings:
             return 0
             
         try:
+            import json
             conn = self.get_postgres_connection()
             cursor = conn.cursor()
+            
+            # JSON formatına çevir
+            json_embeddings = [(json.dumps(embedding), question_id) for question_id, embedding in question_embeddings]
             
             # Batch update
             cursor.executemany(
                 "UPDATE questions SET embedding = %s WHERE id = %s",
-                [(embedding, question_id) for question_id, embedding in question_embeddings]
+                json_embeddings
             )
             
             updated_count = cursor.rowcount
@@ -136,30 +144,62 @@ class EmbeddingService:
     
     def find_similar_questions(self, query_embedding: List[float], 
                              threshold: float = 0.8, limit: int = 10) -> List[Dict]:
-        """Benzer soruları bul"""
+        """Benzer soruları bul (Cosine Similarity ile)"""
         try:
+            import json
+            import numpy as np
+            from sklearn.metrics.pairwise import cosine_similarity
+            
             conn = self.get_postgres_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
+            # Tüm embedding'li soruları al
             cursor.execute("""
                 SELECT 
                     q.id,
                     q.content,
                     q.difficulty_level,
                     q.subject_id,
-                    1 - (q.embedding <=> %s) as similarity
+                    q.topic_id,
+                    q.embedding
                 FROM questions q
-                WHERE q.embedding IS NOT NULL
-                AND 1 - (q.embedding <=> %s) > %s
-                ORDER BY q.embedding <=> %s
-                LIMIT %s
-            """, (query_embedding, query_embedding, threshold, query_embedding, limit))
+                WHERE q.embedding IS NOT NULL AND q.is_active = true
+            """)
             
             results = cursor.fetchall()
             cursor.close()
             conn.close()
             
-            return [dict(row) for row in results]
+            if not results:
+                return []
+            
+            # Similarity hesapla
+            similar_questions = []
+            query_vector = np.array(query_embedding).reshape(1, -1)
+            
+            for row in results:
+                try:
+                    # JSON'dan embedding'i parse et
+                    stored_embedding = json.loads(row['embedding'])
+                    stored_vector = np.array(stored_embedding).reshape(1, -1)
+                    
+                    # Cosine similarity hesapla
+                    similarity = cosine_similarity(query_vector, stored_vector)[0][0]
+                    
+                    if similarity >= threshold:
+                        question_dict = dict(row)
+                        question_dict['similarity'] = float(similarity)
+                        question_dict.pop('embedding')  # Embedding'i response'dan kaldır
+                        similar_questions.append(question_dict)
+                        
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.debug("embedding_parse_error", question_id=row['id'], error=str(e))
+                    continue
+            
+            # Similarity'ye göre sırala
+            similar_questions.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            return similar_questions[:limit]
             
         except Exception as e:
             logger.error("similar_questions_error", error=str(e))

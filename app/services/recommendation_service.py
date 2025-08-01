@@ -103,7 +103,7 @@ class RecommendationService:
         self.redis_client = redis.Redis.from_url(settings.redis_url)
         self.model_type = model_type
         self.river_model = build_river_model()
-        self.linucb_bandit = LinUCBBandit(alpha=1.0, feature_dim=10)
+        self.linucb_bandit = LinUCBBandit(self.redis_client, alpha=1.0, feature_dim=10)
         self.model_cache_dir = settings.MODEL_CACHE_DIR
         os.makedirs(self.model_cache_dir, exist_ok=True)
         self._load_model()

@@ -2,6 +2,8 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { interval, Subscription } from 'rxjs';
+import { QuestionService } from '../features/student/services/question.service';
+import { ErrorHandlerService } from '../core/services/error-handler.service';
 
 interface Question {
   id: number;
@@ -107,7 +109,11 @@ export class SolveQuestionComponent implements OnInit, OnDestroy {
     }
   ];
 
-  constructor(private router: Router) {}
+  constructor(
+    private router: Router,
+    private questionService: QuestionService,
+    private errorHandler: ErrorHandlerService
+  ) {}
 
   ngOnInit() {
     this.loadQuestion();
@@ -121,16 +127,32 @@ export class SolveQuestionComponent implements OnInit, OnDestroy {
   loadQuestion() {
     this.isLoading = true;
     
-    // Simulate API call
-    setTimeout(() => {
-      if (this.currentQuestionIndex < this.mockQuestions.length) {
-        this.currentQuestion = this.mockQuestions[this.currentQuestionIndex];
+    // Backend'den gerçek soru al
+    this.questionService.getNextQuestion().subscribe({
+      next: (question) => {
+        this.currentQuestion = question;
         this.resetQuestionState();
-      } else {
-        this.currentQuestion = null;
+        this.isLoading = false;
+        console.log('Question loaded:', question);
+      },
+      error: (error) => {
+        console.error('Error loading question:', error);
+        this.errorHandler.showWarning('Soru yüklenirken sorun oluştu, demo soru gösteriliyor.');
+        // Fallback: Mock data kullan
+        this.loadMockQuestion();
       }
-      this.isLoading = false;
-    }, 500);
+    });
+  }
+
+  private loadMockQuestion() {
+    // Fallback için mock data
+    if (this.currentQuestionIndex < this.mockQuestions.length) {
+      this.currentQuestion = this.mockQuestions[this.currentQuestionIndex];
+      this.resetQuestionState();
+    } else {
+      this.currentQuestion = null;
+    }
+    this.isLoading = false;
   }
 
   resetQuestionState() {
@@ -157,11 +179,91 @@ export class SolveQuestionComponent implements OnInit, OnDestroy {
 
   checkAnswer() {
     if (!this.selectedOption || !this.currentQuestion) {
-      alert('Lütfen bir seçenek seçin!');
+      this.errorHandler.showWarning('Lütfen bir seçenek seçin!');
       return;
     }
 
-    const isCorrect = this.selectedOption === this.currentQuestion.correct_answer;
+    this.isLoading = true;
+    const startTime = Date.now();
+    // Timer başlatıldığından itibaren geçen süre
+    const responseTime = this.elapsedTime; // seconds
+    
+    // Backend'e cevabı ve progress data gönder
+    this.questionService.submitAnswer(
+      this.currentQuestion.id, 
+      this.selectedOption,
+      responseTime,
+      this.getConfidenceLevel()
+    ).subscribe({
+      next: (response) => {
+        this.handleAnswerResponse(response);
+        this.isLoading = false;
+      },
+      error: (error) => {
+        console.error('Error submitting answer:', error);
+        this.errorHandler.showWarning('Cevap gönderilirken sorun oluştu, yerel değerlendirme yapılıyor.');
+        // Fallback: Frontend validation
+        this.handleLocalAnswer();
+        this.isLoading = false;
+      }
+    });
+  }
+
+  private handleAnswerResponse(response: any) {
+    const isCorrect = response.is_correct;
+    
+    if (isCorrect) {
+      this.correctAnswers++;
+    } else {
+      this.wrongAnswers++;
+    }
+
+    this.updateProgress();
+    this.updateBackendProgress(); // Backend'e progress gönder
+    this.showResult = true;
+    this.showExplanation = true;
+    this.showAIFeedback = true;
+    this.generateAIFeedback(isCorrect, response);
+    
+    // Backend'den gelen bilgileri kullan
+    if (response.message) {
+      console.log('Backend message:', response.message);
+    }
+    
+    // Başarı bildirimi
+    if (isCorrect) {
+      this.errorHandler.showSuccess('Doğru cevap! Tebrikler!');
+    }
+  }
+
+  private updateBackendProgress() {
+    const totalAnswered = this.correctAnswers + this.wrongAnswers;
+    const progressData = {
+      questions_answered: totalAnswered,
+      correct_answers: this.correctAnswers,
+      accuracy_rate: totalAnswered > 0 ? (this.correctAnswers / totalAnswered) * 100 : 0,
+      total_study_time: this.elapsedTime,
+      current_session: {
+        session_start: new Date(Date.now() - this.elapsedTime * 1000).toISOString(),
+        questions_in_session: totalAnswered,
+        session_accuracy: this.accuracyPercentage
+      }
+    };
+
+    this.questionService.updateProgress(progressData).subscribe({
+      next: (response) => {
+        console.log('Progress updated:', response);
+      },
+      error: (error) => {
+        console.error('Error updating progress:', error);
+        // Error handling zaten QuestionService'te yapılıyor
+      }
+    });
+  }
+
+  private handleLocalAnswer() {
+    // Fallback: Local validation
+    const isCorrect = this.selectedOption === this.currentQuestion?.correct_answer;
     
     if (isCorrect) {
       this.correctAnswers++;
@@ -176,6 +278,16 @@ export class SolveQuestionComponent implements OnInit, OnDestroy {
     this.generateAIFeedback(isCorrect);
   }
 
+  private getConfidenceLevel(): number {
+    // Basit confidence hesaplama (zamanla geliştirilecek)
+    const timeTaken = this.elapsedTime;
+    if (timeTaken < 30) return 5; // Very confident
+    if (timeTaken < 60) return 4; // Confident
+    if (timeTaken < 120) return 3; // Neutral
+    if (timeTaken < 180) return 2; // Unsure
+    return 1; // Very unsure
+  }
+
   nextQuestion() {
     if (this.currentQuestionIndex >= this.totalQuestions - 1) {
       this.endQuiz();
@@ -183,7 +295,7 @@ export class SolveQuestionComponent implements OnInit, OnDestroy {
     }
 
     this.currentQuestionIndex++;
-    this.loadQuestion();
+    this.loadQuestion(); // Yeni soru backend'den gelecek
   }
 
   updateProgress() {
@@ -191,18 +303,22 @@ export class SolveQuestionComponent implements OnInit, OnDestroy {
     this.accuracyPercentage = totalAnswered > 0 ? Math.round((this.correctAnswers / totalAnswered) * 100) : 0;
   }
 
-  generateAIFeedback(isCorrect: boolean) {
+  generateAIFeedback(isCorrect: boolean, response?: any) {
     if (isCorrect) {
       this.aiFeedbackText = `
         <strong>Tebrikler! ✅</strong><br>
-        Bu soruyu doğru çözdün. ${this.currentQuestion?.topic} konusunda iyi durumdasın. 
+        Bu soruyu doğru çözdün. ${this.currentQuestion?.topic} konusunda iyi durumdasın.<br>
+        ${response?.points_earned ? `<strong>+${response.points_earned} puan kazandın!</strong><br>` : ''}
+        ${response?.current_streak ? `🔥 Seri: ${response.current_streak} doğru!<br>` : ''}
         Bir sonraki soruda biraz daha zorlu bir problem ile karşılaşacaksın.
       `;
     } else {
       this.aiFeedbackText = `
         <strong>Üzülme! ❌</strong><br>
-        Bu soru yanlış oldu ama endişe etme. ${this.currentQuestion?.topic} konusunda biraz daha çalışman gerekiyor.
-        Benzer 3 soru daha çözmen öneriliyor.
+        Bu soru yanlış oldu ama endişe etme. ${this.currentQuestion?.topic} konusunda biraz daha çalışman gerekiyor.<br>
+        ${response?.correct_answer ? `<strong>Doğru cevap: ${response.correct_answer}</strong><br>` : ''}
+        ${response?.explanation ? `<em>${response.explanation}</em><br>` : ''}
+        Benzer sorularla pratik yapman öneriliyor.
       `;
     }
   }
@@ -259,8 +375,39 @@ export class SolveQuestionComponent implements OnInit, OnDestroy {
     const totalAnswered = this.correctAnswers + this.wrongAnswers;
     const finalAccuracy = totalAnswered > 0 ? Math.round((this.correctAnswers / totalAnswered) * 100) : 0;
     
-    alert(`Quiz tamamlandı!\n\nSonuçlarınız:\nDoğru: ${this.correctAnswers}\nYanlış: ${this.wrongAnswers}\nDoğruluk Oranı: ${finalAccuracy}%\nToplam Süre: ${this.formatTime(this.elapsedTime)}`);
+    // Quiz sonuçlarını backend'e gönder
+    this.submitQuizResults({
+      total_questions: totalAnswered,
+      correct_answers: this.correctAnswers,
+      wrong_answers: this.wrongAnswers,
+      accuracy_percentage: finalAccuracy,
+      total_time_seconds: this.elapsedTime,
+      session_data: {
+        started_at: new Date(Date.now() - this.elapsedTime * 1000).toISOString(),
+        completed_at: new Date().toISOString()
+      }
+    });
+    
+    this.errorHandler.showSuccess(
+      `Quiz tamamlandı! Doğru: ${this.correctAnswers}, Yanlış: ${this.wrongAnswers}, Oran: ${finalAccuracy}%`
+    );
     
     this.router.navigate(['/']);
+  }
+
+  private submitQuizResults(results: any) {
+    console.log('Quiz results to submit:', results);
+    
+    // Backend'e quiz sonuçlarını gönder
+    this.questionService.submitQuizResults(results).subscribe({
+      next: (response) => {
+        console.log('Quiz results submitted successfully:', response);
+        this.errorHandler.showSuccess('Quiz sonuçları kaydedildi!');
+      },
+      error: (error) => {
+        console.error('Error submitting quiz results:', error);
+        // Error handling zaten QuestionService'te yapılıyor
+      }
+    });
   }
 }

@@ -79,7 +79,9 @@ class Question(Base):
     created_by = Column(Integer, ForeignKey("users.id"))
     is_active = Column(Boolean, default=True)
     bert_sim = Column(JSON)  # Embedding vektörü (eski alan)
-    embedding = Column(Text)  # pgvector için embedding alanı
+    topic_id = Column(Integer, ForeignKey("topics.id"))  # Eksik olan topic_id
+    embedding = Column(Text)  # Vector embedding - JSON formatında saklanıyor  
+    embedding_vector = Column(Text)  # pgvector integration için
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

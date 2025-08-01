@@ -346,4 +346,68 @@ def get_skill_name_by_question(db: Session, question_id: int) -> str:
             return "Genel"
     except Exception as e:
         logger.error("get_skill_name_error", question_id=question_id, error=str(e))
-        return "Bilinmeyen" 
+        return "Bilinmeyen"
+
+def get_recommended_questions(db: Session, student_id: int, limit: int = 10, 
+                            difficulty_preference: Optional[int] = None,
+                            topic_id: Optional[int] = None) -> List[Question]:
+    """Öğrenci için kişiselleştirilmiş soru önerileri getir"""
+    try:
+        # Temel sorgu - aktif sorular
+        query = db.query(Question).filter(Question.is_active == True)
+        
+        # Zorluk seviyesi filtresi
+        if difficulty_preference:
+            # ±1 zorluk aralığı ver
+            min_diff = max(1, difficulty_preference - 1)
+            max_diff = min(5, difficulty_preference + 1)
+            query = query.filter(
+                Question.difficulty_level.between(min_diff, max_diff)
+            )
+        
+        # Konu filtresi
+        if topic_id:
+            query = query.filter(Question.topic_id == topic_id)
+        
+        # Öğrencinin daha önce cevaplamadığı soruları getir
+        answered_questions = db.query(StudentResponse.question_id).filter(
+            StudentResponse.student_id == student_id
+        ).subquery()
+        
+        query = query.filter(~Question.id.in_(answered_questions))
+        
+        # Karışık sıralama ve limit
+        questions = query.order_by(func.random()).limit(limit * 2).all()
+        
+        # Neo4j skill-based filtering (eğer aktifse)
+        if settings.USE_NEO4J and questions:
+            # En son cevaplanan soruların skill'lerini al
+            recent_responses = db.query(StudentResponse).filter(
+                StudentResponse.student_id == student_id
+            ).order_by(StudentResponse.created_at.desc()).limit(5).all()
+            
+            if recent_responses:
+                # Benzer skill'lere sahip soruları öncelikle
+                skilled_questions = []
+                for question in questions:
+                    try:
+                        centrality = get_question_skill_centrality(question.id)
+                        question._temp_centrality = centrality["centrality"]
+                        skilled_questions.append(question)
+                    except:
+                        question._temp_centrality = 0.0
+                        skilled_questions.append(question)
+                
+                # Centrality'ye göre sırala
+                skilled_questions.sort(key=lambda q: getattr(q, '_temp_centrality', 0.0), reverse=True)
+                return skilled_questions[:limit]
+        
+        # Fallback: Rastgele seçim
+        return questions[:limit]
+        
+    except Exception as e:
+        logger.error("get_recommended_questions_error", 
+                    student_id=student_id, 
+                    error=str(e))
+        # Fallback: Random sorular
+        return db.query(Question).filter(Question.is_active == True).order_by(func.random()).limit(limit).all() 

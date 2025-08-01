@@ -19,10 +19,10 @@ class Settings(BaseSettings):
 
     # PostgreSQL Configuration
     POSTGRES_SERVER: str = "localhost"
-    POSTGRES_USER: str = "kullanici"
-    POSTGRES_PASSWORD: str = "sifre"
-    POSTGRES_DB: str = "veritabani"
-    DATABASE_URL: str = "postgresql+psycopg2://kullanici:sifre@localhost:5432/veritabani"
+    POSTGRES_USER: str = "yoladgu_user"
+    POSTGRES_PASSWORD: str = "yoladgu123"
+    POSTGRES_DB: str = "yoladgu"
+    DATABASE_URL: str = "postgresql+psycopg2://yoladgu_user:yoladgu123@localhost:5432/yoladgu"
 
     # Redis Configuration
     REDIS_HOST: str = "localhost"
