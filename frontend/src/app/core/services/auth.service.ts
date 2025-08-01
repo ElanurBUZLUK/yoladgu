@@ -5,6 +5,7 @@ import { map, tap, catchError } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 import { Router } from '@angular/router';
 import { ErrorHandlerService } from './error-handler.service';
+import { ApiConfig } from '../config/api.config';
 
 interface User {
   id: number;
@@ -25,7 +26,7 @@ interface LoginResponse {
   providedIn: 'root'
 })
 export class AuthService {
-  private apiUrl = '/api/v1';
+// Remove private apiUrl since we'll use ApiConfig directly
   private currentUserSubject = new BehaviorSubject<User | null>(null);
   public currentUser$ = this.currentUserSubject.asObservable();
 
@@ -34,6 +35,7 @@ export class AuthService {
     private router: Router,
     private errorHandler: ErrorHandlerService
   ) {
+    console.log('AuthService API Config:', ApiConfig.getConfig());
     this.checkStoredToken();
   }
 
@@ -52,7 +54,7 @@ export class AuthService {
     formData.append('username', username);
     formData.append('password', password);
 
-    return this.http.post<LoginResponse>(`${this.apiUrl}/auth/login`, formData)
+    return this.http.post<LoginResponse>(ApiConfig.getApiUrl('auth/login'), formData)
       .pipe(
         tap(response => {
           localStorage.setItem('token', response.access_token);
@@ -67,7 +69,7 @@ export class AuthService {
   }
 
   register(userData: any): Observable<any> {
-    return this.http.post(`${this.apiUrl}/auth/register`, userData)
+    return this.http.post(ApiConfig.getApiUrl('auth/register'), userData)
       .pipe(
         tap(() => {
           this.errorHandler.showSuccess('Kayıt başarılı! Giriş yapabilirsiniz.');
@@ -87,7 +89,7 @@ export class AuthService {
   }
 
   getCurrentUser(): Observable<User> {
-    return this.http.get<User>(`${this.apiUrl}/users/me`)
+    return this.http.get<User>(ApiConfig.getApiUrl('users/me'))
       .pipe(
         catchError(error => {
           this.errorHandler.handleHttpError(error);

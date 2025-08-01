@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 import { ErrorHandlerService } from '../../../core/services/error-handler.service';
+import { ApiConfig } from '../../../core/config/api.config';
 
 interface QuestionResponse {
   id: number;
@@ -33,15 +34,18 @@ interface SubmitAnswerResponse {
 
 @Injectable({ providedIn: 'root' })
 export class QuestionService {
-  private apiUrl = '/api/v1'; // Backend API v1 prefix kullanıyor
+  private apiUrl = ApiConfig.getApiUrl(); // API URL'i config'den al
 
   constructor(
     private http: HttpClient,
     private errorHandler: ErrorHandlerService
-  ) {}
+  ) {
+    // Debug API configuration
+    console.log('QuestionService API Config:', ApiConfig.getConfig());
+  }
 
   getNextQuestion(): Observable<QuestionResponse> {
-    return this.http.get<QuestionResponse>(`${this.apiUrl}/recommendations/next-question`)
+    return this.http.get<QuestionResponse>(ApiConfig.getApiUrl('recommendations/next-question'))
       .pipe(
         catchError(error => {
           this.errorHandler.handleHttpError(error);
@@ -55,7 +59,7 @@ export class QuestionService {
     if (responseTime) payload.response_time = responseTime;
     if (confidenceLevel) payload.confidence_level = confidenceLevel;
     
-    return this.http.post<SubmitAnswerResponse>(`${this.apiUrl}/questions/${questionId}/answer`, payload)
+    return this.http.post<SubmitAnswerResponse>(ApiConfig.getApiUrl(`questions/${questionId}/answer`), payload)
       .pipe(
         catchError(error => {
           this.errorHandler.handleHttpError(error);
@@ -66,7 +70,7 @@ export class QuestionService {
 
   // Yeni method: Random question almak için (fallback)
   getRandomQuestion(): Observable<QuestionResponse> {
-    return this.http.get<QuestionResponse>(`${this.apiUrl}/questions/random`)
+    return this.http.get<QuestionResponse>(ApiConfig.getApiUrl('questions/random'))
       .pipe(
         catchError(error => {
           this.errorHandler.handleHttpError(error);
@@ -77,7 +81,7 @@ export class QuestionService {
 
   // Quiz sonuçlarını backend'e gönder
   submitQuizResults(results: any): Observable<any> {
-    return this.http.post(`${this.apiUrl}/quiz-sessions`, results)
+    return this.http.post(ApiConfig.getApiUrl('quiz-sessions'), results)
       .pipe(
         catchError(error => {
           this.errorHandler.handleHttpError(error);
@@ -88,7 +92,7 @@ export class QuestionService {
 
   // Öğrenci progress data güncelle
   updateProgress(progressData: any): Observable<any> {
-    return this.http.put(`${this.apiUrl}/users/me/progress`, progressData)
+    return this.http.put(ApiConfig.getApiUrl('users/me/progress'), progressData)
       .pipe(
         catchError(error => {
           this.errorHandler.handleHttpError(error);
