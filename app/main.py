@@ -227,16 +227,18 @@ def health_check():
         health_status["services"]["redis"] = f"unhealthy: {str(e)}"
         health_status["status"] = "degraded"
     
-    # Neo4j health check
+    # Neo4j health check (using singleton service)
     if settings.USE_NEO4J:
         try:
-            from neo4j import GraphDatabase
-            driver = GraphDatabase.driver(settings.NEO4J_URI, 
-                                        auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD))
-            with driver.session() as session:
-                session.run("RETURN 1")
-            driver.close()
-            health_status["services"]["neo4j"] = "healthy"
+            from app.services.neo4j_service import neo4j_service
+            if neo4j_service._driver:
+                # Test existing connection
+                with neo4j_service._driver.session() as session:
+                    session.run("RETURN 1")
+                health_status["services"]["neo4j"] = "healthy"
+            else:
+                health_status["services"]["neo4j"] = "unhealthy: driver not initialized"
+                health_status["status"] = "degraded"
         except Exception as e:
             health_status["services"]["neo4j"] = f"unhealthy: {str(e)}"
             health_status["status"] = "degraded"

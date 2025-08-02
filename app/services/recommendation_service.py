@@ -13,6 +13,8 @@ from app.services.level_service import update_student_level
 from app.ml.bandits import LinUCBBandit
 from neo4j import GraphDatabase
 import structlog
+
+logger = structlog.get_logger()
 from prometheus_client import Counter, Histogram
 model_update_counter = Counter("model_update_total", "Model güncelleme sayısı")
 model_update_duration = Histogram("model_update_duration_seconds", "Model update süresi", ["subject", "environment"])
@@ -40,18 +42,31 @@ def build_river_model():
     )
 
 def get_skill_centrality(student_id):
-    driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD))
-    with driver.session() as session:
-        res = session.run(
-            """
-            MATCH (u:User {id: $student_id})-[:SOLVED]->(q:Question)-[:HAS_SKILL]->(s:Skill)
-            RETURN s.id AS skill_id, count(*) AS freq
-            """,
-            student_id=student_id
-        )
-        centrality = {r["skill_id"]: r["freq"] for r in res}
-    driver.close()
-    return centrality
+    from app.services.neo4j_service import neo4j_service
+    
+    if not neo4j_service._driver:
+        logger.warning("neo4j_not_available", operation="get_skill_centrality")
+        return {}
+    
+    try:
+        with neo4j_service._driver.session() as session:
+            res = session.run(
+                """
+                MATCH (u:User {id: $student_id})-[:SOLVED]->(q:Question)-[:HAS_SKILL]->(s:Skill)
+                RETURN s.id AS skill_id, count(*) AS freq
+                """,
+                student_id=student_id
+            )
+            centrality = {r["skill_id"]: r["freq"] for r in res}
+            logger.info("skill_centrality_retrieved", 
+                       student_id=student_id, 
+                       skill_count=len(centrality))
+            return centrality
+    except Exception as e:
+        logger.error("get_skill_centrality_error", 
+                    student_id=student_id, 
+                    error=str(e))
+        return {}
 
 def diversity_filter(candidates, question_embeddings, top_n=5):
     # candidates: [(question_id, score), ...]
@@ -80,16 +95,10 @@ def diversity_filter(candidates, question_embeddings, top_n=5):
     return filtered
 
 def add_question_to_neo4j(question_id, skill_ids):
-    driver = GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD))
-    with driver.session() as session:
-        for skill_id in skill_ids:
-            session.run(
-                "MERGE (q:Question {id: $qid}) "
-                "MERGE (s:Skill {id: $sid}) "
-                "MERGE (q)-[:HAS_SKILL]->(s)",
-                qid=question_id, sid=skill_id
-            )
-    driver.close()
+    from app.services.neo4j_service import neo4j_service
+    
+    # Use the centralized Neo4j service instead of creating new driver
+    neo4j_service.add_question_skills(question_id, skill_ids)
 
 # Embedding hesaplama artık embedding_service'den geliyor
 from app.services.embedding_service import compute_embedding

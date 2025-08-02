@@ -11,29 +11,32 @@ import json
 logger = structlog.get_logger()
 
 def _get_neo4j_driver():
-    """Neo4j driver instance'ı döndür"""
+    """Neo4j driver instance'ı döndür (Deprecated: Use neo4j_service instead)"""
+    from app.services.neo4j_service import neo4j_service
     if not settings.USE_NEO4J:
         return None
-    return GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD))
+    return neo4j_service.driver
 
 def _sync_question_to_neo4j(question_id: int, skill_ids: dict = None):
     """Soru ve skill ilişkilerini Neo4j'e senkronize et"""
+    from app.services.neo4j_service import neo4j_service
+    
     if not settings.USE_NEO4J:
         return
     
-    driver = _get_neo4j_driver()
-    if not driver:
+    if not neo4j_service._driver:
+        logger.warning("neo4j_not_available", operation="_sync_question_to_neo4j")
         return
     
     try:
-        with driver.session() as session:
+        with neo4j_service._driver.session() as session:
             # Soru node'unu oluştur/güncelle
             session.run(
                 "MERGE (q:Question {id: $question_id})",
                 question_id=question_id
             )
             
-            # Skill ilişkilerini ekle
+            # Skill ilişkilerini ekle (with weights support)
             if skill_ids:
                 for skill_id, weight in skill_ids.items():
                     session.run(
@@ -47,8 +50,6 @@ def _sync_question_to_neo4j(question_id: int, skill_ids: dict = None):
         logger.info("question_synced_to_neo4j", question_id=question_id, skill_count=len(skill_ids) if skill_ids else 0)
     except Exception as e:
         logger.error("neo4j_sync_error", question_id=question_id, error=str(e))
-    finally:
-        driver.close()
 
 def get_question(db: Session, question_id: int) -> Optional[Question]:
     return db.query(Question).filter(Question.id == question_id, Question.is_active == True).first()
