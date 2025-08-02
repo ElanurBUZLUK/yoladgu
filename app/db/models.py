@@ -1,9 +1,8 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, Enum, JSON
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
-
-Base = declarative_base()
+from app.db.database import Base
 
 class UserRole(enum.Enum):
     STUDENT = "student"
@@ -79,7 +78,6 @@ class Question(Base):
     created_by = Column(Integer, ForeignKey("users.id"))
     is_active = Column(Boolean, default=True)
     bert_sim = Column(JSON)  # Embedding vektörü (eski alan)
-    topic_id = Column(Integer, ForeignKey("topics.id"))  # Eksik olan topic_id
     embedding = Column(Text)  # Vector embedding - JSON formatında saklanıyor  
     embedding_vector = Column(Text)  # pgvector integration için
     created_at = Column(DateTime, default=datetime.utcnow)
