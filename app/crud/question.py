@@ -69,6 +69,30 @@ def get_questions(db: Session, skip: int = 0, limit: int = 100,
     
     return query.offset(skip).limit(limit).all()
 
+def get_random_question(
+    db: Session,
+    subject_id: Optional[int] = None,
+    topic_id: Optional[int] = None,
+    difficulty_level: Optional[int] = None,
+    question_type: Optional[str] = None
+) -> Optional[Question]:
+    """Rastgele bir soru getir"""
+    query = db.query(Question).filter(Question.is_active == True)
+    
+    # Filtreleri uygula
+    if subject_id:
+        query = query.filter(Question.subject_id == subject_id)
+    if topic_id:
+        query = query.filter(Question.topic_id == topic_id)
+    if difficulty_level:
+        query = query.filter(Question.difficulty_level == difficulty_level)
+    if question_type:
+        query = query.filter(Question.question_type == question_type)
+    
+    # Rastgele sıralama ile bir soru getir
+    return query.order_by(func.random()).first()
+
+
 def get_questions_by_skills(db: Session, skill_ids: List[int], limit: int = 100) -> List[Question]:
     """Belirli skill'lere sahip soruları getir"""
     return db.query(Question).join(QuestionSkill).filter(

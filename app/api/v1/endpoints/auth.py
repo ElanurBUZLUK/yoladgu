@@ -40,7 +40,8 @@ def login_access_token(
             data={"sub": user.username}, expires_delta=access_token_expires
         ),
         "token_type": "bearer",
-        "role": user.role.value
+        "role": user.role.value,
+        "user": user
     }
 
 @router.post("/register", response_model=User)

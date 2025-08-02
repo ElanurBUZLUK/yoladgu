@@ -13,13 +13,13 @@ class UserRole(enum.Enum):
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    full_name = Column(String, nullable=False)
+    grade = Column(String, nullable=True)
+    hashed_password = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.STUDENT)
-    grade = Column(String)  # Sınıf bilgisi
-    last_login = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -174,4 +174,21 @@ class StudentProfile(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    student = relationship("User", back_populates="profile") 
+    student = relationship("User", back_populates="profile")
+
+class QuizSession(Base):
+    __tablename__ = "quiz_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    total_questions = Column(Integer, nullable=False)
+    correct_answers = Column(Integer, nullable=False)
+    wrong_answers = Column(Integer, nullable=False)
+    accuracy_percentage = Column(Float, nullable=False)
+    total_time_seconds = Column(Integer, nullable=False)
+    started_at = Column(DateTime, nullable=False)
+    completed_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    student = relationship("User") 

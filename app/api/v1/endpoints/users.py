@@ -2,9 +2,9 @@ from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.crud.user import get_user, get_users, create_user, update_user, delete_user, get_current_user
+from app.crud.user import get_user, get_users, create_user, update_user, delete_user, get_current_user, update_user_progress
 from app.db.database import get_db
-from app.schemas.user import User, UserCreate, UserUpdate
+from app.schemas.user import User, UserCreate, UserUpdate, ProgressUpdate
 from app.db.models import User as UserModel, StudentProfile
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -55,6 +55,30 @@ def read_my_level(
         "level": profile.level,
         "min_level": profile.min_level,
         "max_level": profile.max_level
+    }
+
+@router.put("/me/progress")
+def update_my_progress(
+    *,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+    progress_data: ProgressUpdate,
+) -> Any:
+    """
+    Update current user's progress information
+    """
+    profile = update_user_progress(db, user_id=current_user.id, progress=progress_data)
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update progress"
+        )
+    return {
+        "message": "Progress updated successfully",
+        "level": profile.level,
+        "total_questions_answered": profile.total_questions_answered,
+        "total_correct_answers": profile.total_correct_answers,
+        "average_response_time": profile.average_response_time
     }
 
 @router.get("/{user_id}", response_model=User)

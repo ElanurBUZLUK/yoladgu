@@ -6,7 +6,7 @@ from app.db.models import Question, Subject, Skill, QuestionSkill, StudentRespon
 from app.schemas.question import (
     QuestionCreate, QuestionUpdate, QuestionResponse, QuestionRecommendation,
     QuestionSimilarity, StudentSkillMastery, LearningPath, RecommendationRequest,
-    RecommendationResponse, SkillCentrality
+    RecommendationResponse, SkillCentrality, AnswerSubmission, AnswerResponse
 )
 from app.services.recommendation_service import recommendation_service
 from app.services.embedding_service import EmbeddingService
@@ -17,7 +17,8 @@ from app.crud.question import (
     get_shared_skills_between_questions, get_skill_name_by_question,
     get_similar_questions_from_neo4j, get_question_skill_centrality,
     get_questions_by_skills, get_questions_without_embeddings, update_question_embedding,
-    get_question_statistics, search_questions, get_questions_by_difficulty_range
+    get_question_statistics, search_questions, get_questions_by_difficulty_range,
+    get_random_question
 )
 from app.crud.student_response import get_student_skill_mastery_from_neo4j, get_student_learning_path_from_neo4j
 from app.db.models import User
@@ -101,6 +102,28 @@ def get_questions_statistics(
     """Get question statistics"""
     stats = get_question_statistics(db)
     return stats
+
+@router.get("/questions/random", response_model=QuestionResponse)
+def get_random_question_endpoint(
+    subject_id: Optional[int] = None,
+    topic_id: Optional[int] = None,
+    difficulty_level: Optional[int] = None,
+    question_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get a random question with optional filtering"""
+    question = get_random_question(
+        db=db,
+        subject_id=subject_id,
+        topic_id=topic_id,
+        difficulty_level=difficulty_level,
+        question_type=question_type
+    )
+    if not question:
+        raise HTTPException(status_code=404, detail="No questions available")
+    return question
+
 
 @router.get("/questions/{question_id}", response_model=QuestionResponse)
 def get_question_endpoint(
@@ -249,12 +272,10 @@ def delete_question_endpoint(
     deleted_question = delete_question(db, question_id)
     return {"message": "Question deleted successfully"}
 
-@router.post("/questions/{question_id}/answer")
+@router.post("/questions/{question_id}/answer", response_model=AnswerResponse)
 def submit_answer(
     question_id: int,
-    answer: str,
-    confidence_level: Optional[int] = None,
-    feedback: Optional[str] = None,
+    answer_data: AnswerSubmission,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -267,8 +288,10 @@ def submit_answer(
         raise HTTPException(status_code=404, detail="Question not found")
     
     # Cevabın doğruluğunu kontrol et
-    is_correct = answer.strip().lower() == question.correct_answer.strip().lower()
-    response_time = time.time() - start_time
+    is_correct = answer_data.answer.strip().lower() == question.correct_answer.strip().lower()
+    
+    # Response time'ı answer_data'dan al veya hesapla
+    response_time = answer_data.response_time if answer_data.response_time else (time.time() - start_time)
     
     # Öğrenci cevabını kaydet
     from app.crud.student_response import create_response
@@ -276,11 +299,11 @@ def submit_answer(
         db=db,
         student_id=current_user.id,
         question_id=question_id,
-        answer=answer,
+        answer=answer_data.answer,
         is_correct=is_correct,
         response_time=response_time,
-        confidence_level=confidence_level,
-        feedback=feedback
+        confidence_level=answer_data.confidence_level,
+        feedback=answer_data.feedback
     )
     
     # --- Asenkron güncelleme için Redis Stream'e event yaz ---
@@ -298,14 +321,17 @@ def submit_answer(
         logger.error("redis_stream_error", error=str(e))
     # ------------------------------------------------------------------
     
-    return {
-        "question_id": question_id,
-        "is_correct": is_correct,
-        "correct_answer": question.correct_answer,
-        "explanation": question.explanation,
-        "response_time": response_time,
-        "response_id": student_response.id
-    }
+    return AnswerResponse(
+        question_id=question_id,
+        is_correct=is_correct,
+        correct_answer=question.correct_answer,
+        explanation=question.explanation,
+        response_time=response_time,
+        response_id=student_response.id,
+        points_earned=10 if is_correct else 0,  # Basit puanlama sistemi
+        current_streak=None,  # Bu ileride hesaplanabilir
+        message="Doğru cevap!" if is_correct else "Yanlış cevap, tekrar dene!"
+    )
 
 @router.get("/recommendations/", response_model=RecommendationResponse)
 def get_recommendations(

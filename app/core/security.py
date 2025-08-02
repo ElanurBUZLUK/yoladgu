@@ -27,6 +27,45 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+
+def decode_access_token(token: str) -> Optional[dict]:
+    """
+    JWT token'ı decode eder ve payload'ı döndürür.
+    Token geçersiz veya expired ise None döndürür.
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+
+def is_token_expired(token: str) -> bool:
+    """
+    Token'ın expire olup olmadığını kontrol eder.
+    Token geçersiz ise True döndürür.
+    """
+    payload = decode_access_token(token)
+    if payload is None:
+        return True
+    
+    exp = payload.get("exp")
+    if exp is None:
+        return True
+    
+    return datetime.utcnow().timestamp() > exp
+
+
+def get_token_username(token: str) -> Optional[str]:
+    """
+    Token'dan username'i çıkarır.
+    """
+    payload = decode_access_token(token)
+    if payload is None:
+        return None
+    
+    return payload.get("sub")
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

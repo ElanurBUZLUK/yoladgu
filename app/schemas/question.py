@@ -183,4 +183,23 @@ class RecommendationResponse(BaseModel):
     total_questions_answered: int
     accuracy_rate: float
     average_response_time: float
-    generated_at: datetime 
+    generated_at: datetime
+
+
+class AnswerSubmission(BaseModel):
+    answer: str = Field(..., description="Student's answer to the question")
+    response_time: Optional[float] = Field(None, description="Time taken to answer in seconds")
+    confidence_level: Optional[int] = Field(None, ge=1, le=5, description="Confidence level from 1 to 5")
+    feedback: Optional[str] = Field(None, description="Optional feedback from student")
+
+
+class AnswerResponse(BaseModel):
+    question_id: int
+    is_correct: bool
+    correct_answer: str
+    explanation: Optional[str] = None
+    response_time: float
+    response_id: int
+    points_earned: Optional[int] = None
+    current_streak: Optional[int] = None
+    message: Optional[str] = None 

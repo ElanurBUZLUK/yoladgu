@@ -35,7 +35,6 @@ export class AuthService {
     private router: Router,
     private errorHandler: ErrorHandlerService
   ) {
-    console.log('AuthService API Config:', ApiConfig.getConfig());
     this.checkStoredToken();
   }
 
@@ -50,11 +49,15 @@ export class AuthService {
   }
 
   login(username: string, password: string): Observable<LoginResponse> {
-    const formData = new FormData();
-    formData.append('username', username);
-    formData.append('password', password);
+    const body = new URLSearchParams();
+    body.set('username', username);
+    body.set('password', password);
 
-    return this.http.post<LoginResponse>(ApiConfig.getApiUrl('auth/login'), formData)
+    const headers = {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    };
+
+    return this.http.post<LoginResponse>(ApiConfig.getApiUrl('auth/login'), body.toString(), { headers })
       .pipe(
         tap(response => {
           localStorage.setItem('token', response.access_token);
@@ -68,8 +71,8 @@ export class AuthService {
       );
   }
 
-  register(userData: any): Observable<any> {
-    return this.http.post(ApiConfig.getApiUrl('auth/register'), userData)
+  register(userData: any): Observable<User> {
+    return this.http.post<User>(ApiConfig.getApiUrl('auth/register'), userData)
       .pipe(
         tap(() => {
           this.errorHandler.showSuccess('Kayıt başarılı! Giriş yapabilirsiniz.');
@@ -100,10 +103,31 @@ export class AuthService {
 
   isAuthenticated(): boolean {
     const token = localStorage.getItem('token');
-    return !!token;
+    if (!token) {
+      return false;
+    }
+    
+    // Token expiry kontrolü
+    if (this.isTokenExpired(token)) {
+      this.logout();
+      return false;
+    }
+    
+    return true;
   }
 
   getToken(): string | null {
     return localStorage.getItem('token');
+  }
+
+  private isTokenExpired(token: string): boolean {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const exp = payload.exp * 1000; // Convert to milliseconds
+      return Date.now() >= exp;
+    } catch (error) {
+      // Token geçersiz ise expired kabul et
+      return true;
+    }
   }
 }
