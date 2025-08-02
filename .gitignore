@@ -324,4 +324,7 @@ docker-compose.override.yml
 
 # Local development
 local/
+
+# Crush cache directories
+.crush/
 dev/ 
