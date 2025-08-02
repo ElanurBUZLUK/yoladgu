@@ -133,6 +133,22 @@ async def startup_event():
     """Application startup event"""
     logger.info("Starting application services...")
     
+    # Initialize singleton services
+    try:
+        from app.services.neo4j_service import neo4j_service
+        from app.services.redis_service import redis_service
+        
+        # Initialize Neo4j service
+        neo4j_service  # This triggers __init__ if not already initialized
+        logger.info("Neo4j service initialized")
+        
+        # Initialize Redis service  
+        redis_service  # This triggers __init__ if not already initialized
+        logger.info("Redis service initialized")
+        
+    except Exception as e:
+        logger.error("Failed to initialize singleton services", error=str(e))
+    
     # Start stream consumer in background
     try:
         from app.services.enhanced_stream_consumer import stream_consumer_manager
@@ -149,6 +165,8 @@ async def startup_event():
 async def shutdown_event():
     """Application shutdown event"""
     logger.info("Shutting down application services...")
+    
+    # Stop stream consumer
     try:
         from app.services.enhanced_stream_consumer import stream_consumer_manager
         if stream_consumer_manager and stream_consumer_manager.running:
@@ -156,6 +174,22 @@ async def shutdown_event():
             logger.info("Stream consumer stopped successfully")
     except Exception as e:
         logger.error("Error stopping stream consumer", error=str(e))
+    
+    # Close singleton services
+    try:
+        from app.services.neo4j_service import neo4j_service
+        from app.services.redis_service import redis_service
+        
+        # Close Neo4j driver
+        neo4j_service.close()
+        logger.info("Neo4j service closed")
+        
+        # Close Redis client
+        redis_service.close()
+        logger.info("Redis service closed")
+        
+    except Exception as e:
+        logger.error("Error closing singleton services", error=str(e))
 
 @app.get("/health")
 def health_check():

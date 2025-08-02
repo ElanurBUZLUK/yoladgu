@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, Enum, JSON
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import VECTOR
 from datetime import datetime
 import enum
 from app.db.database import Base
@@ -77,9 +78,9 @@ class Question(Base):
     tags = Column(JSON)  # Etiketler
     created_by = Column(Integer, ForeignKey("users.id"))
     is_active = Column(Boolean, default=True)
-    bert_sim = Column(JSON)  # Embedding vektörü (eski alan)
-    embedding = Column(Text)  # Vector embedding - JSON formatında saklanıyor  
-    embedding_vector = Column(Text)  # pgvector integration için
+    bert_sim = Column(JSON)  # Legacy embedding vektörü (deprecated)
+    embedding = Column(Text)  # Legacy text embedding - JSON formatında (backward compatibility)  
+    embedding_vector = Column(VECTOR(384), nullable=True)  # pgvector for semantic similarity (MiniLM-L6-v2: 384 dims)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

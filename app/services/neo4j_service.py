@@ -11,41 +11,62 @@ from app.core.config import settings
 logger = structlog.get_logger()
 
 class Neo4jService:
-    """Service for Neo4j graph database operations"""
+    """Singleton service for Neo4j graph database operations"""
+    
+    _instance = None
+    _driver = None
+    _initialized = False
+    
+    def __new__(cls):
+        """Singleton pattern implementation"""
+        if cls._instance is None:
+            cls._instance = super(Neo4jService, cls).__new__(cls)
+        return cls._instance
     
     def __init__(self):
-        """Initialize Neo4j connection"""
+        """Initialize Neo4j connection (only once)"""
+        if self._initialized:
+            return
+            
         if settings.USE_NEO4J:
             try:
-                self.driver = GraphDatabase.driver(
+                self._driver = GraphDatabase.driver(
                     settings.NEO4J_URI,
                     auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD)
                 )
                 # Test connection
-                with self.driver.session() as session:
+                with self._driver.session() as session:
                     session.run("RETURN 1")
                 logger.info("neo4j_connection_established", uri=settings.NEO4J_URI)
             except Exception as e:
                 logger.error("neo4j_connection_failed", error=str(e))
-                self.driver = None
+                self._driver = None
         else:
-            self.driver = None
+            self._driver = None
             logger.info("neo4j_disabled_in_config")
+            
+        self._initialized = True
+    
+    @property
+    def driver(self):
+        """Get the Neo4j driver instance"""
+        return self._driver
 
     def close(self):
         """Close Neo4j connection"""
-        if self.driver:
-            self.driver.close()
+        if self._driver:
+            self._driver.close()
+            self._driver = None
             logger.info("neo4j_connection_closed")
 
     def add_question_skills(self, question_id: int, skill_ids: List[int]):
         """Add skill relationships to a question"""
-        if not self.driver:
+        if not self._driver:
             logger.warning("neo4j_not_available", operation="add_question_skills")
             return
         
         try:
-            with self.driver.session() as session:
+            with self._driver.session() as session:
                 for skill_id in skill_ids:
                     session.run(
                         """
@@ -65,12 +86,12 @@ class Neo4jService:
 
     def record_student_solution(self, student_id: int, question_id: int, correct: bool):
         """Record a student's solution attempt"""
-        if not self.driver:
+        if not self._driver:
             logger.warning("neo4j_not_available", operation="record_student_solution")
             return
         
         try:
-            with self.driver.session() as session:
+            with self._driver.session() as session:
                 session.run(
                     """
                     MERGE (u:User {id: $uid})
@@ -92,12 +113,12 @@ class Neo4jService:
 
     def get_similar_questions(self, question_id: int, min_shared_skills: int = 1, limit: int = 10) -> List[int]:
         """Get questions similar to given question based on shared skills"""
-        if not self.driver:
+        if not self._driver:
             logger.warning("neo4j_not_available", operation="get_similar_questions")
             return []
         
         try:
-            with self.driver.session() as session:
+            with self._driver.session() as session:
                 result = session.run(
                     """
                     MATCH (q1:Question {id: $qid})-[:HAS_SKILL]->(s:Skill)<-[:HAS_SKILL]-(q2:Question)
@@ -125,12 +146,12 @@ class Neo4jService:
 
     def get_student_skill_gaps(self, student_id: int) -> List[dict]:
         """Identify skill gaps for a student based on incorrect answers"""
-        if not self.driver:
+        if not self._driver:
             logger.warning("neo4j_not_available", operation="get_student_skill_gaps")
             return []
         
         try:
-            with self.driver.session() as session:
+            with self._driver.session() as session:
                 result = session.run(
                     """
                     MATCH (u:User {id: $uid})-[r:SOLVED {correct: false}]->(q:Question)-[:HAS_SKILL]->(s:Skill)
@@ -167,12 +188,12 @@ class Neo4jService:
 
     def get_learning_path(self, student_id: int, target_skill_id: int) -> List[int]:
         """Get recommended learning path for a student to master a skill"""
-        if not self.driver:
+        if not self._driver:
             logger.warning("neo4j_not_available", operation="get_learning_path")
             return []
         
         try:
-            with self.driver.session() as session:
+            with self._driver.session() as session:
                 # Find prerequisite skills and questions
                 result = session.run(
                     """
@@ -207,12 +228,12 @@ class Neo4jService:
 
     def create_skill_prerequisites(self, skill_id: int, prerequisite_ids: List[int]):
         """Create prerequisite relationships between skills"""
-        if not self.driver:
+        if not self._driver:
             logger.warning("neo4j_not_available", operation="create_skill_prerequisites")
             return
         
         try:
-            with self.driver.session() as session:
+            with self._driver.session() as session:
                 for prereq_id in prerequisite_ids:
                     session.run(
                         """
@@ -233,12 +254,12 @@ class Neo4jService:
 
     def get_skill_centrality(self, limit: int = 20) -> List[dict]:
         """Get skills ordered by their centrality in the skill graph"""
-        if not self.driver:
+        if not self._driver:
             logger.warning("neo4j_not_available", operation="get_skill_centrality")
             return []
         
         try:
-            with self.driver.session() as session:
+            with self._driver.session() as session:
                 result = session.run(
                     """
                     MATCH (s:Skill)
