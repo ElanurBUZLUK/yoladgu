@@ -97,7 +97,7 @@ class QuestionSkill(Base):
     skill_id = Column(Integer, ForeignKey("skills.id"))
     weight = Column(Float, default=1.0)
     created_at = Column(DateTime, default=datetime.utcnow)
-
+    
     question = relationship("Question", back_populates="question_skills")
     skill = relationship("Skill", back_populates="question_skills")
 
@@ -135,7 +135,7 @@ class PlanItem(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"))
     topic_id = Column(Integer, ForeignKey("topics.id"))
     question_count = Column(Integer)
-    difficulty = Column(String)
+    difficulty_level = Column(Integer, default=1)  # 1-5 arası zorluk seviyesi, Question model ile tutarlı
     estimated_time = Column(Integer)  # dakika cinsinden
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

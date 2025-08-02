@@ -121,6 +121,42 @@ app.include_router(system_health.router, prefix=settings.API_V1_STR, tags=["syst
 app.include_router(quiz_sessions.router, prefix=settings.API_V1_STR)
 app.include_router(analytics.router, prefix=settings.API_V1_STR)
 
+# FastAPI lifecycle events for stream consumer
+import asyncio
+
+# Note: To use lifespan, initialize FastAPI with lifespan parameter:
+# app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, lifespan=lifespan)
+# For now, we'll use the deprecated but simpler @app.on_event approach
+
+@app.on_event("startup")
+async def startup_event():
+    """Application startup event"""
+    logger.info("Starting application services...")
+    
+    # Start stream consumer in background
+    try:
+        from app.services.enhanced_stream_consumer import stream_consumer_manager
+        if stream_consumer_manager and not stream_consumer_manager.running:
+            # Start consumer in background task
+            asyncio.create_task(stream_consumer_manager.start_consumer())
+            logger.info("Stream consumer started successfully")
+        else:
+            logger.info("Stream consumer already running or disabled")
+    except Exception as e:
+        logger.error("Failed to start stream consumer", error=str(e))
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Application shutdown event"""
+    logger.info("Shutting down application services...")
+    try:
+        from app.services.enhanced_stream_consumer import stream_consumer_manager
+        if stream_consumer_manager and stream_consumer_manager.running:
+            await stream_consumer_manager._cleanup_consumer()
+            logger.info("Stream consumer stopped successfully")
+    except Exception as e:
+        logger.error("Error stopping stream consumer", error=str(e))
+
 @app.get("/health")
 def health_check():
     """Gelişmiş sistem sağlık kontrolü with Prometheus metrics"""

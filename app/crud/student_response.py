@@ -11,7 +11,9 @@ def _get_neo4j_driver():
     """Neo4j driver instance'ı döndür"""
     if not settings.USE_NEO4J:
         return None
-    return GraphDatabase.driver(settings.NEO4J_URI, auth=(settings.NEO4J_USER, settings.NEO4J_PASSWORD))
+    # Use the centralized Neo4j service instead of creating multiple drivers
+    from app.services.neo4j_service import neo4j_service
+    return neo4j_service.driver
 
 def _sync_student_response_to_neo4j(student_id: int, question_id: int, is_correct: bool, response_time: float = None):
     """Öğrenci cevabını Neo4j'e senkronize et"""
