@@ -9,7 +9,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 import structlog
-from app.services.stream_consumer import stream_consumer_manager
+from app.services.enhanced_stream_consumer import stream_consumer_manager
 from app.core.config import settings
 
 logger = structlog.get_logger()
