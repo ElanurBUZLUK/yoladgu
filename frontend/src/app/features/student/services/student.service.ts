@@ -13,9 +13,7 @@ export class StudentService {
   constructor(
     private http: HttpClient,
     private errorHandler: ErrorHandlerService
-  ) {
-    console.log('StudentService API Config:', ApiConfig.getConfig());
-  }
+  ) {}
 
   getProfile(): Observable<any> {
     return this.http.get(ApiConfig.getApiUrl('users/me'))
@@ -80,6 +78,38 @@ export class StudentService {
 
   getPerformanceStats(): Observable<any> {
     return this.http.get(ApiConfig.getApiUrl('analytics/performance-stats'))
+      .pipe(
+        catchError(error => {
+          this.errorHandler.handleHttpError(error);
+          return throwError(() => error);
+        })
+      );
+  }
+
+  updateProgress(progressData: any): Observable<any> {
+    return this.http.put(ApiConfig.getApiUrl('users/me/progress'), progressData)
+      .pipe(
+        catchError(error => {
+          this.errorHandler.handleHttpError(error);
+          return throwError(() => error);
+        })
+      );
+  }
+
+  // Subject specific questions
+  getQuestionsBySubject(subjectId: number, limit: number = 10): Observable<any> {
+    return this.http.get(ApiConfig.getApiUrl(`questions/?subject_id=${subjectId}&limit=${limit}`))
+      .pipe(
+        catchError(error => {
+          this.errorHandler.handleHttpError(error);
+          return throwError(() => error);
+        })
+      );
+  }
+
+  // Topic specific questions
+  getQuestionsByTopic(topicId: number, limit: number = 10): Observable<any> {
+    return this.http.get(ApiConfig.getApiUrl(`questions/?topic_id=${topicId}&limit=${limit}`))
       .pipe(
         catchError(error => {
           this.errorHandler.handleHttpError(error);

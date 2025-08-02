@@ -20,6 +20,7 @@ from app.api.v1.endpoints import (
     llm_assistant,
     system_health,
     quiz_sessions,
+    analytics,
 )
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Counter, Histogram, Gauge, Info, generate_latest, CONTENT_TYPE_LATEST
@@ -118,6 +119,7 @@ app.include_router(recommendations.router, prefix=settings.API_V1_STR, tags=["re
 app.include_router(llm_assistant.router, prefix=settings.API_V1_STR, tags=["llm-assistant"])
 app.include_router(system_health.router, prefix=settings.API_V1_STR, tags=["system-health"])
 app.include_router(quiz_sessions.router, prefix=settings.API_V1_STR)
+app.include_router(analytics.router, prefix=settings.API_V1_STR)
 
 @app.get("/health")
 def health_check():

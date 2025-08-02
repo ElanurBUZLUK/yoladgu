@@ -202,9 +202,16 @@ export class DashboardComponent implements OnInit {
     this.authService.logout();
   }
 
-  openSubject(subjectName: string) {
-    console.log('Opening subject:', subjectName);
-    // TODO: Subject specific questions
+  openSubject(subject: any) {
+    console.log('Opening subject:', subject);
+    
+    // Navigate to solve questions with subject filter
+    this.router.navigate(['/solve-question'], { 
+      queryParams: { 
+        subject_id: subject.id,
+        subject_name: subject.name 
+      } 
+    });
   }
 
   startPlan(planTitle: string) {
