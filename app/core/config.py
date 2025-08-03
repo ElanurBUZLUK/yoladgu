@@ -1,11 +1,12 @@
+from typing import Dict, List, Optional
+
+from pydantic import AnyHttpUrl, ConfigDict, field_validator
 from pydantic_settings import BaseSettings
-from pydantic import AnyHttpUrl, field_validator, ConfigDict
-from typing import List, Optional, Dict
-import os
+
 
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
-    
+
     PROJECT_NAME: str = "Question Recommendation System"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
@@ -22,7 +23,9 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "yoladgu_user"
     POSTGRES_PASSWORD: str = "yoladgu123"
     POSTGRES_DB: str = "yoladgu"
-    DATABASE_URL: str = "postgresql+psycopg2://yoladgu_user:yoladgu123@localhost:5432/yoladgu"
+    DATABASE_URL: str = (
+        "postgresql+psycopg2://yoladgu_user:yoladgu123@localhost:5432/yoladgu"
+    )
 
     # Redis Configuration
     REDIS_HOST: str = "localhost"
@@ -44,33 +47,33 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "paraphrase-MiniLM-L6-v2"
     EMBEDDING_DIM: int = 384
     EMBEDDING_BATCH_SIZE: int = 50
-    
+
     # === PERFORMANCE TUNING ===
     # Vector Store Performance
     HNSW_M: int = 16  # HNSW index connectivity
     HNSW_EF_CONSTRUCTION: int = 200  # Index build quality
     HNSW_EF_SEARCH: int = 100  # Search quality vs speed
-    
+
     # Connection Pool Settings
     ASYNCPG_MIN_SIZE: int = 5
     ASYNCPG_MAX_SIZE: int = 20
     ASYNCPG_TIMEOUT: int = 30
-    
+
     # Cache Settings
     REDIS_MAX_CONNECTIONS: int = 20
     CACHE_DEFAULT_TTL: int = 300  # 5 minutes
     CACHE_EMBEDDING_TTL: int = 3600  # 1 hour
     CACHE_SEARCH_TTL: int = 600  # 10 minutes
-    
+
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_BURST_MULTIPLIER: float = 1.5
-    
+
     # Async Performance
     MAX_WORKERS: int = 4
     BATCH_SIZE_DEFAULT: int = 100
     BATCH_SIZE_LARGE: int = 500
-    
+
     # Memory Management
     SEARCH_RESULT_LIMIT: int = 100
     CLEANUP_INTERVAL_HOURS: int = 6
@@ -86,11 +89,11 @@ class Settings(BaseSettings):
 
     # Ensemble Scoring Configuration
     ENSEMBLE_WEIGHTS: Dict[str, float] = {
-        'river_score': 0.35,
-        'embedding_similarity': 0.25,
-        'skill_mastery': 0.20,
-        'difficulty_match': 0.15,
-        'neo4j_similarity': 0.05
+        "river_score": 0.35,
+        "embedding_similarity": 0.25,
+        "skill_mastery": 0.20,
+        "difficulty_match": 0.15,
+        "neo4j_similarity": 0.05,
     }
 
     # Feature Flags
@@ -117,10 +120,12 @@ class Settings(BaseSettings):
         if v:
             return v
         values = info.data
-        return f"postgresql://{values.get('POSTGRES_USER', 'kullanici')}:" \
-               f"{values.get('POSTGRES_PASSWORD', 'sifre')}@" \
-               f"{values.get('POSTGRES_SERVER', 'localhost')}/" \
-               f"{values.get('POSTGRES_DB', 'veritabani')}"
+        return (
+            f"postgresql://{values.get('POSTGRES_USER', 'kullanici')}:"
+            f"{values.get('POSTGRES_PASSWORD', 'sifre')}@"
+            f"{values.get('POSTGRES_SERVER', 'localhost')}/"
+            f"{values.get('POSTGRES_DB', 'veritabani')}"
+        )
 
     @property
     def redis_url(self) -> str:
@@ -136,4 +141,5 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         return self.ENVIRONMENT.lower() == "development"
 
-settings = Settings() 
+
+settings = Settings()

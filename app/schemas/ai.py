@@ -1,5 +1,6 @@
-from pydantic import BaseModel, ConfigDict
-from typing import List, Optional
+from typing import List
+
+from pydantic import BaseModel
 
 
 class HintRequest(BaseModel):
@@ -93,4 +94,4 @@ class StudyRecommendationRequest(BaseModel):
 
 
 class StudyRecommendationResponse(BaseModel):
-    recommendation: str 
+    recommendation: str

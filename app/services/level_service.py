@@ -1,10 +1,18 @@
-from sqlalchemy.orm import Session
 from app.db.models import StudentProfile
+from sqlalchemy.orm import Session
 
-def update_student_level(db: Session, student_id: int, difficulty: float, is_correct: bool):
+
+def update_student_level(
+    db: Session, student_id: int, difficulty: float, is_correct: bool
+):
     profile = db.query(StudentProfile).filter_by(student_id=student_id).first()
     if not profile:
-        profile = StudentProfile(student_id=student_id, level=difficulty, min_level=difficulty, max_level=difficulty)
+        profile = StudentProfile(
+            student_id=student_id,
+            level=difficulty,
+            min_level=difficulty,
+            max_level=difficulty,
+        )
         db.add(profile)
         db.commit()
         return profile
@@ -14,4 +22,4 @@ def update_student_level(db: Session, student_id: int, difficulty: float, is_cor
         profile.min_level = difficulty
     profile.level = (profile.min_level + profile.max_level) / 2
     db.commit()
-    return profile 
+    return profile

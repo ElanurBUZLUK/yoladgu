@@ -1,36 +1,43 @@
-from typing import List, Dict, Any, Optional
-import numpy as np
-import pandas as pd
-from sqlalchemy.orm import Session
-from app.db.models import User, Question, StudentResponse, Skill, QuestionSkill
-from app.core.config import settings
-import redis
 import json
-# 'feature_extraction' importu artık gerekli değil ama kalsa da zararı yok
-from river import compose, linear_model, preprocessing, feature_extraction
 import os
-from app.services.level_service import update_student_level
-from app.ml.bandits import LinUCBBandit
-from neo4j import GraphDatabase
+from typing import Any, Dict, List
+
+import numpy as np
+import redis
 import structlog
+from app.core.config import settings
+from app.db.models import Question, QuestionSkill, StudentResponse
+from app.ml.bandits import LinUCBBandit
+from app.services.level_service import update_student_level
+
+# 'feature_extraction' importu artık gerekli değil ama kalsa da zararı yok
+from river import compose, linear_model, preprocessing
+from sqlalchemy.orm import Session
 
 logger = structlog.get_logger()
 from prometheus_client import Counter, Histogram
+
 model_update_counter = Counter("model_update_total", "Model güncelleme sayısı")
-model_update_duration = Histogram("model_update_duration_seconds", "Model update süresi", ["subject", "environment"])
+model_update_duration = Histogram(
+    "model_update_duration_seconds", "Model update süresi", ["subject", "environment"]
+)
+
+import threading
 
 from sentence_transformers import SentenceTransformer
-import threading
 
 # Modeli thread-safe şekilde cache'le
 _model = None
 _model_lock = threading.Lock()
+
+
 def get_sbert_model():
     global _model
     with _model_lock:
         if _model is None:
-            _model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+            _model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
         return _model
+
 
 # --- River pipeline ---
 def build_river_model():
@@ -38,16 +45,17 @@ def build_river_model():
         # HATA DÜZELTİLDİ: OneHotEncoder 'preprocessing' modülünden çağrılıyor
         preprocessing.OneHotEncoder(),
         preprocessing.StandardScaler(),
-        linear_model.LogisticRegression()
+        linear_model.LogisticRegression(),
     )
+
 
 def get_skill_centrality(student_id):
     from app.services.neo4j_service import neo4j_service
-    
+
     if not neo4j_service._driver:
         logger.warning("neo4j_not_available", operation="get_skill_centrality")
         return {}
-    
+
     try:
         with neo4j_service._driver.session() as session:
             res = session.run(
@@ -55,24 +63,26 @@ def get_skill_centrality(student_id):
                 MATCH (u:User {id: $student_id})-[:SOLVED]->(q:Question)-[:HAS_SKILL]->(s:Skill)
                 RETURN s.id AS skill_id, count(*) AS freq
                 """,
-                student_id=student_id
+                student_id=student_id,
             )
             centrality = {r["skill_id"]: r["freq"] for r in res}
-            logger.info("skill_centrality_retrieved", 
-                       student_id=student_id, 
-                       skill_count=len(centrality))
+            logger.info(
+                "skill_centrality_retrieved",
+                student_id=student_id,
+                skill_count=len(centrality),
+            )
             return centrality
     except Exception as e:
-        logger.error("get_skill_centrality_error", 
-                    student_id=student_id, 
-                    error=str(e))
+        logger.error("get_skill_centrality_error", student_id=student_id, error=str(e))
         return {}
+
 
 def diversity_filter(candidates, question_embeddings, top_n=5):
     # candidates: [(question_id, score), ...]
     # question_embeddings: {question_id: embedding_vector}
     # En yakın top_n soruyu diskalifiye et, kalanlardan rastgele seç
     import numpy as np
+
     if len(candidates) <= top_n:
         return candidates
     # İlk sorunun embedding'ini referans al
@@ -85,7 +95,9 @@ def diversity_filter(candidates, question_embeddings, top_n=5):
     for qid, _ in candidates:
         emb = question_embeddings.get(qid)
         if emb is not None:
-            sim = np.dot(ref_emb, emb) / (np.linalg.norm(ref_emb) * np.linalg.norm(emb) + 1e-8)
+            sim = np.dot(ref_emb, emb) / (
+                np.linalg.norm(ref_emb) * np.linalg.norm(emb) + 1e-8
+            )
         else:
             sim = 0
         sims.append((qid, sim))
@@ -94,21 +106,28 @@ def diversity_filter(candidates, question_embeddings, top_n=5):
     filtered = [c for c in candidates if c[0] not in [qid for qid, _ in sims[:top_n]]]
     return filtered
 
+
 def add_question_to_neo4j(question_id, skill_ids):
     from app.services.neo4j_service import neo4j_service
-    
+
     # Use the centralized Neo4j service instead of creating new driver
     neo4j_service.add_question_skills(question_id, skill_ids)
 
+
 # Embedding hesaplama artık embedding_service'den geliyor
-from app.services.embedding_service import compute_embedding
-from app.services.ensemble_service import calculate_ensemble_score, filter_questions_by_thresholds, adjust_weights_dynamically, calculate_enhanced_ensemble_score
+from app.services.ensemble_service import (
+    adjust_weights_dynamically,
+    calculate_enhanced_ensemble_score,
+    filter_questions_by_thresholds,
+)
+
 
 def get_logger_with_context(**context):
     return structlog.get_logger().bind(**context)
 
+
 class RecommendationService:
-    def __init__(self, model_type: str = 'river'):
+    def __init__(self, model_type: str = "river"):
         self.redis_client = redis.Redis.from_url(settings.redis_url)
         self.model_type = model_type
         self.river_model = build_river_model()
@@ -125,8 +144,8 @@ class RecommendationService:
                 self.river_model = build_river_model().from_bytes(f.read())
         if os.path.exists(linucb_path):
             data = np.load(linucb_path, allow_pickle=True)
-            self.linucb_bandit.A = data['A'].item()
-            self.linucb_bandit.b = data['b'].item()
+            self.linucb_bandit.A = data["A"].item()
+            self.linucb_bandit.b = data["b"].item()
 
     def _save_model(self):
         river_path = os.path.join(self.model_cache_dir, "river_model.bin")
@@ -137,20 +156,33 @@ class RecommendationService:
 
     def get_student_features(self, db: Session, student_id: int) -> Dict[str, Any]:
         # HATA DÜZELTİLDİ: 'timestamp' yerine 'created_at' kullanılıyor
-        responses = db.query(StudentResponse).filter(
-            StudentResponse.student_id == student_id
-        ).order_by(StudentResponse.created_at.desc()).all()
+        responses = (
+            db.query(StudentResponse)
+            .filter(StudentResponse.student_id == student_id)
+            .order_by(StudentResponse.created_at.desc())
+            .all()
+        )
         features = {
-            'total_questions': len(responses),
-            'correct_answers': sum(1 for r in responses if r.is_correct),
-            'avg_response_time': np.mean([r.response_time for r in responses if r.response_time]) if responses else 0,
-            'avg_confidence': np.mean([r.confidence_level for r in responses if r.confidence_level]) if responses else 0,
-            'hour_of_day': responses[0].created_at.hour if responses else 0,
+            "total_questions": len(responses),
+            "correct_answers": sum(1 for r in responses if r.is_correct),
+            "avg_response_time": np.mean(
+                [r.response_time for r in responses if r.response_time]
+            )
+            if responses
+            else 0,
+            "avg_confidence": np.mean(
+                [r.confidence_level for r in responses if r.confidence_level]
+            )
+            if responses
+            else 0,
+            "hour_of_day": responses[0].created_at.hour if responses else 0,
         }
         # Son 20 soruda başarı oranı (sliding window)
         last_n = 20
         last_n_responses = responses[:last_n]
-        features['last20_accuracy'] = np.mean([r.is_correct for r in last_n_responses]) if last_n_responses else 0
+        features["last20_accuracy"] = (
+            np.mean([r.is_correct for r in last_n_responses]) if last_n_responses else 0
+        )
         # Konu başına doğruluk oranı
         topic_correct = {}
         topic_total = {}
@@ -162,28 +194,34 @@ class RecommendationService:
                 if r.is_correct:
                     topic_correct[topic] = topic_correct.get(topic, 0) + 1
         for topic in topic_total:
-            features[f'topic_{topic}_accuracy'] = topic_correct.get(topic, 0) / topic_total[topic]
+            features[f"topic_{topic}_accuracy"] = (
+                topic_correct.get(topic, 0) / topic_total[topic]
+            )
         # Skill mastery
         skill_mastery = {}
         for response in responses:
-            question_skills = db.query(QuestionSkill).filter(
-                QuestionSkill.question_id == response.question_id
-            ).all()
+            question_skills = (
+                db.query(QuestionSkill)
+                .filter(QuestionSkill.question_id == response.question_id)
+                .all()
+            )
             for qs in question_skills:
                 skill_id = qs.skill_id
                 if skill_id not in skill_mastery:
-                    skill_mastery[skill_id] = {'correct': 0, 'total': 0}
-                skill_mastery[skill_id]['total'] += 1
+                    skill_mastery[skill_id] = {"correct": 0, "total": 0}
+                skill_mastery[skill_id]["total"] += 1
                 if response.is_correct:
-                    skill_mastery[skill_id]['correct'] += 1
+                    skill_mastery[skill_id]["correct"] += 1
         for skill_id, mastery in skill_mastery.items():
-            features[f'skill_{skill_id}_mastery'] = mastery['correct'] / mastery['total'] if mastery['total'] > 0 else 0
+            features[f"skill_{skill_id}_mastery"] = (
+                mastery["correct"] / mastery["total"] if mastery["total"] > 0 else 0
+            )
         # --- Neo4j skill centrality feature ---
         try:
             centrality = get_skill_centrality(student_id)
             for skill_id, freq in centrality.items():
-                features[f'skill_{skill_id}_centrality'] = freq
-        except Exception as e:
+                features[f"skill_{skill_id}_centrality"] = freq
+        except Exception:
             pass
         return features
 
@@ -191,74 +229,111 @@ class RecommendationService:
         question = db.query(Question).filter(Question.id == question_id).first()
         if not question:
             return {}
-        question_skills = db.query(QuestionSkill).filter(
-            QuestionSkill.question_id == question_id
-        ).all()
+        question_skills = (
+            db.query(QuestionSkill)
+            .filter(QuestionSkill.question_id == question_id)
+            .all()
+        )
         features = {
-            'difficulty_level': question.difficulty_level,
-            'question_type': question.question_type,
-            'subject_id': question.subject_id,
-            'skill_count': len(question_skills),
+            "difficulty_level": question.difficulty_level,
+            "question_type": question.question_type,
+            "subject_id": question.subject_id,
+            "skill_count": len(question_skills),
             # HATA DÜZELTİLDİ: 'text' yerine 'content' kullanılıyor
-            'question_length': len(question.content.split()) if hasattr(question, 'content') else 0,
-            'avg_skill_difficulty': np.mean([qs.skill.difficulty_level for qs in question_skills]) if question_skills else 0,
-            'num_tags': len(question.tags) if hasattr(question, 'tags') else 0,
+            "question_length": len(question.content.split())
+            if hasattr(question, "content")
+            else 0,
+            "avg_skill_difficulty": np.mean(
+                [qs.skill.difficulty_level for qs in question_skills]
+            )
+            if question_skills
+            else 0,
+            "num_tags": len(question.tags) if hasattr(question, "tags") else 0,
         }
         for qs in question_skills:
-            features[f'skill_{qs.skill_id}_weight'] = qs.weight
+            features[f"skill_{qs.skill_id}_weight"] = qs.weight
         # Gömme benzerliği (varsa)
-        if hasattr(question, 'bert_sim'):
-            features['bert_sim'] = question.bert_sim
+        if hasattr(question, "bert_sim"):
+            features["bert_sim"] = question.bert_sim
         return features
 
-    def update_river_model(self, student_features: Dict[str, Any], question_features: Dict[str, Any],
-                          is_correct: bool, response_time: float):
+    def update_river_model(
+        self,
+        student_features: Dict[str, Any],
+        question_features: Dict[str, Any],
+        is_correct: bool,
+        response_time: float,
+    ):
         combined_features = {**student_features, **question_features}
         x = combined_features
         y = 1 if is_correct else 0
         self.river_model.learn_one(x, y)
         self._save_model()
 
-    def update_linucb_model(self, student_features: Dict[str, Any], question_features: Dict[str, Any], question_id: int, reward: float):
-        self.linucb_bandit.update(question_id, student_features, question_features, reward)
+    def update_linucb_model(
+        self,
+        student_features: Dict[str, Any],
+        question_features: Dict[str, Any],
+        question_id: int,
+        reward: float,
+    ):
+        self.linucb_bandit.update(
+            question_id, student_features, question_features, reward
+        )
         self._save_model()
 
-    async def get_recommendations(self, db: Session, student_id: int, n_recommendations: int = 10, request_id: str = None) -> List[Dict[str, Any]]:
+    async def get_recommendations(
+        self,
+        db: Session,
+        student_id: int,
+        n_recommendations: int = 10,
+        request_id: str = None,
+    ) -> List[Dict[str, Any]]:
         """Öğrenci için soru önerileri üret (Ensemble yaklaşım)"""
         cache_key = f"recommendations:{student_id}:{self.model_type}:ensemble"
         cached = self.redis_client.get(cache_key)
         if cached:
-            return json.loads(cached.decode('utf-8'))
-        
+            return json.loads(cached.decode("utf-8"))
+
         student_features = self.get_student_features(db, student_id)
-        student_level = student_features.get('level', 1)
-        student_recent_performance = student_features.get('last20_accuracy', 0.5)
-        
+        student_level = student_features.get("level", 1)
+        student_recent_performance = student_features.get("last20_accuracy", 0.5)
+
         # Öğrencinin son sorularını al
-        recent_responses = db.query(StudentResponse).filter(
-            StudentResponse.student_id == student_id
-        ).order_by(StudentResponse.created_at.desc()).limit(10).all()
-        
+        recent_responses = (
+            db.query(StudentResponse)
+            .filter(StudentResponse.student_id == student_id)
+            .order_by(StudentResponse.created_at.desc())
+            .limit(10)
+            .all()
+        )
+
         student_recent_questions = []
         student_recent_question_ids = []
         for response in recent_responses:
-            question = db.query(Question).filter(Question.id == response.question_id).first()
+            question = (
+                db.query(Question).filter(Question.id == response.question_id).first()
+            )
             if question:
                 student_recent_questions.append(question.content)
                 student_recent_question_ids.append(question.id)
-        
+
         # Ağırlıkları dinamik olarak ayarla
         adjust_weights_dynamically(student_recent_performance, len(recent_responses))
-        
+
         questions = db.query(Question).filter(Question.is_active == True).all()
         recommendations = []
-        
+
         for question in questions:
             # Daha önce cevaplanmış soruları atla
-            answered = db.query(StudentResponse).filter(
-                StudentResponse.student_id == student_id,
-                StudentResponse.question_id == question.id
-            ).first()
+            answered = (
+                db.query(StudentResponse)
+                .filter(
+                    StudentResponse.student_id == student_id,
+                    StudentResponse.question_id == question.id,
+                )
+                .first()
+            )
             if answered:
                 continue
 
@@ -268,11 +343,13 @@ class RecommendationService:
             )
 
             question_features = self.get_question_features(db, question.id)
-            question_features['adjusted_difficulty'] = adjusted_difficulty
+            question_features["adjusted_difficulty"] = adjusted_difficulty
             combined_features = {**student_features, **question_features}
 
             # River model skoru
-            river_score = self.river_model.predict_proba_one(combined_features).get(1, 0.5)
+            river_score = self.river_model.predict_proba_one(combined_features).get(
+                1, 0.5
+            )
 
             # Ensemble skor hesapla (async enhanced embedding similarity ile)
             ensemble_scores = await calculate_enhanced_ensemble_score(
@@ -284,20 +361,20 @@ class RecommendationService:
                 student_level=student_level,
                 student_recent_performance=student_recent_performance,
                 student_recent_questions=student_recent_questions,
-                student_recent_question_ids=student_recent_question_ids
+                student_recent_question_ids=student_recent_question_ids,
             )
 
             recommendation = {
-                'question_id': question.id,
-                'ensemble_score': ensemble_scores['ensemble_score'],
-                'river_score': ensemble_scores['river_score'],
-                'embedding_similarity': ensemble_scores['embedding_similarity'],
-                'skill_mastery': ensemble_scores['skill_mastery'],
-                'difficulty_match': ensemble_scores['difficulty_match'],
-                'neo4j_similarity': ensemble_scores['neo4j_similarity'],
-                'adjusted_difficulty': adjusted_difficulty,
-                'original_difficulty': question.difficulty_level,
-                'question': {
+                "question_id": question.id,
+                "ensemble_score": ensemble_scores["ensemble_score"],
+                "river_score": ensemble_scores["river_score"],
+                "embedding_similarity": ensemble_scores["embedding_similarity"],
+                "skill_mastery": ensemble_scores["skill_mastery"],
+                "difficulty_match": ensemble_scores["difficulty_match"],
+                "neo4j_similarity": ensemble_scores["neo4j_similarity"],
+                "adjusted_difficulty": adjusted_difficulty,
+                "original_difficulty": question.difficulty_level,
+                "question": {
                     "id": question.id,
                     "content": question.content,
                     "question_type": question.question_type,
@@ -310,65 +387,113 @@ class RecommendationService:
                     "created_by": question.created_by,
                     "is_active": question.is_active,
                     "created_at": str(question.created_at),
-                    "updated_at": str(question.updated_at)
-                }
+                    "updated_at": str(question.updated_at),
+                },
             }
-            
+
             recommendations.append(recommendation)
 
         # Threshold'lara göre filtrele
         recommendations = filter_questions_by_thresholds(
             recommendations, student_level, student_recent_performance
         )
-        
+
         # Ensemble skora göre sırala
-        recommendations.sort(key=lambda x: x['ensemble_score'], reverse=True)
+        recommendations.sort(key=lambda x: x["ensemble_score"], reverse=True)
         top_recommendations = recommendations[:n_recommendations]
 
         # Cache'e kaydet
         self.redis_client.setex(
             cache_key,
-            300,  # 5 dakika
-            json.dumps(top_recommendations, default=str)
+            300,
+            json.dumps(top_recommendations, default=str),  # 5 dakika
         )
-        
+
         logger = get_logger_with_context(request_id=request_id, student_id=student_id)
-        logger.info("ensemble_recommendations_generated", 
-                   recommendations=[r['question_id'] for r in top_recommendations],
-                   ensemble_scores=[r['ensemble_score'] for r in top_recommendations])
-        
+        logger.info(
+            "ensemble_recommendations_generated",
+            recommendations=[r["question_id"] for r in top_recommendations],
+            ensemble_scores=[r["ensemble_score"] for r in top_recommendations],
+        )
+
         return top_recommendations
 
-    def process_student_response(self, db: Session, student_id: int, question_id: int,
-                               answer: str, is_correct: bool, response_time: float, feedback: str = None, request_id: str = None):
+    def process_student_response(
+        self,
+        db: Session,
+        student_id: int,
+        question_id: int,
+        answer: str,
+        is_correct: bool,
+        response_time: float,
+        feedback: str = None,
+        request_id: str = None,
+    ):
         subject = None
         try:
             question = db.query(Question).filter(Question.id == question_id).first()
-            subject = getattr(question, 'subject_id', 'unknown')
+            subject = getattr(question, "subject_id", "unknown")
         except Exception:
-            subject = 'unknown'
-        env = 'prod'  # veya settings.ENVIRONMENT
-        if getattr(settings, 'USE_PROMETHEUS_HISTOGRAM', True):
-            with model_update_duration.labels(subject=str(subject), environment=env).time():
-                self._process_student_response_inner(db, student_id, question_id, answer, is_correct, response_time, feedback, request_id)
+            subject = "unknown"
+        env = "prod"  # veya settings.ENVIRONMENT
+        if getattr(settings, "USE_PROMETHEUS_HISTOGRAM", True):
+            with model_update_duration.labels(
+                subject=str(subject), environment=env
+            ).time():
+                self._process_student_response_inner(
+                    db,
+                    student_id,
+                    question_id,
+                    answer,
+                    is_correct,
+                    response_time,
+                    feedback,
+                    request_id,
+                )
         else:
-            self._process_student_response_inner(db, student_id, question_id, answer, is_correct, response_time, feedback, request_id)
+            self._process_student_response_inner(
+                db,
+                student_id,
+                question_id,
+                answer,
+                is_correct,
+                response_time,
+                feedback,
+                request_id,
+            )
 
-    def _process_student_response_inner(self, db, student_id, question_id, answer, is_correct, response_time, feedback, request_id):
+    def _process_student_response_inner(
+        self,
+        db,
+        student_id,
+        question_id,
+        answer,
+        is_correct,
+        response_time,
+        feedback,
+        request_id,
+    ):
         question = db.query(Question).filter(Question.id == question_id).first()
-        if not question: return
+        if not question:
+            return
 
         student_features = self.get_student_features(db, student_id)
         question_features = self.get_question_features(db, question_id)
-        if self.model_type == 'linucb':
-            self.update_linucb_model(student_features, question_features, question_id, 1 if is_correct else 0)
+        if self.model_type == "linucb":
+            self.update_linucb_model(
+                student_features, question_features, question_id, 1 if is_correct else 0
+            )
         else:
-            self.update_river_model(student_features, question_features, is_correct, response_time)
+            self.update_river_model(
+                student_features, question_features, is_correct, response_time
+            )
 
         # Feedback entegrasyonu örneği (dummy):
         if feedback:
             # Burada feedback'i loglayabilir veya modele ekleyebilirsiniz
-            print(f"Feedback for student {student_id}, question {question_id}: {feedback}")
+            print(
+                f"Feedback for student {student_id}, question {question_id}: {feedback}"
+            )
 
         try:
             update_student_level(db, student_id, question.difficulty_level, is_correct)
@@ -378,104 +503,123 @@ class RecommendationService:
         # Öğrenci özellikleri değiştiği için cache'i temizle
         self.redis_client.delete(f"recommendations:{student_id}")
         model_update_counter.inc()
-        logger = get_logger_with_context(request_id=request_id, student_id=student_id, question_id=question_id)
-        logger.info("student_response_processed", is_correct=is_correct, response_time=response_time, feedback=feedback)
+        logger = get_logger_with_context(
+            request_id=request_id, student_id=student_id, question_id=question_id
+        )
+        logger.info(
+            "student_response_processed",
+            is_correct=is_correct,
+            response_time=response_time,
+            feedback=feedback,
+        )
 
-    async def _adjust_question_difficulty_runtime(self, question, student_level: int, student_features: Dict[str, Any]) -> int:
+    async def _adjust_question_difficulty_runtime(
+        self, question, student_level: int, student_features: Dict[str, Any]
+    ) -> int:
         """Runtime'da soru zorluğunu ayarla"""
         try:
             from app.services.llm_service import llm_service
-            
+
             # Öğrenci performans verilerini hazırla
             performance_data = {
-                'recent_accuracy': student_features.get('last20_accuracy', 0.5),
-                'avg_response_time': student_features.get('avg_response_time', 0),
-                'weak_topics': student_features.get('weak_topics', []),
-                'strong_topics': student_features.get('strong_topics', [])
+                "recent_accuracy": student_features.get("last20_accuracy", 0.5),
+                "avg_response_time": student_features.get("avg_response_time", 0),
+                "weak_topics": student_features.get("weak_topics", []),
+                "strong_topics": student_features.get("strong_topics", []),
             }
-            
+
             # LLM ile dinamik zorluk ayarı
             adjustment = await llm_service.adjust_difficulty_runtime(
                 question.content,
                 student_level,
                 question.difficulty_level,
-                performance_data
+                performance_data,
             )
-            
-            return adjustment.get('adjusted_difficulty', question.difficulty_level)
-            
-        except Exception as e:
+
+            return adjustment.get("adjusted_difficulty", question.difficulty_level)
+
+        except Exception:
             # Fallback: Basit mantık
-            accuracy = student_features.get('last20_accuracy', 0.5)
+            accuracy = student_features.get("last20_accuracy", 0.5)
             if accuracy > 0.8 and question.difficulty_level < 5:
                 return question.difficulty_level + 1
             elif accuracy < 0.4 and question.difficulty_level > 1:
                 return question.difficulty_level - 1
             else:
                 return question.difficulty_level
-    
-    async def get_adaptive_hint(self, question_id: int, student_id: int, db: Session) -> str:
+
+    async def get_adaptive_hint(
+        self, question_id: int, student_id: int, db: Session
+    ) -> str:
         """Öğrenci durumuna göre adaptif ipucu al"""
         try:
             from app.services.llm_service import llm_service
-            
+
             # Öğrenci ve soru bilgilerini al
             question = db.query(Question).filter(Question.id == question_id).first()
             student_features = self.get_student_features(db, student_id)
-            
+
             if not question:
                 return "Soru bulunamadı."
-            
+
             # Öğrenci durumunu analiz et
-            student_level = student_features.get('level', 1)
-            recent_accuracy = student_features.get('last20_accuracy', 0.5)
-            avg_response_time = student_features.get('avg_response_time', 0)
-            
+            student_level = student_features.get("level", 1)
+            recent_accuracy = student_features.get("last20_accuracy", 0.5)
+            avg_response_time = student_features.get("avg_response_time", 0)
+
             # Öğrenci zorlanıyor mu?
-            student_struggling = recent_accuracy < 0.4 or avg_response_time > 60000  # 60 saniye
-            
+            student_struggling = (
+                recent_accuracy < 0.4 or avg_response_time > 60000
+            )  # 60 saniye
+
             # Adaptif ipucu üret
             adaptive_hint = await llm_service.generate_adaptive_hint(
                 question.content,
                 student_level,
-                student_features.get('hints_used', 0),
-                student_struggling
+                student_features.get("hints_used", 0),
+                student_struggling,
             )
-            
+
             return adaptive_hint
-            
-        except Exception as e:
+
+        except Exception:
             # Fallback: Veritabanındaki hazır ipucu
             question = db.query(Question).filter(Question.id == question_id).first()
             return question.hint if question and question.hint else "İpucu bulunamadı."
-    
-    async def get_contextual_explanation(self, question_id: int, student_id: int, 
-                                       student_answer: str, db: Session) -> str:
+
+    async def get_contextual_explanation(
+        self, question_id: int, student_id: int, student_answer: str, db: Session
+    ) -> str:
         """Öğrencinin cevabına göre bağlamsal açıklama al"""
         try:
             from app.services.llm_service import llm_service
-            
+
             # Öğrenci ve soru bilgilerini al
             question = db.query(Question).filter(Question.id == question_id).first()
             student_features = self.get_student_features(db, student_id)
-            
+
             if not question:
                 return "Soru bulunamadı."
-            
+
             # Bağlamsal açıklama üret
             contextual_explanation = await llm_service.generate_contextual_explanation(
                 question.content,
                 question.correct_answer,
                 student_answer,
-                student_features.get('level', 1)
+                student_features.get("level", 1),
             )
-            
+
             return contextual_explanation
-            
-        except Exception as e:
+
+        except Exception:
             # Fallback: Veritabanındaki hazır açıklama
             question = db.query(Question).filter(Question.id == question_id).first()
-            return question.explanation if question and question.explanation else "Açıklama bulunamadı."
+            return (
+                question.explanation
+                if question and question.explanation
+                else "Açıklama bulunamadı."
+            )
+
 
 # Global instance
-recommendation_service = RecommendationService() 
+recommendation_service = RecommendationService()

@@ -1,14 +1,28 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, Enum, JSON
-from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import VECTOR
-from datetime import datetime
 import enum
+from datetime import datetime
+
 from app.db.database import Base
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
+from sqlalchemy.dialects.postgresql import VECTOR
+from sqlalchemy.orm import relationship
+
 
 class UserRole(enum.Enum):
     STUDENT = "student"
     TEACHER = "teacher"
     ADMIN = "admin"
+
 
 class User(Base):
     __tablename__ = "users"
@@ -28,6 +42,7 @@ class User(Base):
     responses = relationship("StudentResponse", back_populates="student")
     profile = relationship("StudentProfile", uselist=False, back_populates="student")
 
+
 class Subject(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True, index=True)
@@ -38,6 +53,7 @@ class Subject(Base):
 
     topics = relationship("Topic", back_populates="subject")
     skills = relationship("Skill", back_populates="subject")
+
 
 class Topic(Base):
     __tablename__ = "topics"
@@ -50,6 +66,7 @@ class Topic(Base):
 
     subject = relationship("Subject", back_populates="topics")
     questions = relationship("Question", back_populates="topic")
+
 
 class Skill(Base):
     __tablename__ = "skills"
@@ -64,11 +81,14 @@ class Skill(Base):
     question_skills = relationship("QuestionSkill", back_populates="skill")
     subject = relationship("Subject", back_populates="skills")
 
+
 class Question(Base):
     __tablename__ = "questions"
     id = Column(Integer, primary_key=True, index=True)
     content = Column(Text, nullable=False)  # Ana soru metni
-    question_type = Column(String, default="multiple_choice")  # multiple_choice, true_false, open_ended
+    question_type = Column(
+        String, default="multiple_choice"
+    )  # multiple_choice, true_false, open_ended
     difficulty_level = Column(Integer, default=1)  # 1-5 arası zorluk
     subject_id = Column(Integer, ForeignKey("subjects.id"))
     topic_id = Column(Integer, ForeignKey("topics.id"))
@@ -79,8 +99,12 @@ class Question(Base):
     created_by = Column(Integer, ForeignKey("users.id"))
     is_active = Column(Boolean, default=True)
     bert_sim = Column(JSON)  # Legacy embedding vektörü (deprecated)
-    embedding = Column(Text)  # Legacy text embedding - JSON formatında (backward compatibility)  
-    embedding_vector = Column(VECTOR(384), nullable=True)  # pgvector for semantic similarity (MiniLM-L6-v2: 384 dims)
+    embedding = Column(
+        Text
+    )  # Legacy text embedding - JSON formatında (backward compatibility)
+    embedding_vector = Column(
+        VECTOR(384), nullable=True
+    )  # pgvector for semantic similarity (MiniLM-L6-v2: 384 dims)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -91,6 +115,7 @@ class Question(Base):
     responses = relationship("StudentResponse", back_populates="question")
     question_skills = relationship("QuestionSkill", back_populates="question")
 
+
 class QuestionSkill(Base):
     __tablename__ = "question_skills"
     id = Column(Integer, primary_key=True, index=True)
@@ -98,9 +123,10 @@ class QuestionSkill(Base):
     skill_id = Column(Integer, ForeignKey("skills.id"))
     weight = Column(Float, default=1.0)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     question = relationship("Question", back_populates="question_skills")
     skill = relationship("Skill", back_populates="question_skills")
+
 
 class Solution(Base):
     __tablename__ = "solutions"
@@ -114,6 +140,7 @@ class Solution(Base):
 
     user = relationship("User", back_populates="solutions")
     question = relationship("Question", back_populates="solutions")
+
 
 class StudyPlan(Base):
     __tablename__ = "study_plans"
@@ -129,6 +156,7 @@ class StudyPlan(Base):
     user = relationship("User", back_populates="study_plans")
     items = relationship("PlanItem", back_populates="plan")
 
+
 class PlanItem(Base):
     __tablename__ = "plan_items"
     id = Column(Integer, primary_key=True, index=True)
@@ -136,12 +164,15 @@ class PlanItem(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"))
     topic_id = Column(Integer, ForeignKey("topics.id"))
     question_count = Column(Integer)
-    difficulty_level = Column(Integer, default=1)  # 1-5 arası zorluk seviyesi, Question model ile tutarlı
+    difficulty_level = Column(
+        Integer, default=1
+    )  # 1-5 arası zorluk seviyesi, Question model ile tutarlı
     estimated_time = Column(Integer)  # dakika cinsinden
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     plan = relationship("StudyPlan", back_populates="items")
+
 
 class StudentResponse(Base):
     __tablename__ = "student_responses"
@@ -160,6 +191,7 @@ class StudentResponse(Base):
     student = relationship("User", back_populates="responses")
     question = relationship("Question", back_populates="responses")
 
+
 class StudentProfile(Base):
     __tablename__ = "student_profiles"
 
@@ -174,6 +206,7 @@ class StudentProfile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     student = relationship("User", back_populates="profile")
+
 
 class QuizSession(Base):
     __tablename__ = "quiz_sessions"
@@ -190,4 +223,4 @@ class QuizSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    student = relationship("User") 
+    student = relationship("User")

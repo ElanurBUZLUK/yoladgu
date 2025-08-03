@@ -1,21 +1,41 @@
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
 from datetime import datetime
-from app.db.models import UserRole
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
 
 class QuestionBase(BaseModel):
     content: str = Field(..., description="Question content")
-    question_type: str = Field(default="multiple_choice", description="Type of question (multiple_choice, true_false, open_ended)")
-    difficulty_level: int = Field(..., ge=1, le=5, description="Difficulty level from 1 to 5")
-    subject_id: int = Field(..., description="ID of the subject this question belongs to")
-    topic_id: Optional[int] = Field(None, description="ID of the topic this question belongs to")
-    options: Optional[Dict[str, Any]] = Field(None, description="Options for multiple choice questions")
+    question_type: str = Field(
+        default="multiple_choice",
+        description="Type of question (multiple_choice, true_false, open_ended)",
+    )
+    difficulty_level: int = Field(
+        ..., ge=1, le=5, description="Difficulty level from 1 to 5"
+    )
+    subject_id: int = Field(
+        ..., description="ID of the subject this question belongs to"
+    )
+    topic_id: Optional[int] = Field(
+        None, description="ID of the topic this question belongs to"
+    )
+    options: Optional[Dict[str, Any]] = Field(
+        None, description="Options for multiple choice questions"
+    )
     correct_answer: str = Field(..., description="Correct answer to the question")
-    explanation: Optional[str] = Field(None, description="Explanation of the correct answer")
-    tags: Optional[Dict[str, Any]] = Field(None, description="Additional tags for categorization")
+    explanation: Optional[str] = Field(
+        None, description="Explanation of the correct answer"
+    )
+    tags: Optional[Dict[str, Any]] = Field(
+        None, description="Additional tags for categorization"
+    )
+
 
 class QuestionCreate(QuestionBase):
-    skill_ids: Optional[Dict[int, float]] = Field(None, description="Skill IDs and their weights for this question")
+    skill_ids: Optional[Dict[int, float]] = Field(
+        None, description="Skill IDs and their weights for this question"
+    )
+
 
 class QuestionUpdate(BaseModel):
     content: Optional[str] = None
@@ -29,6 +49,7 @@ class QuestionUpdate(BaseModel):
     tags: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
 
+
 class QuestionResponse(QuestionBase):
     id: int
     created_by: int
@@ -39,6 +60,7 @@ class QuestionResponse(QuestionBase):
 
     class Config:
         from_attributes = True
+
 
 class QuestionRecommendation(BaseModel):
     question_id: int
@@ -55,6 +77,7 @@ class QuestionRecommendation(BaseModel):
     class Config:
         from_attributes = True
 
+
 class QuestionSimilarity(BaseModel):
     question_id: int
     similarity_score: float
@@ -64,12 +87,15 @@ class QuestionSimilarity(BaseModel):
     class Config:
         from_attributes = True
 
+
 class SubjectBase(BaseModel):
     name: str
     description: Optional[str] = None
 
+
 class SubjectCreate(SubjectBase):
     pass
+
 
 class SubjectResponse(SubjectBase):
     id: int
@@ -79,13 +105,16 @@ class SubjectResponse(SubjectBase):
     class Config:
         from_attributes = True
 
+
 class TopicBase(BaseModel):
     name: str
     description: Optional[str] = None
     subject_id: int
 
+
 class TopicCreate(TopicBase):
     pass
+
 
 class TopicResponse(TopicBase):
     id: int
@@ -95,14 +124,17 @@ class TopicResponse(TopicBase):
     class Config:
         from_attributes = True
 
+
 class SkillBase(BaseModel):
     name: str
     description: Optional[str] = None
     subject_id: int
     difficulty_level: int = Field(..., ge=1, le=5)
 
+
 class SkillCreate(SkillBase):
     pass
+
 
 class SkillResponse(SkillBase):
     id: int
@@ -111,6 +143,7 @@ class SkillResponse(SkillBase):
 
     class Config:
         from_attributes = True
+
 
 class SkillCentrality(BaseModel):
     skill_id: int
@@ -122,13 +155,16 @@ class SkillCentrality(BaseModel):
     class Config:
         from_attributes = True
 
+
 class StudentResponseBase(BaseModel):
     answer: str
     confidence_level: Optional[int] = Field(None, ge=1, le=5)
     feedback: Optional[str] = None
 
+
 class StudentResponseCreate(StudentResponseBase):
     question_id: int
+
 
 class StudentResponseResponse(StudentResponseBase):
     id: int
@@ -142,10 +178,12 @@ class StudentResponseResponse(StudentResponseBase):
     class Config:
         from_attributes = True
 
+
 class AnswerSubmission(BaseModel):
     answer: str
     confidence_level: Optional[int] = Field(None, ge=1, le=5)
     feedback: Optional[str] = None
+
 
 class StudentSkillMastery(BaseModel):
     skill_id: int
@@ -158,6 +196,7 @@ class StudentSkillMastery(BaseModel):
     class Config:
         from_attributes = True
 
+
 class LearningPath(BaseModel):
     skill_id: int
     skill_name: str
@@ -169,6 +208,7 @@ class LearningPath(BaseModel):
     class Config:
         from_attributes = True
 
+
 class RecommendationRequest(BaseModel):
     n_recommendations: int = Field(default=5, ge=1, le=20)
     subject_id: Optional[int] = None
@@ -176,6 +216,7 @@ class RecommendationRequest(BaseModel):
     difficulty_range: Optional[tuple[int, int]] = None
     include_explanations: bool = Field(default=False)
     use_ensemble: bool = Field(default=True)
+
 
 class RecommendationResponse(BaseModel):
     recommendations: List[QuestionRecommendation]
@@ -188,8 +229,12 @@ class RecommendationResponse(BaseModel):
 
 class AnswerSubmission(BaseModel):
     answer: str = Field(..., description="Student's answer to the question")
-    response_time: Optional[float] = Field(None, description="Time taken to answer in seconds")
-    confidence_level: Optional[int] = Field(None, ge=1, le=5, description="Confidence level from 1 to 5")
+    response_time: Optional[float] = Field(
+        None, description="Time taken to answer in seconds"
+    )
+    confidence_level: Optional[int] = Field(
+        None, ge=1, le=5, description="Confidence level from 1 to 5"
+    )
     feedback: Optional[str] = Field(None, description="Optional feedback from student")
 
 
@@ -202,4 +247,4 @@ class AnswerResponse(BaseModel):
     response_id: int
     points_earned: Optional[int] = None
     current_streak: Optional[int] = None
-    message: Optional[str] = None 
+    message: Optional[str] = None

@@ -1,7 +1,8 @@
-from typing import Optional
-from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import datetime
+from typing import Optional
+
 from app.db.models import UserRole
+from pydantic import BaseModel, ConfigDict, EmailStr
 
 
 class UserBase(BaseModel):
@@ -35,7 +36,7 @@ class ProgressUpdate(BaseModel):
 
 class User(UserBase):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     created_at: datetime
-    updated_at: Optional[datetime] = None 
+    updated_at: Optional[datetime] = None

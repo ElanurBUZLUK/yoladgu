@@ -1,29 +1,29 @@
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
-from app.db.database import get_db
 from app.crud.user import get_current_user
-from app.db.models import User, Question
-from app.services.llm_service import llm_service
-from app.services.recommendation_service import recommendation_service
-from app.services.question_ingestion_service import get_question_ingestion_service
+from app.db.database import get_db
+from app.db.models import Question, User
 from app.schemas.ai import (
-    HintRequest,
-    HintResponse,
-    ExplanationRequest,
-    ExplanationResponse,
-    DifficultyRequest,
-    DifficultyResponse,
     AdaptiveHintRequest,
     AdaptiveHintResponse,
-    ContextualExplanationRequest,
-    ContextualExplanationResponse,
     BatchEnrichRequest,
     BatchEnrichResponse,
-    LLMStatusResponse,
-    IngestWebsiteRequest,
+    ContextualExplanationRequest,
+    ContextualExplanationResponse,
+    DifficultyRequest,
+    DifficultyResponse,
+    ExplanationRequest,
+    ExplanationResponse,
+    HintRequest,
+    HintResponse,
     IngestCSVRequest,
     IngestResponse,
+    IngestWebsiteRequest,
+    LLMStatusResponse,
 )
+from app.services.llm_service import llm_service
+from app.services.question_ingestion_service import get_question_ingestion_service
+from app.services.recommendation_service import recommendation_service
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -54,7 +54,9 @@ async def generate_explanation(request: ExplanationRequest):
 async def analyze_question_difficulty(request: DifficultyRequest):
     """Soru zorluğunu analiz et (Batch)"""
     try:
-        analysis = await llm_service.analyze_question_difficulty(request.question, "mathematics")
+        analysis = await llm_service.analyze_question_difficulty(
+            request.question, "mathematics"
+        )
         difficulty = f"Seviye {analysis.get('difficulty_level', 1)} - {analysis.get('explanation', 'Analiz edilemedi')}"
         return DifficultyResponse(difficulty=difficulty)
     except Exception as exc:
@@ -65,7 +67,7 @@ async def analyze_question_difficulty(request: DifficultyRequest):
 async def get_adaptive_hint(
     request: AdaptiveHintRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Öğrenci durumuna göre adaptif ipucu al (Runtime)"""
     try:
@@ -81,7 +83,7 @@ async def get_adaptive_hint(
 async def get_contextual_explanation(
     request: ContextualExplanationRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Öğrencinin cevabına göre bağlamsal açıklama al (Runtime)"""
     try:
@@ -97,18 +99,23 @@ async def get_contextual_explanation(
 async def batch_enrich_questions(
     request: BatchEnrichRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Mevcut soruları batch olarak zenginleştir"""
     try:
         # Get async ingestion service
         ingestion_service = await get_question_ingestion_service()
-        
+
         # Mevcut soruları bul
-        questions = db.query(Question).filter(
-            Question.subject_id == ingestion_service._get_subject_id(request.subject)
-        ).all()
-        
+        questions = (
+            db.query(Question)
+            .filter(
+                Question.subject_id
+                == ingestion_service._get_subject_id(request.subject)
+            )
+            .all()
+        )
+
         enriched_count = 0
         for question in questions:
             if not question.hint or not question.explanation:
@@ -116,21 +123,23 @@ async def batch_enrich_questions(
                 difficulty_analysis = await llm_service.analyze_question_difficulty(
                     question.content, request.subject
                 )
-                
+
                 # İpucu üret
                 if not question.hint:
                     question.hint = await llm_service.generate_question_hint(
                         question.content, request.subject
                     )
-                
+
                 # Açıklama üret
                 if not question.explanation:
-                    question.explanation = await llm_service.generate_question_explanation(
-                        question.content, question.correct_answer, request.subject
+                    question.explanation = (
+                        await llm_service.generate_question_explanation(
+                            question.content, question.correct_answer, request.subject
+                        )
                     )
-                
+
                 enriched_count += 1
-        
+
         db.commit()
         return BatchEnrichResponse(enriched_count=enriched_count)
     except Exception as exc:
@@ -143,13 +152,17 @@ async def get_llm_status():
     try:
         openai_configured = bool(llm_service._get_api_key())
         huggingface_configured = bool(llm_service._get_api_key())
-        
-        status = "ready" if (openai_configured or huggingface_configured) else "not_configured"
-        
+
+        status = (
+            "ready"
+            if (openai_configured or huggingface_configured)
+            else "not_configured"
+        )
+
         return LLMStatusResponse(
             openai_configured=openai_configured,
             huggingface_configured=huggingface_configured,
-            status=status
+            status=status,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -159,7 +172,7 @@ async def get_llm_status():
 async def ingest_from_website(
     request: IngestWebsiteRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Web sitesinden soru içe aktar"""
     try:
@@ -179,7 +192,7 @@ async def ingest_from_website(
 async def ingest_from_csv(
     request: IngestCSVRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """CSV dosyasından soru içe aktar"""
     try:
@@ -211,4 +224,4 @@ async def generate_explanation_legacy(request: ExplanationRequest):
 @router.post("/difficulty", response_model=DifficultyResponse)
 async def analyze_difficulty_legacy(request: DifficultyRequest):
     """Eski zorluk analizi endpoint'i (geriye uyumluluk)"""
-    return await analyze_question_difficulty(request) 
+    return await analyze_question_difficulty(request)

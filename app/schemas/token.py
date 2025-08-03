@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+
 from .user import User
 
 
@@ -10,4 +11,4 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    username: str | None = None 
+    username: str | None = None

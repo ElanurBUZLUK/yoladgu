@@ -1,5 +1,7 @@
 from typing import Optional
+
 from pydantic import BaseModel, ConfigDict
+
 
 class PlanItemBase(BaseModel):
     plan_id: int
@@ -9,8 +11,10 @@ class PlanItemBase(BaseModel):
     difficulty: str
     estimated_time: int
 
+
 class PlanItemCreate(PlanItemBase):
     pass
+
 
 class PlanItemUpdate(BaseModel):
     plan_id: Optional[int] = None
@@ -20,10 +24,12 @@ class PlanItemUpdate(BaseModel):
     difficulty: Optional[str] = None
     estimated_time: Optional[int] = None
 
+
 class PlanItemInDB(PlanItemBase):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
 
+
 class PlanItemResponse(PlanItemInDB):
-    pass 
+    pass

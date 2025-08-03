@@ -1,0 +1,39 @@
+# Pre-commit hooks for code quality (mevcut app/ yapısı için)
+repos:
+  # Basic hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+
+  # Python import sorting
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        files: '^app/.*\.py$'
+        args: ["--profile=black", "--line-length=100"]
+
+  # Python code formatting
+  - repo: https://github.com/psf/black
+    rev: 23.11.0
+    hooks:
+      - id: black
+        files: '^app/.*\.py$'
+        args: ["--line-length=100"]
+
+  # Python linting with Ruff (fast)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.6
+    hooks:
+      - id: ruff
+        files: '^app/.*\.py$'
+        args: ["--fix"]
+      - id: ruff-format
+        files: '^app/.*\.py$'

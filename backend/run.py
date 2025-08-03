@@ -18,21 +18,22 @@ def main():
         print("🚀 Starting Question Recommendation System Backend...")
         print(f"📁 Project root: {project_root}")
         print(f"🐍 Python path: {sys.path[0]}")
-        
+
         # Load environment variables
         from dotenv import load_dotenv
         env_path = Path(__file__).parent / ".env"
         load_dotenv(env_path)
-        
+
         print(f"📋 Environment loaded from: {env_path}")
-        
-        # Start the server
+
+        # Start the server (updated path for new structure)
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0",
             port=8000,
             reload=True,
-            log_level="info"
+            log_level="info",
+            reload_dirs=["app"]
         )
     except ImportError as e:
         print(f"❌ Import error: {e}")
