@@ -12,31 +12,30 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: str = "development"
 
-    SECRET_KEY: str = "your-secret-key-here"
+    # Security Configuration - Must be set in environment variables
+    SECRET_KEY: str  # Required: Strong secret key for JWT tokens
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
-    # PostgreSQL Configuration
-    POSTGRES_SERVER: str = "localhost"
-    POSTGRES_USER: str = "yoladgu_user"
-    POSTGRES_PASSWORD: str = "yoladgu123"
-    POSTGRES_DB: str = "yoladgu"
-    DATABASE_URL: str = (
-        "postgresql+psycopg2://yoladgu_user:yoladgu123@localhost:5432/yoladgu"
-    )
+    # PostgreSQL Configuration - Must be set in environment variables
+    POSTGRES_SERVER: str  # Required: PostgreSQL server host
+    POSTGRES_USER: str  # Required: PostgreSQL username
+    POSTGRES_PASSWORD: str  # Required: PostgreSQL password
+    POSTGRES_DB: str  # Required: PostgreSQL database name
+    DATABASE_URL: Optional[str] = None  # Auto-generated from above
 
     # Redis Configuration
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
-    REDIS_PASSWORD: Optional[str] = None
+    REDIS_PASSWORD: Optional[str] = None  # Set if Redis requires auth
 
-    # Neo4j Configuration
-    NEO4J_URI: str = "bolt://localhost:7687"
-    NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "password"
+    # Neo4j Configuration - Must be set in environment variables
+    NEO4J_URI: str  # Required: Neo4j connection URI
+    NEO4J_USER: str  # Required: Neo4j username
+    NEO4J_PASSWORD: str  # Required: Neo4j password
 
     # ML Model Configuration
     MODEL_CACHE_DIR: str = "./models"
@@ -78,9 +77,9 @@ class Settings(BaseSettings):
     SEARCH_RESULT_LIMIT: int = 100
     CLEANUP_INTERVAL_HOURS: int = 6
 
-    # LLM Configuration
-    OPENAI_API_KEY: Optional[str] = None
-    HUGGINGFACE_API_TOKEN: Optional[str] = None
+    # LLM Configuration - Set in environment variables for production
+    OPENAI_API_KEY: Optional[str] = None  # Required for OpenAI provider
+    HUGGINGFACE_API_TOKEN: Optional[str] = None  # Required for Hugging Face models
     HUGGINGFACE_MODEL: str = "microsoft/DialoGPT-medium"
     LLM_PROVIDER: str = "huggingface"  # "openai" or "huggingface"
     LLM_MODEL: str = "gpt-3.5-turbo"  # For OpenAI
@@ -120,12 +119,19 @@ class Settings(BaseSettings):
         if v:
             return v
         values = info.data
-        return (
-            f"postgresql://{values.get('POSTGRES_USER', 'kullanici')}:"
-            f"{values.get('POSTGRES_PASSWORD', 'sifre')}@"
-            f"{values.get('POSTGRES_SERVER', 'localhost')}/"
-            f"{values.get('POSTGRES_DB', 'veritabani')}"
-        )
+        # Build DATABASE_URL from individual components if not provided
+        postgres_user = values.get("POSTGRES_USER")
+        postgres_password = values.get("POSTGRES_PASSWORD")
+        postgres_server = values.get("POSTGRES_SERVER")
+        postgres_db = values.get("POSTGRES_DB")
+
+        if not all([postgres_user, postgres_password, postgres_server, postgres_db]):
+            raise ValueError(
+                "DATABASE_URL not provided and required PostgreSQL environment variables missing. "
+                "Please set: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_SERVER, POSTGRES_DB"
+            )
+
+        return f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}/{postgres_db}"
 
     @property
     def redis_url(self) -> str:

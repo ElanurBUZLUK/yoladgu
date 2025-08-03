@@ -8,7 +8,7 @@ import json
 import time
 from typing import Any, Dict, Optional
 
-import redis
+import redis.asyncio as redis
 import structlog
 from app.core.config import settings
 from fastapi import Request, Response
@@ -166,7 +166,7 @@ class AdvancedRateLimiter:
                 )
 
                 # Current count al
-                current_count = self.redis.get(key)
+                current_count = await self.redis.get(key)
                 current_count = int(current_count) if current_count else 0
 
                 # Burst allowance check
@@ -217,7 +217,7 @@ class AdvancedRateLimiter:
                 pipe = self.redis.pipeline()
                 pipe.incr(key)
                 pipe.expire(key, window_seconds + 60)  # Buffer for cleanup
-                pipe.execute()
+                await pipe.execute()
 
             # Add rate limit headers
             remaining = max(0, adjusted_limits["per_minute"] - (current_count + 1))
@@ -243,7 +243,7 @@ class AdvancedRateLimiter:
                 return None
 
             cache_key = self.get_cache_key(request)
-            cached_data = self.redis.get(cache_key)
+            cached_data = await self.redis.get(cache_key)
 
             if cached_data:
                 try:
@@ -264,7 +264,7 @@ class AdvancedRateLimiter:
 
                 except json.JSONDecodeError:
                     # Invalid cache data, delete it
-                    self.redis.delete(cache_key)
+                    await self.redis.delete(cache_key)
 
             return None
 
@@ -311,7 +311,7 @@ class AdvancedRateLimiter:
                     "endpoint": endpoint_key,
                 }
 
-                self.redis.setex(cache_key, ttl, json.dumps(cache_data))
+                await self.redis.setex(cache_key, ttl, json.dumps(cache_data))
 
                 logger.debug(
                     "response_cached",
@@ -326,19 +326,24 @@ class AdvancedRateLimiter:
         except Exception as e:
             logger.error("cache_set_error", error=str(e))
 
-    def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> Dict[str, Any]:
         """Rate limiter istatistikleri"""
         try:
             # Rate limit keys'leri say
-            rate_limit_keys = self.redis.keys(f"{self.prefix}:*")
+            rate_limit_keys = await self.redis.keys(f"{self.prefix}:*")
 
             # Cache keys'leri say
-            cache_keys = self.redis.keys("cache:request:*")
+            cache_keys = await self.redis.keys("cache:request:*")
 
-            # Memory usage estimate
-            memory_usage = sum(
-                self.redis.memory_usage(key) for key in rate_limit_keys[:100]
-            )  # Sample
+            # Memory usage estimate (sample first 100 keys for performance)
+            memory_usage = 0
+            sample_keys = rate_limit_keys[:100]
+            for key in sample_keys:
+                try:
+                    usage = await self.redis.memory_usage(key)
+                    memory_usage += usage if usage else 0
+                except:
+                    continue
 
             return {
                 "rate_limit_keys_count": len(rate_limit_keys),
@@ -354,6 +359,6 @@ class AdvancedRateLimiter:
 
 
 # Global instance
-def get_rate_limiter() -> AdvancedRateLimiter:
+async def get_rate_limiter() -> AdvancedRateLimiter:
     redis_client = redis.from_url(settings.redis_url)
     return AdvancedRateLimiter(redis_client)
