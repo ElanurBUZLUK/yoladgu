@@ -9,6 +9,8 @@ import structlog
 
 from app.services.enhanced_embedding_service import enhanced_embedding_service
 from app.core.config import settings
+from pydantic import BaseModel
+from typing import Dict, Any
 
 logger = structlog.get_logger()
 
@@ -232,4 +234,132 @@ async def batch_update_embeddings(batch_size: int = Query(50, ge=1, le=200)):
         
     except Exception as e:
         logger.error("batch_update_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+# === VECTOR STORE ENDPOINTS ===
+
+class VectorSearchRequest(BaseModel):
+    query: str
+    k: int = 10
+    similarity_threshold: float = 0.7
+    filters: Optional[Dict[str, Any]] = None
+
+class StoreQuestionRequest(BaseModel):
+    question_id: int
+    question_text: str
+    metadata: Optional[Dict[str, Any]] = None
+    subject_id: Optional[int] = None
+    topic_id: Optional[int] = None
+    difficulty_level: Optional[int] = None
+
+@router.post("/vector/search")
+async def vector_semantic_search(request: VectorSearchRequest):
+    """
+    Vector Database üzerinden O(log N) hızında semantic arama
+    Büyük soru havuzlarında çok daha hızlı sonuçlar verir
+    """
+    try:
+        results = await enhanced_embedding_service.semantic_search_vector_db(
+            query_text=request.query,
+            k=request.k,
+            similarity_threshold=request.similarity_threshold,
+            filters=request.filters
+        )
+        
+        return {
+            "query": request.query,
+            "results": results,
+            "total_found": len(results),
+            "search_params": {
+                "k": request.k,
+                "similarity_threshold": request.similarity_threshold,
+                "filters": request.filters
+            }
+        }
+        
+    except Exception as e:
+        logger.error("vector_search_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/vector/store")
+async def store_question_embedding(request: StoreQuestionRequest):
+    """
+    Yeni soru embedding'ini vector store'a kaydet
+    Yeni sorular eklendiğinde hemen aranabilir hale gelir
+    """
+    try:
+        success = await enhanced_embedding_service.store_question_embedding(
+            question_id=request.question_id,
+            question_text=request.question_text,
+            metadata=request.metadata,
+            subject_id=request.subject_id,
+            topic_id=request.topic_id,
+            difficulty_level=request.difficulty_level
+        )
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to store embedding")
+        
+        return {
+            "message": "Question embedding stored successfully",
+            "question_id": request.question_id,
+            "stored": success
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("store_embedding_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/vector/stats")
+async def get_vector_store_stats():
+    """Vector store performans istatistikleri"""
+    try:
+        stats = await enhanced_embedding_service.get_vector_store_stats()
+        
+        return {
+            "vector_store_stats": stats,
+            "timestamp": enhanced_embedding_service.stats
+        }
+        
+    except Exception as e:
+        logger.error("vector_stats_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/vector/initialize")
+async def initialize_vector_store():
+    """Vector store'u başlat (sistem kurulumu için)"""
+    try:
+        await enhanced_embedding_service.initialize_vector_store()
+        
+        return {
+            "message": "Vector store initialized successfully",
+            "status": "ready"
+        }
+        
+    except Exception as e:
+        logger.error("vector_init_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/vector/batch-store")
+async def batch_store_embeddings(batch_size: int = Query(100, ge=1, le=500)):
+    """
+    Mevcut tüm soruları vector store'a toplu kaydetme
+    İlk kurulum veya büyük veri güncellemeleri için
+    """
+    try:
+        stats = await enhanced_embedding_service.batch_update_embeddings(
+            batch_size=batch_size,
+            force_recompute=False
+        )
+        
+        return {
+            "message": "Batch vector store update completed",
+            "stats": stats,
+            "batch_size": batch_size
+        }
+        
+    except Exception as e:
+        logger.error("batch_vector_store_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

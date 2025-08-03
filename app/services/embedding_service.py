@@ -142,18 +142,77 @@ class EmbeddingService:
             logger.error("batch_embedding_save_error", error=str(e))
             return 0
     
-    def find_similar_questions(self, query_embedding: List[float], 
-                             threshold: float = 0.8, limit: int = 10) -> List[Dict]:
-        """Benzer soruları bul (Cosine Similarity ile)"""
+    async def find_similar_questions(self, query_embedding: List[float], 
+                                   threshold: float = 0.8, limit: int = 10) -> List[Dict]:
+        """
+        OPTIMIZED: Vector store ile hızlı benzer soru arama
+        O(log N) performance - eski O(N) yerine
+        """
+        try:
+            # Enhanced embedding service üzerinden vector search yap
+            from app.services.enhanced_embedding_service import enhanced_embedding_service
+            
+            # Vector store initialize edilmiş mi kontrol et
+            if not enhanced_embedding_service.vector_store_initialized:
+                logger.warning("vector_store_not_initialized_fallback_to_legacy")
+                return await self._legacy_find_similar_questions(query_embedding, threshold, limit)
+            
+            # Vector store ile hızlı arama
+            from app.services.vector_store_service import vector_store_service
+            
+            results = await vector_store_service.similarity_search(
+                query_embedding=query_embedding,
+                k=limit,
+                similarity_threshold=threshold,
+                filters=None
+            )
+            
+            # Response formatına çevir
+            similar_questions = []
+            for result in results:
+                similar_questions.append({
+                    'id': result.id,
+                    'content': result.content,
+                    'similarity': result.similarity_score,
+                    'difficulty_level': result.metadata.get('difficulty_level'),
+                    'subject_id': result.metadata.get('subject_id'),
+                    'topic_id': result.metadata.get('topic_id'),
+                    'metadata': result.metadata
+                })
+            
+            logger.debug("vector_search_completed", 
+                        results_count=len(similar_questions),
+                        threshold=threshold,
+                        limit=limit)
+            
+            return similar_questions
+            
+        except Exception as e:
+            logger.error("optimized_similar_questions_error", error=str(e))
+            # Fallback to legacy method
+            return await self._legacy_find_similar_questions(query_embedding, threshold, limit)
+    
+    async def _legacy_find_similar_questions(self, query_embedding: List[float], 
+                                           threshold: float = 0.8, 
+                                           limit: int = 10) -> List[Dict]:
+        """
+        LEGACY FALLBACK: Eski verimsiz yöntem - sadece vector store çalışmazsa
+        ⚠️ NOT RECOMMENDED for production with large datasets
+        """
         try:
             import json
             import numpy as np
             from sklearn.metrics.pairwise import cosine_similarity
             
+            # DEPRECATED WARNING
+            logger.warning("using_legacy_embedding_search", 
+                          message="Bu yöntem büyük veri setlerinde yavaş! Vector store kullanın.",
+                          threshold=threshold, limit=limit)
+            
             conn = self.get_postgres_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
-            # Tüm embedding'li soruları al
+            # LIMIT ekleyerek veri miktarını sınırla (performans için)
             cursor.execute("""
                 SELECT 
                     q.id,
@@ -164,6 +223,8 @@ class EmbeddingService:
                     q.embedding
                 FROM questions q
                 WHERE q.embedding IS NOT NULL AND q.is_active = true
+                ORDER BY q.id DESC  -- En yeni sorulara öncelik
+                LIMIT 1000  -- En fazla 1000 soru (performans sınırı)
             """)
             
             results = cursor.fetchall()
@@ -179,30 +240,26 @@ class EmbeddingService:
             
             for row in results:
                 try:
-                    # JSON'dan embedding'i parse et
                     stored_embedding = json.loads(row['embedding'])
                     stored_vector = np.array(stored_embedding).reshape(1, -1)
                     
-                    # Cosine similarity hesapla
                     similarity = cosine_similarity(query_vector, stored_vector)[0][0]
                     
                     if similarity >= threshold:
                         question_dict = dict(row)
                         question_dict['similarity'] = float(similarity)
-                        question_dict.pop('embedding')  # Embedding'i response'dan kaldır
+                        question_dict.pop('embedding')
                         similar_questions.append(question_dict)
                         
                 except (json.JSONDecodeError, ValueError) as e:
                     logger.debug("embedding_parse_error", question_id=row['id'], error=str(e))
                     continue
             
-            # Similarity'ye göre sırala
             similar_questions.sort(key=lambda x: x['similarity'], reverse=True)
-            
             return similar_questions[:limit]
             
         except Exception as e:
-            logger.error("similar_questions_error", error=str(e))
+            logger.error("legacy_similar_questions_error", error=str(e))
             return []
     
     def get_questions_without_embeddings(self, limit: int = 100) -> List[Dict]:
@@ -340,11 +397,11 @@ def compute_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """Toplu embedding hesapla"""
     return embedding_service.compute_embeddings_batch(texts)
 
-def find_similar_questions(query_embedding: List[float], 
-                         threshold: float = 0.8, 
-                         limit: int = 10) -> List[Dict]:
-    """Benzer soruları bul"""
-    return embedding_service.find_similar_questions(query_embedding, threshold, limit)
+async def find_similar_questions(query_embedding: List[float], 
+                               threshold: float = 0.8, 
+                               limit: int = 10) -> List[Dict]:
+    """OPTIMIZED: Vector store ile benzer soruları bul"""
+    return await embedding_service.find_similar_questions(query_embedding, threshold, limit)
 
 async def update_question_embedding(question_id: int, content: str) -> bool:
     """Soru embedding'ini güncelle"""

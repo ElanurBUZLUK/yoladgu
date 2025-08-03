@@ -44,6 +44,36 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "paraphrase-MiniLM-L6-v2"
     EMBEDDING_DIM: int = 384
     EMBEDDING_BATCH_SIZE: int = 50
+    
+    # === PERFORMANCE TUNING ===
+    # Vector Store Performance
+    HNSW_M: int = 16  # HNSW index connectivity
+    HNSW_EF_CONSTRUCTION: int = 200  # Index build quality
+    HNSW_EF_SEARCH: int = 100  # Search quality vs speed
+    
+    # Connection Pool Settings
+    ASYNCPG_MIN_SIZE: int = 5
+    ASYNCPG_MAX_SIZE: int = 20
+    ASYNCPG_TIMEOUT: int = 30
+    
+    # Cache Settings
+    REDIS_MAX_CONNECTIONS: int = 20
+    CACHE_DEFAULT_TTL: int = 300  # 5 minutes
+    CACHE_EMBEDDING_TTL: int = 3600  # 1 hour
+    CACHE_SEARCH_TTL: int = 600  # 10 minutes
+    
+    # Rate Limiting
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_BURST_MULTIPLIER: float = 1.5
+    
+    # Async Performance
+    MAX_WORKERS: int = 4
+    BATCH_SIZE_DEFAULT: int = 100
+    BATCH_SIZE_LARGE: int = 500
+    
+    # Memory Management
+    SEARCH_RESULT_LIMIT: int = 100
+    CLEANUP_INTERVAL_HOURS: int = 6
 
     # LLM Configuration
     OPENAI_API_KEY: Optional[str] = None

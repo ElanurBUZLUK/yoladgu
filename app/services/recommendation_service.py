@@ -102,7 +102,7 @@ def add_question_to_neo4j(question_id, skill_ids):
 
 # Embedding hesaplama artık embedding_service'den geliyor
 from app.services.embedding_service import compute_embedding
-from app.services.ensemble_service import calculate_ensemble_score, filter_questions_by_thresholds, adjust_weights_dynamically
+from app.services.ensemble_service import calculate_ensemble_score, filter_questions_by_thresholds, adjust_weights_dynamically, calculate_enhanced_ensemble_score
 
 def get_logger_with_context(**context):
     return structlog.get_logger().bind(**context)
@@ -274,8 +274,8 @@ class RecommendationService:
             # River model skoru
             river_score = self.river_model.predict_proba_one(combined_features).get(1, 0.5)
 
-            # Ensemble skor hesapla
-            ensemble_scores = calculate_ensemble_score(
+            # Ensemble skor hesapla (async enhanced embedding similarity ile)
+            ensemble_scores = await calculate_enhanced_ensemble_score(
                 river_score=river_score,
                 question_content=question.content,
                 question_id=question.id,

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 from app.core.config import settings
 from app.services.embedding_service import EmbeddingService
+from app.services.vector_store_service import vector_store_service
 
 logger = structlog.get_logger()
 
@@ -29,9 +30,19 @@ class EnhancedEmbeddingService(EmbeddingService):
     def __init__(self):
         super().__init__()
         
-        # Redis for caching
-        self.redis_client = redis.from_url(settings.redis_url)
-        self.cache_ttl = 3600  # 1 hour cache
+        # Optimized Redis connection pool for caching
+        self.redis_client = redis.ConnectionPool.from_url(
+            settings.redis_url,
+            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True
+        )
+        self.redis = redis.Redis(connection_pool=self.redis_client)
+        self.cache_ttl = settings.CACHE_EMBEDDING_TTL
+        
+        # Vector Store için initialization flag
+        self.vector_store_initialized = False
         
         # Available models
         self.available_models = {
@@ -104,11 +115,11 @@ class EnhancedEmbeddingService(EmbeddingService):
         if not text or not text.strip():
             return [0.0] * self.embedding_dim
         
-        # Cache'den kontrol et
+        # Optimized cache check with pipeline
         cache_key = self.get_embedding_cache_key(text)
         
         try:
-            cached_result = self.redis_client.get(cache_key)
+            cached_result = self.redis.get(cache_key)
             if cached_result:
                 self.stats['cache_hits'] += 1
                 return json.loads(cached_result)
@@ -119,9 +130,9 @@ class EnhancedEmbeddingService(EmbeddingService):
         self.stats['cache_misses'] += 1
         embedding = self.compute_embedding(text)
         
-        # Cache'e kaydet
+        # Optimized cache write with pipeline
         try:
-            self.redis_client.setex(
+            self.redis.setex(
                 cache_key, 
                 self.cache_ttl, 
                 json.dumps(embedding)
@@ -132,7 +143,7 @@ class EnhancedEmbeddingService(EmbeddingService):
         self.stats['embeddings_computed'] += 1
         return embedding
 
-    def compute_embeddings_batch_cached(self, texts: List[str]) -> List[List[float]]:
+    async def compute_embeddings_batch_cached_async(self, texts: List[str]) -> List[List[float]]:
         """Cache'li toplu embedding hesaplama"""
         if not texts:
             return []
@@ -141,48 +152,72 @@ class EnhancedEmbeddingService(EmbeddingService):
         uncached_texts = []
         uncached_indices = []
         
-        # Cache'den mevcut olanları al
+        # Optimized batch cache lookup with Redis pipeline
+        cache_keys = []
         for i, text in enumerate(texts):
             if not text or not text.strip():
                 results.append([0.0] * self.embedding_dim)
-                continue
+                cache_keys.append(None)
+            else:
+                cache_key = self.get_embedding_cache_key(text)
+                cache_keys.append(cache_key)
+                results.append(None)  # Placeholder
                 
-            cache_key = self.get_embedding_cache_key(text)
+        # Batch cache lookup
+        valid_keys = [key for key in cache_keys if key is not None]
+        if valid_keys:
             try:
-                cached_result = self.redis_client.get(cache_key)
-                if cached_result:
-                    results.append(json.loads(cached_result))
-                    self.stats['cache_hits'] += 1
-                else:
-                    results.append(None)  # Placeholder
-                    uncached_texts.append(text)
-                    uncached_indices.append(i)
-                    self.stats['cache_misses'] += 1
+                pipe = self.redis.pipeline()
+                for key in valid_keys:
+                    pipe.get(key)
+                cached_results = pipe.execute()
+                
+                key_index = 0
+                for i, text in enumerate(texts):
+                    if cache_keys[i] is not None:
+                        cached_result = cached_results[key_index]
+                        key_index += 1
+                        
+                        if cached_result:
+                            try:
+                                results[i] = json.loads(cached_result)
+                                self.stats['cache_hits'] += 1
+                            except json.JSONDecodeError:
+                                uncached_texts.append(text)
+                                uncached_indices.append(i)
+                                self.stats['cache_misses'] += 1
+                        else:
+                            uncached_texts.append(text)
+                            uncached_indices.append(i)
+                            self.stats['cache_misses'] += 1
+                            
             except Exception as e:
-                logger.debug("cache_read_error", error=str(e))
-                results.append(None)
-                uncached_texts.append(text)
-                uncached_indices.append(i)
+                logger.debug("batch_cache_read_error", error=str(e))
+                # Fallback: treat all as cache miss
+                for i, text in enumerate(texts):
+                    if cache_keys[i] is not None and results[i] is None:
+                        uncached_texts.append(text)
+                        uncached_indices.append(i)
         
         # Cache'de olmayan metinleri hesapla
         if uncached_texts:
             uncached_embeddings = self.compute_embeddings_batch(uncached_texts)
             
-            # Sonuçları yerleştir ve cache'e kaydet
-            for i, (text, embedding) in enumerate(zip(uncached_texts, uncached_embeddings)):
-                index = uncached_indices[i]
-                results[index] = embedding
-                
-                # Cache'e kaydet
-                try:
+            # Optimized batch cache write with pipeline
+            try:
+                pipe = self.redis.pipeline()
+                for i, (text, embedding) in enumerate(zip(uncached_texts, uncached_embeddings)):
+                    index = uncached_indices[i]
+                    results[index] = embedding
+                    
+                    # Batch cache write
                     cache_key = self.get_embedding_cache_key(text)
-                    self.redis_client.setex(
-                        cache_key,
-                        self.cache_ttl,
-                        json.dumps(embedding)
-                    )
-                except Exception as e:
-                    logger.debug("cache_write_error", error=str(e))
+                    pipe.setex(cache_key, self.cache_ttl, json.dumps(embedding))
+                
+                pipe.execute()
+                
+            except Exception as e:
+                logger.debug("batch_cache_write_error", error=str(e))
             
             self.stats['embeddings_computed'] += len(uncached_texts)
         
@@ -441,6 +476,209 @@ class EnhancedEmbeddingService(EmbeddingService):
         }
         
         return enhanced_stats
+
+    async def initialize_vector_store(self):
+        """Vector store'u başlat"""
+        if not self.vector_store_initialized:
+            try:
+                await vector_store_service.initialize()
+                self.vector_store_initialized = True
+                logger.info("vector_store_initialized_in_enhanced_service")
+            except Exception as e:
+                logger.error("vector_store_init_error", error=str(e))
+                raise
+
+    async def store_question_embedding(
+        self, 
+        question_id: int, 
+        question_text: str,
+        metadata: Optional[Dict] = None,
+        subject_id: Optional[int] = None,
+        topic_id: Optional[int] = None,
+        difficulty_level: Optional[int] = None
+    ) -> bool:
+        """Soru embedding'ini hem cache hem vector store'a kaydet"""
+        if not self.vector_store_initialized:
+            await self.initialize_vector_store()
+        
+        try:
+            # Embedding hesapla (cache'li)
+            embedding = self.compute_embedding_cached(question_text)
+            
+            # Vector store'a kaydet
+            success = await vector_store_service.store_embedding(
+                question_id=question_id,
+                embedding=embedding,
+                content=question_text,
+                metadata=metadata,
+                subject_id=subject_id,
+                topic_id=topic_id,
+                difficulty_level=difficulty_level
+            )
+            
+            logger.debug("question_embedding_stored", 
+                        question_id=question_id,
+                        success=success)
+            
+            return success
+            
+        except Exception as e:
+            logger.error("store_question_embedding_error", 
+                        question_id=question_id, 
+                        error=str(e))
+            return False
+
+    async def semantic_search_vector_db(
+        self,
+        query_text: str,
+        k: int = 10,
+        similarity_threshold: float = 0.7,
+        filters: Optional[Dict] = None
+    ) -> List[Dict]:
+        """Vector DB üzerinden semantic arama (O(log N) performance)"""
+        if not self.vector_store_initialized:
+            await self.initialize_vector_store()
+        
+        try:
+            # Query embedding hesapla
+            query_embedding = self.compute_embedding_cached(query_text)
+            
+            # Vector DB'den ara
+            results = await vector_store_service.similarity_search(
+                query_embedding=query_embedding,
+                k=k,
+                similarity_threshold=similarity_threshold,
+                filters=filters
+            )
+            
+            # Response formatına çevir
+            formatted_results = []
+            for result in results:
+                formatted_results.append({
+                    'question_id': result.id,
+                    'content': result.content,
+                    'similarity_score': result.similarity_score,
+                    'distance': result.distance,
+                    'metadata': result.metadata
+                })
+            
+            logger.debug("vector_semantic_search_completed",
+                        query_length=len(query_text),
+                        results_count=len(formatted_results),
+                        k=k,
+                        threshold=similarity_threshold)
+            
+            return formatted_results
+            
+        except Exception as e:
+            logger.error("vector_semantic_search_error", error=str(e))
+            return []
+
+    async def batch_update_embeddings(
+        self, 
+        batch_size: int = 100,
+        force_recompute: bool = False
+    ) -> Dict[str, int]:
+        """Veritabanındaki tüm soruları vector store'a batch update et"""
+        if not self.vector_store_initialized:
+            await self.initialize_vector_store()
+        
+        from app.db.database import SessionLocal
+        from app.db.models import Question
+        
+        stats = {
+            'processed': 0,
+            'stored': 0,
+            'errors': 0,
+            'skipped': 0
+        }
+        
+        try:
+            db = SessionLocal()
+            
+            # Toplam soru sayısını al
+            total_questions = db.query(Question).count()
+            logger.info("batch_update_starting", 
+                       total_questions=total_questions,
+                       batch_size=batch_size)
+            
+            # Batch işlemi
+            offset = 0
+            while offset < total_questions:
+                batch_questions = db.query(Question).offset(offset).limit(batch_size).all()
+                
+                if not batch_questions:
+                    break
+                
+                # Batch embedding data hazırla
+                embeddings_data = []
+                
+                for question in batch_questions:
+                    stats['processed'] += 1
+                    
+                    try:
+                        # Force recompute yoksa mevcut embedding'i kontrol et
+                        if not force_recompute:
+                            existing = await vector_store_service.get_embedding_by_question_id(question.id)
+                            if existing:
+                                stats['skipped'] += 1
+                                continue
+                        
+                        # Embedding hesapla
+                        embedding = self.compute_embedding_cached(question.question_text)
+                        
+                        embeddings_data.append({
+                            'question_id': question.id,
+                            'embedding': embedding,
+                            'content': question.question_text,
+                            'metadata': {
+                                'created_at': question.created_at.isoformat() if question.created_at else None
+                            },
+                            'subject_id': question.subject_id,
+                            'topic_id': question.topic_id,
+                            'difficulty_level': question.difficulty_level
+                        })
+                        
+                    except Exception as e:
+                        logger.error("embedding_computation_error", 
+                                   question_id=question.id, 
+                                   error=str(e))
+                        stats['errors'] += 1
+                
+                # Batch store
+                if embeddings_data:
+                    stored_count = await vector_store_service.batch_store_embeddings(embeddings_data)
+                    stats['stored'] += stored_count
+                
+                offset += batch_size
+                
+                # Progress log
+                if offset % (batch_size * 10) == 0:
+                    logger.info("batch_update_progress", 
+                               processed=stats['processed'],
+                               stored=stats['stored'],
+                               progress_pct=round((offset / total_questions) * 100, 2))
+            
+            db.close()
+            
+            logger.info("batch_update_completed", **stats)
+            return stats
+            
+        except Exception as e:
+            logger.error("batch_update_error", error=str(e))
+            stats['errors'] += 1
+            return stats
+
+    async def get_vector_store_stats(self) -> Dict:
+        """Vector store istatistikleri"""
+        if not self.vector_store_initialized:
+            await self.initialize_vector_store()
+        
+        try:
+            return await vector_store_service.get_stats()
+        except Exception as e:
+            logger.error("get_vector_stats_error", error=str(e))
+            return {}
 
     def clear_cache(self) -> bool:
         """Embedding cache'ini temizle"""

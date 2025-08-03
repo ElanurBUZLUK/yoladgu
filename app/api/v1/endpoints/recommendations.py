@@ -429,23 +429,311 @@ async def _get_student_context(db: Session, student_id: int) -> Dict[str, Any]:
 
 async def _get_bandit_recommendations(db: Session, request: RecommendationRequest) -> List[QuestionRecommendation]:
     """Get recommendations using bandit algorithm"""
-    # Implementation using the bandit model
-    return []
+    try:
+        from app.services.ensemble_service import EnhancedEnsembleScoringService
+        
+        ensemble_service = EnhancedEnsembleScoringService()
+        
+        # Get candidate questions
+        from app.crud.question import get_questions
+        questions = get_questions(
+            db, 
+            subject_id=request.subject_id,
+            difficulty_level=request.difficulty_level,
+            limit=20
+        )
+        
+        if not questions:
+            return []
+        
+        # Convert to candidate format
+        candidate_questions = [
+            {
+                'id': q.id,
+                'difficulty_level': q.difficulty_level,
+                'subject_id': q.subject_id,
+                'topic_id': q.topic_id,
+                'content': q.content
+            } for q in questions
+        ]
+        
+        # Get user features
+        user_features = {}
+        if request.student_id:
+            from app.crud.user import get_user
+            user = get_user(db, request.student_id)
+            if user and user.student_profile:
+                user_features = {
+                    'level': user.student_profile.level or 1,
+                    'total_answered': user.student_profile.total_questions_answered or 0,
+                    'accuracy': (user.student_profile.total_correct_answers or 0) / max(1, user.student_profile.total_questions_answered or 1)
+                }
+        
+        # Use bandit selection
+        scored_results = ensemble_service.bandit.select_multiple_questions(
+            user_features, candidate_questions, count=request.limit
+        )
+        
+        # Convert to QuestionRecommendation format
+        recommendations = []
+        for question in questions[:request.limit]:
+            if question.id in [result['question_id'] for result in scored_results]:
+                recommendations.append(QuestionRecommendation(
+                    id=question.id,
+                    content=question.content,
+                    subject_id=question.subject_id,
+                    topic_id=question.topic_id,
+                    difficulty_level=question.difficulty_level,
+                    question_type=question.question_type,
+                    confidence_score=next((r['confidence'] for r in scored_results if r['question_id'] == question.id), 0.5),
+                    reasoning=["Selected using bandit algorithm", f"Expected reward optimized for your level {user_features.get('level', 1)}"]
+                ))
+        
+        return recommendations
+        
+    except Exception as e:
+        logger.error("bandit_recommendations_error", error=str(e))
+        return []
 
 async def _get_collaborative_recommendations(db: Session, request: RecommendationRequest) -> List[QuestionRecommendation]:
     """Get recommendations using collaborative filtering"""
-    # Implementation using collaborative filtering
-    return []
+    try:
+        from app.services.ensemble_service import EnhancedEnsembleScoringService
+        from app.crud.student_response import get_responses
+        
+        ensemble_service = EnhancedEnsembleScoringService()
+        
+        # Get candidate questions
+        from app.crud.question import get_questions
+        questions = get_questions(
+            db, 
+            subject_id=request.subject_id,
+            difficulty_level=request.difficulty_level,
+            limit=20
+        )
+        
+        if not questions:
+            return []
+        
+        # Get collaborative recommendations
+        user_item_matrix = {}
+        if request.student_id:
+            # Get student's response history
+            responses = get_responses(db, student_id=request.student_id, limit=100)
+            for response in responses:
+                user_item_matrix[response.student_id] = user_item_matrix.get(response.student_id, {})
+                user_item_matrix[response.student_id][response.question_id] = 1 if response.is_correct else 0
+        
+        # Use collaborative filtering
+        collaborative_scores = ensemble_service.collaborative_filter.get_user_recommendations(
+            request.student_id or 1, user_item_matrix, num_recommendations=request.limit
+        )
+        
+        # Convert to QuestionRecommendation format
+        recommendations = []
+        for question in questions[:request.limit]:
+            if question.id in collaborative_scores:
+                score = collaborative_scores[question.id]
+                recommendations.append(QuestionRecommendation(
+                    id=question.id,
+                    content=question.content,
+                    subject_id=question.subject_id,
+                    topic_id=question.topic_id,
+                    difficulty_level=question.difficulty_level,
+                    question_type=question.question_type,
+                    confidence_score=score,
+                    reasoning=["Based on similar students' preferences", f"Collaborative filtering score: {score:.2f}"]
+                ))
+        
+        return recommendations
+        
+    except Exception as e:
+        logger.error("collaborative_recommendations_error", error=str(e))
+        return []
 
 async def _get_embedding_recommendations(db: Session, request: RecommendationRequest) -> List[QuestionRecommendation]:
-    """Get recommendations using embedding similarity"""
-    # Implementation using embeddings
-    return []
+    """
+    OPTIMIZED: Vector store ile embedding-based recommendations
+    O(log N) performance ile semantic similarity arama
+    """
+    try:
+        from app.services.enhanced_embedding_service import enhanced_embedding_service
+        from app.crud.question import get_question
+        from app.crud.student_response import get_student_responses
+        
+        # Öğrencinin son çözdüğü soruları al
+        recent_responses = get_student_responses(
+            db, student_id=request.student_id, limit=5
+        )
+        
+        if not recent_responses:
+            logger.warning("no_recent_responses_fallback_to_random", student_id=request.student_id)
+            return []
+        
+        # Son sorunun içeriğini al
+        last_question = get_question(db, recent_responses[0].question_id)
+        if not last_question:
+            return []
+        
+        # Vector store ile benzer soruları bul
+        similar_results = await enhanced_embedding_service.semantic_search_vector_db(
+            query_text=last_question.content,
+            k=request.limit * 2,  # Daha fazla aday al, sonra filtrele
+            similarity_threshold=0.7,
+            filters={
+                'subject_id': request.subject_id,
+                'difficulty_level': request.difficulty_level,
+                'exclude_question_ids': [r.question_id for r in recent_responses]  # Önceden çözülenleri hariç tut
+            }
+        )
+        
+        recommendations = []
+        for result in similar_results[:request.limit]:
+            question = get_question(db, result['question_id'])
+            if question:
+                # Semantic reasoning oluştur
+                reasoning = [
+                    f"Semantically similar to your recent question (similarity: {result['similarity_score']:.2f})",
+                    f"Same difficulty level ({question.difficulty_level})",
+                    "Recommended based on content understanding"
+                ]
+                
+                recommendations.append(QuestionRecommendation(
+                    id=question.id,
+                    content=question.content,
+                    subject_id=question.subject_id,
+                    topic_id=question.topic_id,
+                    difficulty_level=question.difficulty_level,
+                    question_type=question.question_type,
+                    confidence_score=result['similarity_score'],
+                    reasoning=reasoning
+                ))
+        
+        logger.info("embedding_recommendations_generated", 
+                   student_id=request.student_id,
+                   count=len(recommendations),
+                   method="vector_store_semantic_search")
+        
+        return recommendations
+        
+    except Exception as e:
+        logger.error("embedding_recommendations_error", 
+                    student_id=request.student_id, 
+                    error=str(e))
+        return []
 
 async def _get_ensemble_recommendations(db: Session, request: RecommendationRequest) -> List[QuestionRecommendation]:
-    """Get recommendations using ensemble of all algorithms"""
-    # Implementation using ensemble approach
-    return []
+    """
+    ENHANCED: Multi-algorithm ensemble ile optimize edilmiş öneriler
+    River + LinUCB + Semantic Similarity + Neo4j birleşimi
+    """
+    try:
+        from app.services.enhanced_embedding_service import enhanced_embedding_service
+        from app.services.ensemble_service import calculate_enhanced_ensemble_score
+        from app.crud.question import get_questions
+        from app.crud.student_response import get_student_responses
+        
+        # Öğrenci context'ini al
+        student_context = await _get_student_context(db, request.student_id)
+        
+        # Candidate questions al (filtered)
+        candidate_questions = get_questions(
+            db,
+            subject_id=request.subject_id,
+            difficulty_level=request.difficulty_level,
+            limit=50,  # Ensemble için daha geniş aday havuzu
+            exclude_answered_by=request.student_id
+        )
+        
+        if not candidate_questions:
+            return []
+        
+        # Öğrencinin son sorularını al (context için)
+        recent_responses = get_student_responses(db, request.student_id, limit=10)
+        recent_questions = []
+        recent_question_ids = []
+        
+        for response in recent_responses:
+            from app.crud.question import get_question
+            question = get_question(db, response.question_id)
+            if question:
+                recent_questions.append(question.content)
+                recent_question_ids.append(question.id)
+        
+        # Her candidate için ensemble score hesapla
+        scored_recommendations = []
+        
+        for question in candidate_questions:
+            try:
+                # River score simulation (basit bir tahmin)
+                river_score = min(0.8, student_context.get('accuracy_rate_overall', 0.5) + 0.2)
+                
+                # Enhanced ensemble score hesapla
+                ensemble_scores = await calculate_enhanced_ensemble_score(
+                    river_score=river_score,
+                    question_content=question.content,
+                    question_id=question.id,
+                    question_difficulty=question.difficulty_level,
+                    student_id=request.student_id,
+                    student_level=student_context.get('level', 1),
+                    student_recent_performance=student_context.get('accuracy_rate_recent', 0.5),
+                    student_recent_questions=recent_questions,
+                    student_recent_question_ids=recent_question_ids
+                )
+                
+                # Reasoning oluştur
+                reasoning = [
+                    f"Ensemble score: {ensemble_scores['ensemble_score']:.3f}",
+                    f"Semantic similarity: {ensemble_scores['embedding_similarity']:.3f}",
+                    f"Skill mastery alignment: {ensemble_scores['skill_mastery']:.3f}",
+                    f"Difficulty match: {ensemble_scores['difficulty_match']:.3f}"
+                ]
+                
+                scored_recommendations.append({
+                    'question': question,
+                    'ensemble_score': ensemble_scores['ensemble_score'],
+                    'component_scores': ensemble_scores,
+                    'reasoning': reasoning
+                })
+                
+            except Exception as e:
+                logger.debug("ensemble_score_calculation_error", 
+                           question_id=question.id, 
+                           error=str(e))
+                continue
+        
+        # Ensemble score'a göre sırala
+        scored_recommendations.sort(key=lambda x: x['ensemble_score'], reverse=True)
+        
+        # Top N'i al ve format'la
+        recommendations = []
+        for item in scored_recommendations[:request.limit]:
+            question = item['question']
+            
+            recommendations.append(QuestionRecommendation(
+                id=question.id,
+                content=question.content,
+                subject_id=question.subject_id,
+                topic_id=question.topic_id,
+                difficulty_level=question.difficulty_level,
+                question_type=question.question_type,
+                confidence_score=item['ensemble_score'],
+                reasoning=item['reasoning']
+            ))
+        
+        logger.info("ensemble_recommendations_generated",
+                   student_id=request.student_id,
+                   count=len(recommendations),
+                   method="enhanced_ensemble_scoring",
+                   avg_score=sum(r.confidence_score for r in recommendations) / len(recommendations) if recommendations else 0)
+        
+        return recommendations
+        
+    except Exception as e:
+        logger.error("ensemble_recommendations_error", 
+                    student_id=request.student_id,
+                    error=str(e))
+        return []
 
 def _generate_reasoning(rec, score: float, context: Dict) -> List[str]:
     """Generate human-readable reasoning for recommendation"""

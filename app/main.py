@@ -15,12 +15,14 @@ from app.api.v1.endpoints import (
     plan_items,
     ai,
     embeddings,
+    scheduler,
     streams,
     recommendations,
     llm_assistant,
     system_health,
     quiz_sessions,
     analytics,
+    performance_monitor,
 )
 from prometheus_fastapi_instrumentator import Instrumentator
 from prometheus_client import Counter, Histogram, Gauge, Info, generate_latest, CONTENT_TYPE_LATEST
@@ -30,6 +32,8 @@ import structlog
 import redis
 import psycopg2
 from datetime import datetime
+from app.core.rate_limiter import get_rate_limiter
+from app.services.scheduler_service import offline_scheduler
 
 # Structured logging setup
 structlog.configure(
@@ -58,10 +62,66 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
-# Initialize Prometheus monitoring - simplified approach
-instrumentator = Instrumentator()
-instrumentator.instrument(app)
-instrumentator.expose(app, endpoint="/metrics")
+# Rate limiter instance
+rate_limiter = get_rate_limiter()
+
+Instrumentator().instrument(app).expose(app)
+
+# Rate limiting middleware
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    """Rate limiting ve cache middleware"""
+    
+    # 1. Cache check (sadece GET ve cacheable POST'lar için)
+    cached_response = await rate_limiter.get_cached_response(request)
+    if cached_response:
+        return cached_response
+    
+    # 2. Rate limit check
+    rate_limit_response = await rate_limiter.check_rate_limit(request)
+    if rate_limit_response:
+        return rate_limit_response
+    
+    # 3. Process request
+    response = await call_next(request)
+    
+    # 4. Cache response (if applicable)
+    await rate_limiter.cache_response(request, response)
+    
+    # 5. Add rate limit headers
+    response.headers["X-RateLimit-Applied"] = "true"
+    
+    return response
+
+# Startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Application startup tasks"""
+    try:
+        logger.info("application_startup_started")
+        
+        # Initialize vector store and scheduler
+        await offline_scheduler.initialize()
+        
+        logger.info("application_startup_completed")
+        
+    except Exception as e:
+        logger.error("application_startup_error", error=str(e))
+        raise
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Application shutdown tasks"""
+    try:
+        logger.info("application_shutdown_started")
+        
+        # Shutdown scheduler gracefully
+        await offline_scheduler.shutdown()
+        
+        logger.info("application_shutdown_completed")
+        
+    except Exception as e:
+        logger.error("application_shutdown_error", error=str(e))
 
 # Custom metrics for Yoladgu
 yoladgu_requests_total = Counter(
@@ -113,11 +173,13 @@ app.include_router(topics.router, prefix=settings.API_V1_STR)
 app.include_router(subjects.router, prefix=settings.API_V1_STR)
 app.include_router(plan_items.router, prefix=settings.API_V1_STR)
 app.include_router(ai.router, prefix=settings.API_V1_STR)
-app.include_router(embeddings.router, prefix=settings.API_V1_STR + "/embeddings", tags=["embeddings"])
+app.include_router(embeddings.router, prefix=f"{settings.API_V1_STR}/embeddings", tags=["embeddings"])
+app.include_router(scheduler.router, prefix=f"{settings.API_V1_STR}/scheduler", tags=["scheduler"])
 app.include_router(streams.router, prefix=settings.API_V1_STR + "/streams", tags=["streams"])
 app.include_router(recommendations.router, prefix=settings.API_V1_STR, tags=["recommendations"])
 app.include_router(llm_assistant.router, prefix=settings.API_V1_STR, tags=["llm-assistant"])
 app.include_router(system_health.router, prefix=settings.API_V1_STR, tags=["system-health"])
+app.include_router(performance_monitor.router, prefix=f"{settings.API_V1_STR}/performance", tags=["performance"])
 app.include_router(quiz_sessions.router, prefix=settings.API_V1_STR)
 app.include_router(analytics.router, prefix=settings.API_V1_STR)
 
@@ -160,6 +222,14 @@ async def startup_event():
             logger.info("Stream consumer already running or disabled")
     except Exception as e:
         logger.error("Failed to start stream consumer", error=str(e))
+    
+    # Initialize async HTTP clients
+    try:
+        from app.services.question_ingestion_service import get_question_ingestion_service
+        await get_question_ingestion_service()  # Initialize async client
+        logger.info("Question ingestion service initialized")
+    except Exception as e:
+        logger.error("Failed to initialize question ingestion service", error=str(e))
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -179,6 +249,11 @@ async def shutdown_event():
     try:
         from app.services.neo4j_service import neo4j_service
         from app.services.redis_service import redis_service
+        from app.services.question_ingestion_service import close_question_ingestion_service
+        
+        # Close HTTP clients
+        await close_question_ingestion_service()
+        logger.info("Question ingestion service closed")
         
         # Close Neo4j driver
         neo4j_service.close()

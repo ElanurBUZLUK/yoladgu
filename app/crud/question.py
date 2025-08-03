@@ -181,7 +181,7 @@ def delete_question(db: Session, question_id: int) -> Optional[Question]:
                 except Exception as e:
                     logger.error("neo4j_delete_error", question_id=question_id, error=str(e))
                 finally:
-                    driver.close()
+                    # Driver managed by singleton service
     
     return question
 
@@ -211,7 +211,7 @@ def get_similar_questions_from_neo4j(question_id: int, limit: int = 10) -> List[
         logger.error("neo4j_similarity_error", question_id=question_id, error=str(e))
         return []
     finally:
-        driver.close()
+        # Driver managed by singleton service
 
 def get_question_skill_centrality(question_id: int) -> Dict[str, Any]:
     """Soru için skill centrality hesapla"""
@@ -239,7 +239,7 @@ def get_question_skill_centrality(question_id: int) -> Dict[str, Any]:
         logger.error("neo4j_centrality_error", question_id=question_id, error=str(e))
         return {"centrality": 0.0, "skill_count": 0}
     finally:
-        driver.close()
+        # Driver managed by singleton service
 
 def update_question_embedding(db: Session, question_id: int, embedding: str) -> bool:
     """Soru embedding'ini güncelle"""

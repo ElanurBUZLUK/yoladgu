@@ -1,14 +1,14 @@
-import requests
+import httpx
 import re
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
-import logging
+import structlog
 from sqlalchemy.orm import Session
 from app.crud.question import create_question
 from app.schemas.question import QuestionCreate
 from app.services.llm_service import llm_service
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 class QuestionIngestionService:
     """
@@ -16,10 +16,18 @@ class QuestionIngestionService:
     """
     
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        self.client = httpx.AsyncClient(
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            timeout=30.0
+        )
+    
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.client.aclose()
     
     async def ingest_from_khan_academy(self, subject: str, topic: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -29,7 +37,7 @@ class QuestionIngestionService:
             # Khan Academy API endpoint'i (örnek)
             url = f"https://www.khanacademy.org/api/v1/exercises/{subject}/{topic}"
             
-            response = self.session.get(url, timeout=30)
+            response = await self.client.get(url)
             response.raise_for_status()
             
             data = response.json()
@@ -96,7 +104,7 @@ class QuestionIngestionService:
                 'limit': limit
             }
             
-            response = self.session.get(url, params=params, timeout=30)
+            response = await self.client.get(url, params=params)
             response.raise_for_status()
             
             data = response.json()
@@ -129,7 +137,7 @@ class QuestionIngestionService:
         Web sitesinden HTML scraping ile soru çıkar
         """
         try:
-            response = self.session.get(url, timeout=30)
+            response = await self.client.get(url)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -267,4 +275,19 @@ class QuestionIngestionService:
             return []
 
 # Singleton instance
-question_ingestion_service = QuestionIngestionService() 
+# Global async client - Will be initialized in FastAPI startup
+question_ingestion_service = None
+
+async def get_question_ingestion_service():
+    """Get or create question ingestion service singleton"""
+    global question_ingestion_service
+    if question_ingestion_service is None:
+        question_ingestion_service = QuestionIngestionService()
+    return question_ingestion_service
+
+async def close_question_ingestion_service():
+    """Close question ingestion service and cleanup resources"""
+    global question_ingestion_service
+    if question_ingestion_service is not None:
+        await question_ingestion_service.client.aclose()
+        question_ingestion_service = None 

@@ -5,7 +5,7 @@ from app.crud.user import get_current_user
 from app.db.models import User, Question
 from app.services.llm_service import llm_service
 from app.services.recommendation_service import recommendation_service
-from app.services.question_ingestion_service import question_ingestion_service
+from app.services.question_ingestion_service import get_question_ingestion_service
 from app.schemas.ai import (
     HintRequest,
     HintResponse,
@@ -101,9 +101,12 @@ async def batch_enrich_questions(
 ):
     """Mevcut soruları batch olarak zenginleştir"""
     try:
+        # Get async ingestion service
+        ingestion_service = await get_question_ingestion_service()
+        
         # Mevcut soruları bul
         questions = db.query(Question).filter(
-            Question.subject_id == question_ingestion_service._get_subject_id(request.subject)
+            Question.subject_id == ingestion_service._get_subject_id(request.subject)
         ).all()
         
         enriched_count = 0
@@ -160,10 +163,11 @@ async def ingest_from_website(
 ):
     """Web sitesinden soru içe aktar"""
     try:
-        questions = await question_ingestion_service.scrape_from_website(
+        ingestion_service = await get_question_ingestion_service()
+        questions = await ingestion_service.scrape_from_website(
             request.url, request.subject, request.topic
         )
-        saved_count = await question_ingestion_service.save_questions_to_database(
+        saved_count = await ingestion_service.save_questions_to_database(
             questions, db, current_user.id
         )
         return IngestResponse(saved_count=saved_count)
@@ -179,10 +183,11 @@ async def ingest_from_csv(
 ):
     """CSV dosyasından soru içe aktar"""
     try:
-        questions = await question_ingestion_service.ingest_from_csv(
+        ingestion_service = await get_question_ingestion_service()
+        questions = await ingestion_service.ingest_from_csv(
             request.file_path, request.subject
         )
-        saved_count = await question_ingestion_service.save_questions_to_database(
+        saved_count = await ingestion_service.save_questions_to_database(
             questions, db, current_user.id
         )
         return IngestResponse(saved_count=saved_count)

@@ -14,6 +14,7 @@ import structlog
 import redis
 from app.core.config import settings
 from app.services.embedding_service import find_similar_questions, compute_embedding
+from app.services.enhanced_embedding_service import enhanced_embedding_service
 from app.crud.question import get_question_skill_centrality
 from app.crud.student_response import get_student_skill_mastery_from_neo4j
 from app.ml.online_learner import EnhancedOnlineLearner
@@ -286,11 +287,12 @@ class EnhancedEnsembleScoringService:
             return 0.5  # Varsayılan skor
         
         try:
-            # Öğrencinin son sorularının embedding'lerini hesapla
-            recent_embeddings = [compute_embedding(q) for q in student_recent_questions]
+            # Cache'li embedding hesaplama kullan
+            recent_embeddings = [enhanced_embedding_service.compute_embedding_cached(q) 
+                               for q in student_recent_questions]
             
             # Mevcut sorunun embedding'ini hesapla
-            question_embedding = compute_embedding(question_content)
+            question_embedding = enhanced_embedding_service.compute_embedding_cached(question_content)
             
             # Ortalama benzerlik hesapla
             similarities = []
@@ -309,6 +311,63 @@ class EnhancedEnsembleScoringService:
                 
         except Exception as e:
             logger.error("embedding_similarity_error", error=str(e))
+            return 0.5
+
+    async def calculate_enhanced_embedding_similarity_score(self, 
+                                                         question_id: int,
+                                                         student_recent_question_ids: List[int],
+                                                         diversity_weight: float = 0.3) -> float:
+        """
+        Vector store kullanarak gelişmiş embedding benzerlik skoru hesapla
+        O(log N) performance ile çok daha hızlı
+        """
+        if not student_recent_question_ids:
+            return 0.5
+        
+        try:
+            # Vector store'dan bu soru için en benzer soruları bul
+            # Benzerlik threshold'u yüksek tutarak sadece gerçekten benzerleri al
+            similar_results = await enhanced_embedding_service.semantic_search_vector_db(
+                query_text="",  # Doğrudan embedding verecek
+                k=20,
+                similarity_threshold=0.6,
+                filters={'exclude_question_ids': [question_id]}  # Kendisini hariç tut
+            )
+            
+            if not similar_results:
+                return 0.5
+            
+            # Öğrencinin son sorularıyla kesişim bul
+            similar_question_ids = {result['question_id'] for result in similar_results}
+            student_recent_set = set(student_recent_question_ids)
+            
+            # Kesişim oranı: Öğrencinin son sorularıyla ne kadar örtüşüyor
+            intersection = similar_question_ids.intersection(student_recent_set)
+            intersection_ratio = len(intersection) / len(student_recent_set) if student_recent_set else 0
+            
+            # Diversity bonus: Çok benzer sorular varsa azalt
+            diversity_bonus = 1.0 - (intersection_ratio * diversity_weight)
+            
+            # En yüksek benzerlik skorlarının ortalaması
+            top_similarities = [result['similarity_score'] for result in similar_results[:5]]
+            avg_similarity = np.mean(top_similarities) if top_similarities else 0.5
+            
+            # Final score: similarity ve diversity'yi dengele
+            final_score = avg_similarity * diversity_bonus
+            
+            logger.debug("enhanced_embedding_similarity_calculated",
+                        question_id=question_id,
+                        intersection_ratio=intersection_ratio,
+                        avg_similarity=avg_similarity,
+                        diversity_bonus=diversity_bonus,
+                        final_score=final_score)
+            
+            return max(0.1, min(1.0, final_score))  # 0.1-1.0 arasında clamp
+            
+        except Exception as e:
+            logger.error("enhanced_embedding_similarity_error", 
+                        question_id=question_id, 
+                        error=str(e))
             return 0.5
     
     def calculate_skill_mastery_score(self, question_id: int, student_id: int) -> float:
@@ -559,4 +618,163 @@ def filter_questions_by_thresholds(questions: List[Dict],
 
 def adjust_weights_dynamically(student_performance: float, question_count: int) -> None:
     """Ağırlıkları dinamik olarak ayarla"""
-    ensemble_service.adjust_weights_dynamically(student_performance, question_count) 
+    ensemble_service.adjust_weights_dynamically(student_performance, question_count)
+
+# === ASYNC ENHANCED ENSEMBLE FUNCTIONS ===
+
+async def calculate_enhanced_ensemble_score(
+    river_score: float,
+    question_content: str,
+    question_id: int,
+    question_difficulty: int,
+    student_id: int,
+    student_level: int,
+    student_recent_performance: float,
+    student_recent_questions: List[str],
+    student_recent_question_ids: List[int]
+) -> Dict[str, float]:
+    """
+    Vector store kullanarak gelişmiş ensemble skor hesaplama
+    O(log N) performance ile çok daha hızlı semantic similarity
+    """
+    
+    # Initialize scores
+    scores = {
+        'river_score': river_score,
+        'embedding_similarity': 0.5,
+        'skill_mastery': 0.5,
+        'difficulty_match': 0.5,
+        'neo4j_similarity': 0.5,
+        'diversity_score': 0.5,
+        'ensemble_score': 0.5
+    }
+    
+    try:
+        # Global ensemble service instance (fallback için)
+        global_ensemble = EnhancedEnsembleScoringService()
+        
+        # 1. Enhanced embedding similarity (vector store'dan)
+        if enhanced_embedding_service.vector_store_initialized:
+            scores['embedding_similarity'] = await global_ensemble.calculate_enhanced_embedding_similarity_score(
+                question_id=question_id,
+                student_recent_question_ids=student_recent_question_ids,
+                diversity_weight=0.3
+            )
+        else:
+            # Fallback: Eski yöntem
+            scores['embedding_similarity'] = global_ensemble.calculate_embedding_similarity_score(
+                question_content, student_recent_questions
+            )
+        
+        # 2. Skill mastery score
+        scores['skill_mastery'] = global_ensemble.calculate_skill_mastery_score(
+            question_id, student_id
+        )
+        
+        # 3. Difficulty match score
+        scores['difficulty_match'] = global_ensemble.calculate_difficulty_match_score(
+            question_difficulty, student_recent_performance
+        )
+        
+        # 4. Diversity score (embedding tabanlı)
+        scores['diversity_score'] = await calculate_diversity_score(
+            question_id, student_recent_question_ids
+        )
+        
+        # 5. Neo4j similarity (varsa)
+        try:
+            from app.services.neo4j_service import neo4j_service
+            if neo4j_service._driver:
+                scores['neo4j_similarity'] = global_ensemble.calculate_neo4j_similarity_score(
+                    question_id, student_recent_question_ids
+                )
+        except Exception:
+            pass
+        
+        # Ensemble ağırlıkları (adaptive)
+        weights = await get_adaptive_weights(student_recent_performance, student_level)
+        
+        # Final ensemble score
+        scores['ensemble_score'] = sum(
+            weights.get(score_type, 0.2) * score_value 
+            for score_type, score_value in scores.items()
+            if score_type != 'ensemble_score'
+        )
+        
+        logger.debug("enhanced_ensemble_calculated",
+                    question_id=question_id,
+                    student_id=student_id,
+                    scores=scores)
+        
+        return scores
+        
+    except Exception as e:
+        logger.error("enhanced_ensemble_error", 
+                    question_id=question_id,
+                    student_id=student_id,
+                    error=str(e))
+        
+        # Fallback scores
+        scores['ensemble_score'] = river_score * 0.7 + 0.15  # Conservative fallback
+        return scores
+
+async def calculate_diversity_score(question_id: int, recent_question_ids: List[int]) -> float:
+    """Diversity score: benzer soruları penalize et"""
+    if not recent_question_ids:
+        return 1.0  # Yüksek diversity
+    
+    try:
+        # Vector store'dan benzer soruları bul
+        similar_results = await enhanced_embedding_service.semantic_search_vector_db(
+            query_text="",  # Embedding doğrudan verilecek  
+            k=10,
+            similarity_threshold=0.8,  # Çok benzer olanlar
+            filters={'exclude_question_ids': [question_id]}
+        )
+        
+        similar_ids = {result['question_id'] for result in similar_results}
+        recent_ids_set = set(recent_question_ids)
+        
+        # Kesişim oranı
+        intersection = similar_ids.intersection(recent_ids_set)
+        overlap_ratio = len(intersection) / len(recent_ids_set) if recent_ids_set else 0
+        
+        # Diversity: overlap az ise yüksek
+        diversity = 1.0 - overlap_ratio
+        
+        return max(0.1, diversity)
+        
+    except Exception as e:
+        logger.debug("diversity_calculation_error", error=str(e))
+        return 0.7  # Moderate diversity
+
+async def get_adaptive_weights(student_performance: float, student_level: int) -> Dict[str, float]:
+    """Öğrenci performansına göre adaptive ağırlıklar"""
+    
+    # Base weights
+    weights = {
+        'river_score': 0.25,
+        'embedding_similarity': 0.20,
+        'skill_mastery': 0.20,
+        'difficulty_match': 0.15,
+        'diversity_score': 0.10,
+        'neo4j_similarity': 0.10
+    }
+    
+    # Performance-based adjustments
+    if student_performance > 0.8:  # Yüksek performans
+        weights['difficulty_match'] += 0.1  # Daha zor sorular
+        weights['embedding_similarity'] -= 0.05
+    elif student_performance < 0.5:  # Düşük performans
+        weights['skill_mastery'] += 0.1  # Skill gelişimi öncelikli
+        weights['diversity_score'] -= 0.05
+    
+    # Level-based adjustments
+    if student_level <= 2:  # Beginner
+        weights['river_score'] += 0.1  # Adaptive learning öncelikli
+        weights['neo4j_similarity'] -= 0.05
+    elif student_level >= 5:  # Advanced
+        weights['embedding_similarity'] += 0.1  # Semantic exploration
+        weights['skill_mastery'] -= 0.05
+    
+    return weights 

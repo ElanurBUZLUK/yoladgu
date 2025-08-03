@@ -52,7 +52,7 @@ def _sync_student_response_to_neo4j(student_id: int, question_id: int, is_correc
         logger.error("neo4j_student_response_sync_error", 
                     student_id=student_id, question_id=question_id, error=str(e))
     finally:
-        driver.close()
+        # Driver managed by singleton service
 
 def get_response(db: Session, response_id: int) -> Optional[StudentResponse]:
     return db.query(StudentResponse).filter(StudentResponse.id == response_id).first()
@@ -115,7 +115,7 @@ def delete_response(db: Session, response_id: int) -> Optional[StudentResponse]:
                 except Exception as e:
                     logger.error("neo4j_delete_response_error", response_id=response_id, error=str(e))
                 finally:
-                    driver.close()
+                    # Driver managed by singleton service
     
     return db_obj
 
@@ -155,7 +155,7 @@ def get_student_skill_mastery_from_neo4j(student_id: int) -> dict:
         logger.error("neo4j_skill_mastery_error", student_id=student_id, error=str(e))
         return {}
     finally:
-        driver.close()
+        # Driver managed by singleton service
 
 def get_student_learning_path_from_neo4j(student_id: int, limit: int = 20) -> list[dict]:
     """Neo4j'den öğrencinin öğrenme yolunu getir"""
@@ -195,4 +195,4 @@ def get_student_learning_path_from_neo4j(student_id: int, limit: int = 20) -> li
         logger.error("neo4j_learning_path_error", student_id=student_id, error=str(e))
         return []
     finally:
-        driver.close() 
+        # Driver managed by singleton service 
