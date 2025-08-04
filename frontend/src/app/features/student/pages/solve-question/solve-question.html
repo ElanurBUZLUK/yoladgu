@@ -1,17 +1,143 @@
-<div class="solve-question-container">
-  <div *ngIf="loading">Yükleniyor...</div>
-  <ng-container *ngIf="!loading && question">
-    <div class="question-text">{{ question.text }}</div>
-    <div class="options">
-      <button *ngFor="let option of question.options"
-              class="option-btn"
-              [ngClass]="{ 'active': selectedOption === option }"
-              (click)="selectOption(option)">
-        {{ option }}
-      </button>
+<div class="container">
+    <div class="quiz-container fade-in">
+        <!-- Header -->
+        <div class="quiz-header">
+            <div class="quiz-info">
+                <div class="subject-icon">📐</div>
+                <div class="quiz-details">
+                    <h2>{{ currentQuestion?.subject || 'Matematik' }} - {{ currentQuestion?.topic || 'Trigonometri' }}</h2>
+                    <p>AI Önerisi: {{ aiRecommendation }} • Zorluk: {{ getDifficultyText(currentQuestion?.difficulty_level) }}</p>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn" (click)="goBack()">← Ana Sayfa</button>
+                <button class="btn btn-danger" (click)="endQuiz()">Quiz'i Bitir</button>
+            </div>
+        </div>
+        
+        <!-- Progress Section -->
+        <div class="progress-section">
+            <div class="progress-card">
+                <div class="progress-number">{{ currentQuestionIndex + 1 }}</div>
+                <div class="progress-label">/ {{ totalQuestions }} Soru</div>
+            </div>
+            <div class="progress-card">
+                <div class="progress-number">{{ accuracyPercentage }}%</div>
+                <div class="progress-label">Doğru Oranı</div>
+            </div>
+            <div class="progress-card">
+                <div class="progress-number">{{ correctAnswers }}</div>
+                <div class="progress-label">Doğru</div>
+            </div>
+            <div class="progress-card">
+                <div class="progress-number">{{ wrongAnswers }}</div>
+                <div class="progress-label">Yanlış</div>
+            </div>
+        </div>
+        
+        <!-- Timer -->
+        <div class="timer-section">
+            <div class="timer" [class.pulse]="isTimerPulsing">
+                ⏱️ Harcanan Süre: <span id="timer">{{ formatTime(elapsedTime) }}</span>
+            </div>
+        </div>
+        
+        <!-- Question Card -->
+        <div class="question-card" *ngIf="currentQuestion">
+            <div class="question-header">
+                <div class="question-number">Soru {{ currentQuestionIndex + 1 }}</div>
+                <div class="difficulty-badge" [ngClass]="getDifficultyClass(currentQuestion.difficulty_level)">
+                    {{ getDifficultyText(currentQuestion.difficulty_level) }}
+                </div>
+            </div>
+            
+            <div class="question-text" [innerHTML]="currentQuestion.content"></div>
+            
+            <div class="options-container">
+                <div 
+                    *ngFor="let option of currentQuestion.options; let i = index" 
+                    class="option" 
+                    [ngClass]="{
+                        'selected': selectedOption === getOptionLetter(i),
+                        'correct': showResult && option === currentQuestion.correct_answer,
+                        'wrong': showResult && selectedOption === getOptionLetter(i) && option !== currentQuestion.correct_answer
+                    }"
+                    (click)="selectOption(getOptionLetter(i))"
+                >
+                    <span class="option-letter">{{ getOptionLetter(i) }}</span>
+                    {{ option }}
+                </div>
+            </div>
+            
+            <!-- Hint Section -->
+            <div class="hint-section" [class.show]="showHint">
+                <h4>💡 İpucu</h4>
+                <div class="hint-text" [innerHTML]="currentQuestion.hint || 'Bu soru için ipucu bulunmuyor.'"></div>
+            </div>
+            
+            <!-- Explanation Section -->
+            <div class="explanation-section" [class.show]="showExplanation">
+                <h4>✅ Açıklama</h4>
+                <div class="explanation-text" [innerHTML]="currentQuestion.explanation || 'Bu soru için açıklama bulunmuyor.'"></div>
+            </div>
+            
+            <!-- AI Feedback -->
+            <div class="ai-feedback" [class.show]="showAIFeedback">
+                <h4>🤖 AI Geri Bildirimi</h4>
+                <div class="feedback-text" [innerHTML]="aiFeedbackText"></div>
+            </div>
+            
+            <!-- Actions -->
+            <div class="actions-section">
+                <div style="display: flex; gap: 10px;">
+                    <button 
+                        class="btn" 
+                        (click)="showHintSection()" 
+                        [style.display]="showHint ? 'none' : 'block'"
+                    >
+                        💡 İpucu Al
+                    </button>
+                    <button 
+                        class="btn" 
+                        (click)="showExplanationSection()" 
+                        [style.display]="showExplanation ? 'none' : 'block'"
+                    >
+                        📖 Açıklama
+                    </button>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button 
+                        class="btn" 
+                        (click)="checkAnswer()" 
+                        [style.display]="showResult ? 'none' : 'block'"
+                    >
+                        ✓ Cevabı Kontrol Et
+                    </button>
+                    <button 
+                        class="btn btn-success" 
+                        (click)="nextQuestion()" 
+                        [style.display]="showResult ? 'block' : 'none'"
+                    >
+                        Sonraki Soru →
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Loading State -->
+        <div class="question-card" *ngIf="!currentQuestion && !isLoading">
+            <div style="text-align: center; color: #94a3b8; padding: 40px;">
+                <h3>Soru bulunamadı</h3>
+                <p>Lütfen tekrar deneyin.</p>
+            </div>
+        </div>
+        
+        <!-- Loading Spinner -->
+        <div class="question-card" *ngIf="isLoading">
+            <div style="text-align: center; color: #60a5fa; padding: 40px;">
+                <div class="loading-spinner"></div>
+                <p>Soru yükleniyor...</p>
+            </div>
+        </div>
     </div>
-    <button class="submit-btn" [disabled]="!selectedOption || showNext" (click)="submitAnswer()">Cevapla</button>
-    <div class="feedback" *ngIf="feedback">{{ feedback }}</div>
-    <button class="next-btn" *ngIf="showNext" (click)="loadNextQuestion()">Sıradaki Soru</button>
-  </ng-container>
 </div>
