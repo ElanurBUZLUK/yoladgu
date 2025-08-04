@@ -35,7 +35,7 @@ def login_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    elif not user.is_active:
+    elif not getattr(user, "is_active", True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )

@@ -45,7 +45,7 @@ def decode_access_token(token: str) -> Optional[dict]:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        return payload
+        return dict(payload)  # Convert to dict explicitly
     except JWTError:
         return None
 
@@ -97,8 +97,8 @@ def get_current_user(
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
         )
-        email: str = payload.get("sub")
-        user_id: int = payload.get("user_id")
+        email: str = payload.get("sub", "")
+        user_id: int = payload.get("user_id", 0)
 
         if email is None:
             raise credentials_exception
@@ -122,7 +122,7 @@ def get_current_user(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
-    if not user.is_active:
+    if not getattr(user, "is_active", True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )

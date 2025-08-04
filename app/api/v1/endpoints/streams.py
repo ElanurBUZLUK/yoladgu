@@ -239,13 +239,18 @@ async def get_stream_health():
 async def get_dlq_messages(limit: int = 10):
     """Get messages from Dead Letter Queue"""
     try:
-        dlq_messages = stream_consumer_manager.redis_client.xrange(
+        redis_client = stream_consumer_manager.redis_client
+        if not redis_client:
+            return {"messages": [], "total_count": 0}
+
+        dlq_messages = redis_client.xrange(
             stream_consumer_manager.dlq_stream, min="-", max="+", count=limit
         )
 
         formatted_messages = []
-        for message_id, fields in dlq_messages:
-            decoded_fields = {k.decode(): v.decode() for k, v in fields.items()}
+        if dlq_messages and hasattr(dlq_messages, "__iter__"):
+            for message_id, fields in dlq_messages:  # type: ignore
+                decoded_fields = {k.decode(): v.decode() for k, v in fields.items()}
             formatted_messages.append(
                 {
                     "dlq_message_id": message_id.decode(),
@@ -273,7 +278,11 @@ async def get_dlq_messages(limit: int = 10):
 async def delete_dlq_message(message_id: str):
     """Delete a message from DLQ"""
     try:
-        deleted_count = stream_consumer_manager.redis_client.xdel(
+        redis_client = stream_consumer_manager.redis_client
+        if not redis_client:
+            raise HTTPException(status_code=500, detail="Redis client not available")
+
+        deleted_count = redis_client.xdel(
             stream_consumer_manager.dlq_stream, message_id
         )
 
@@ -298,7 +307,11 @@ async def reprocess_dlq_message(message_id: str):
     """Reprocess a message from DLQ"""
     try:
         # Get message from DLQ
-        dlq_messages = stream_consumer_manager.redis_client.xrange(
+        redis_client = stream_consumer_manager.redis_client
+        if not redis_client:
+            raise HTTPException(status_code=500, detail="Redis client not available")
+
+        dlq_messages = redis_client.xrange(
             stream_consumer_manager.dlq_stream, min=message_id, max=message_id, count=1
         )
 
@@ -308,7 +321,11 @@ async def reprocess_dlq_message(message_id: str):
             )
 
         # Extract original message data
-        _, fields = dlq_messages[0]
+        if not dlq_messages:
+            raise HTTPException(
+                status_code=404, detail=f"DLQ message {message_id} not found"
+            )
+        _, fields = dlq_messages[0]  # type: ignore
         decoded_fields = {k.decode(): v.decode() for k, v in fields.items()}
 
         # Republish to main stream with reset retry count
@@ -319,14 +336,12 @@ async def reprocess_dlq_message(message_id: str):
             "retry_count": "0",  # Reset retry count
         }
 
-        new_message_id = stream_consumer_manager.redis_client.xadd(
+        new_message_id = redis_client.xadd(
             stream_consumer_manager.main_stream, republish_fields
         )
 
         # Delete from DLQ
-        stream_consumer_manager.redis_client.xdel(
-            stream_consumer_manager.dlq_stream, message_id
-        )
+        redis_client.xdel(stream_consumer_manager.dlq_stream, message_id)
 
         return {
             "status": "success",

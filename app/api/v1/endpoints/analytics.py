@@ -6,7 +6,7 @@ from app.db.database import get_db
 from app.db.models import Question, QuizSession, StudentResponse, Subject
 from app.db.models import User as UserModel
 from fastapi import APIRouter, Depends
-from sqlalchemy import and_, func
+from sqlalchemy import Float, Integer, and_, func
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -84,7 +84,7 @@ def get_student_analytics(
         prev_week_end = datetime.utcnow() - timedelta(days=7)
 
         prev_week_accuracy = (
-            db.query(func.avg(StudentResponse.is_correct.cast(db.bind.dialect.FLOAT)))
+            db.query(func.avg(StudentResponse.is_correct.cast(Float)))
             .filter(
                 and_(
                     StudentResponse.student_id == current_user.id,
@@ -96,7 +96,7 @@ def get_student_analytics(
         )
 
         current_week_accuracy = (
-            db.query(func.avg(StudentResponse.is_correct.cast(db.bind.dialect.FLOAT)))
+            db.query(func.avg(StudentResponse.is_correct.cast(Float)))
             .filter(
                 and_(
                     StudentResponse.student_id == current_user.id,
@@ -180,7 +180,7 @@ def get_performance_stats(
             )
 
             total = len(day_responses)
-            correct = sum(1 for r in day_responses if r.is_correct)
+            correct = sum(1 for r in day_responses if getattr(r, "is_correct", False))
             accuracy = (correct / total * 100) if total > 0 else 0
 
             daily_stats.append(
@@ -197,9 +197,7 @@ def get_performance_stats(
             db.query(
                 Subject.name,
                 func.count(StudentResponse.id).label("total"),
-                func.sum(
-                    StudentResponse.is_correct.cast(db.bind.dialect.INTEGER)
-                ).label("correct"),
+                func.sum(StudentResponse.is_correct.cast(Integer)).label("correct"),
             )
             .join(Question, Question.subject_id == Subject.id)
             .join(StudentResponse, StudentResponse.question_id == Question.id)

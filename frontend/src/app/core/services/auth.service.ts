@@ -11,8 +11,9 @@ interface User {
   id: number;
   username: string;
   email: string;
-  full_name?: string;
-  grade?: number;
+  full_name: string;  // Backend'te required
+  grade?: string;     // Backend'te string olarak tanımlı
+  role?: string;      // Backend'te UserRole enum
   is_active: boolean;
 }
 
@@ -106,13 +107,13 @@ export class AuthService {
     if (!token) {
       return false;
     }
-    
+
     // Token expiry kontrolü
     if (this.isTokenExpired(token)) {
       this.logout();
       return false;
     }
-    
+
     return true;
   }
 

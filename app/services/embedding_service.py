@@ -77,6 +77,9 @@ class EmbeddingService:
     def get_postgres_connection(self):
         """PostgreSQL bağlantısı"""
         db_url = settings.DATABASE_URL
+        if db_url is None:
+            raise ValueError("DATABASE_URL is not configured")
+
         if db_url.startswith("postgresql+psycopg2://"):
             db_url = db_url.replace("postgresql+psycopg2://", "postgresql://")
 
@@ -320,19 +323,22 @@ class EmbeddingService:
 
             # Toplam soru sayısı
             cursor.execute("SELECT COUNT(*) FROM questions WHERE is_active = true")
-            total_questions = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            total_questions = result[0] if result else 0
 
             # Embedding'i olan soru sayısı
             cursor.execute(
                 "SELECT COUNT(*) FROM questions WHERE embedding IS NOT NULL AND is_active = true"
             )
-            questions_with_embedding = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            questions_with_embedding = result[0] if result else 0
 
             # Embedding'i olmayan soru sayısı
             cursor.execute(
                 "SELECT COUNT(*) FROM questions WHERE embedding IS NULL AND is_active = true"
             )
-            questions_without_embedding = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            questions_without_embedding = result[0] if result else 0
 
             cursor.close()
             conn.close()

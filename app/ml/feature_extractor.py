@@ -55,7 +55,7 @@ class UserFeatureExtractor:
         )
         if not recent_solutions:
             return 0.0
-        correct = sum(1 for s in recent_solutions if s.is_correct)
+        correct = sum(1 for s in recent_solutions if getattr(s, "is_correct", False))
         return correct / len(recent_solutions)
 
     def _get_avg_response_time(self, user_id: int) -> float:
@@ -87,7 +87,7 @@ class UserFeatureExtractor:
         if not result:
             return 0.0
 
-        correct = sum(1 for r in result if r.is_correct)
+        correct = sum(1 for r in result if getattr(r, "is_correct", False))
         return correct / len(result)
 
     def _get_consecutive_correct(self, user_id: int) -> int:
@@ -103,7 +103,7 @@ class UserFeatureExtractor:
 
         consecutive = 0
         for response in responses:
-            if response.is_correct:
+            if getattr(response, "is_correct", False):
                 consecutive += 1
             else:
                 break

@@ -139,7 +139,7 @@ class AdvancedRateLimiter:
 
             # User identifier
             user_type = self.get_user_type(request)
-            client_ip = request.client.host
+            client_ip = request.client.host if request.client else "unknown"
             user_identifier = f"{user_type}:{client_ip}"
 
             # User type multiplier uygula
@@ -166,6 +166,10 @@ class AdvancedRateLimiter:
                 )
 
                 # Current count al
+                if not self.redis:
+                    logger.warning("redis_not_available_for_rate_limit")
+                    return None  # Fail open if Redis unavailable
+
                 current_count = await self.redis.get(key)
                 current_count = int(current_count) if current_count else 0
 
@@ -214,13 +218,14 @@ class AdvancedRateLimiter:
                 )
 
                 # Increment with expiry
-                pipe = self.redis.pipeline()
-                pipe.incr(key)
-                pipe.expire(key, window_seconds + 60)  # Buffer for cleanup
-                await pipe.execute()
+                if self.redis:
+                    pipe = self.redis.pipeline()
+                    pipe.incr(key)
+                    pipe.expire(key, window_seconds + 60)  # Buffer for cleanup
+                    await pipe.execute()
 
             # Add rate limit headers
-            remaining = max(0, adjusted_limits["per_minute"] - (current_count + 1))
+            _remaining = max(0, adjusted_limits["per_minute"] - (current_count + 1))
 
             return None  # No rate limit hit
 
@@ -243,6 +248,8 @@ class AdvancedRateLimiter:
                 return None
 
             cache_key = self.get_cache_key(request)
+            if not self.redis:
+                return None
             cached_data = await self.redis.get(cache_key)
 
             if cached_data:
@@ -297,6 +304,9 @@ class AdvancedRateLimiter:
             # Response body'yi al
             if hasattr(response, "body"):
                 response_content = response.body
+                # Convert memoryview to bytes if needed
+                if isinstance(response_content, memoryview):
+                    response_content = bytes(response_content)
             else:
                 return
 
@@ -311,7 +321,8 @@ class AdvancedRateLimiter:
                     "endpoint": endpoint_key,
                 }
 
-                await self.redis.setex(cache_key, ttl, json.dumps(cache_data))
+                if self.redis:
+                    await self.redis.setex(cache_key, ttl, json.dumps(cache_data))
 
                 logger.debug(
                     "response_cached",
@@ -341,7 +352,7 @@ class AdvancedRateLimiter:
             for key in sample_keys:
                 try:
                     usage = await self.redis.memory_usage(key)
-                    memory_usage += usage if usage else 0
+                    memory_usage += int(usage) if usage else 0
                 except:
                     continue
 

@@ -19,7 +19,10 @@ def _get_neo4j_driver():
 
 
 def _sync_student_response_to_neo4j(
-    student_id: int, question_id: int, is_correct: bool, response_time: float = None
+    student_id: int,
+    question_id: int,
+    is_correct: bool,
+    response_time: Optional[float] = None,
 ):
     """Öğrenci cevabını Neo4j'e senkronize et"""
     if not settings.USE_NEO4J:
@@ -50,7 +53,7 @@ def _sync_student_response_to_neo4j(
                 student_id=student_id,
                 question_id=question_id,
                 is_correct=is_correct,
-                response_time=response_time,
+                response_time=response_time or 0.0,
             )
 
         logger.info(
@@ -72,7 +75,11 @@ def _sync_student_response_to_neo4j(
 
 
 def get_response(db: Session, response_id: int) -> Optional[StudentResponse]:
-    return db.query(StudentResponse).filter(StudentResponse.id == response_id).first()
+    return (
+        db.query(StudentResponse)
+        .filter(getattr(StudentResponse, "id") == response_id)
+        .first()
+    )
 
 
 def get_responses(
@@ -80,7 +87,7 @@ def get_responses(
 ) -> List[StudentResponse]:
     query = db.query(StudentResponse)
     if student_id is not None:
-        query = query.filter(StudentResponse.student_id == student_id)
+        query = query.filter(getattr(StudentResponse, "student_id") == student_id)
     return query.offset(skip).limit(limit).all()
 
 

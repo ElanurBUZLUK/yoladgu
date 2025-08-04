@@ -434,6 +434,49 @@ class LLMService:
         """Generate explanation for a question and answer"""
         return f"This {subject} problem is solved by applying the relevant concepts step by step."
 
+    async def adjust_difficulty_runtime(
+        self,
+        question_content: str,
+        student_level: int,
+        current_difficulty: int,
+        performance_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Dynamically adjust question difficulty based on student performance"""
+        try:
+            logger.info(
+                "adjusting_difficulty_runtime",
+                student_level=student_level,
+                current_difficulty=current_difficulty,
+            )
+
+            # Simple difficulty adjustment logic
+            recent_accuracy = performance_data.get("recent_accuracy", 0.5)
+            avg_response_time = performance_data.get("avg_response_time", 0)
+
+            adjusted_difficulty = current_difficulty
+
+            # Adjust based on performance
+            if recent_accuracy > 0.8 and avg_response_time < 30000:  # 30 seconds
+                # Student is doing well, increase difficulty
+                adjusted_difficulty = min(current_difficulty + 1, 5)
+            elif recent_accuracy < 0.4 or avg_response_time > 60000:  # 60 seconds
+                # Student is struggling, decrease difficulty
+                adjusted_difficulty = max(current_difficulty - 1, 1)
+
+            return {
+                "adjusted_difficulty": adjusted_difficulty,
+                "reason": f"Performance-based adjustment: accuracy={recent_accuracy:.2f}, time={avg_response_time}ms",
+                "confidence": 0.7,
+            }
+
+        except Exception as e:
+            logger.error("difficulty_adjustment_error", error=str(e))
+            return {
+                "adjusted_difficulty": current_difficulty,
+                "reason": "Fallback to original difficulty",
+                "confidence": 0.5,
+            }
+
 
 # Global LLM service instance
 llm_service = LLMService()

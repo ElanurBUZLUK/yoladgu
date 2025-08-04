@@ -78,7 +78,10 @@ class EnhancedLinUCBBandit:
                 }
 
             # Select question with highest UCB value
-            selected_id = max(ucb_values, key=ucb_values.get)
+            if ucb_values:
+                selected_id = max(ucb_values.keys(), key=lambda k: ucb_values[k])
+            else:
+                selected_id = 0
 
             # Update statistics
             self.stats["total_selections"] += 1

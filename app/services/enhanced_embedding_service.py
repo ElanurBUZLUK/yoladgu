@@ -20,6 +20,21 @@ from sklearn.metrics.pairwise import cosine_similarity
 logger = structlog.get_logger()
 
 
+def safe_int(val, default=0):
+    try:
+        if isinstance(val, int):
+            return val
+        # SQLAlchemy Column: get value if possible
+        if hasattr(val, "__int__"):
+            return int(val)
+        # Sometimes val could be a descriptor, try to get value
+        if hasattr(val, "default") and hasattr(val.default, "arg"):
+            return int(val.default.arg)
+        return int(val)
+    except Exception:
+        return default
+
+
 class EnhancedEmbeddingService(EmbeddingService):
     """Gelişmiş SBERT Embedding Servisi"""
 
@@ -27,14 +42,14 @@ class EnhancedEmbeddingService(EmbeddingService):
         super().__init__()
 
         # Optimized Redis connection pool for caching
-        self.redis_client = redis.ConnectionPool.from_url(
+        self.redis_pool = redis.ConnectionPool.from_url(
             settings.redis_url,
             max_connections=settings.REDIS_MAX_CONNECTIONS,
             socket_connect_timeout=5,
             socket_timeout=5,
             retry_on_timeout=True,
         )
-        self.redis = redis.Redis(connection_pool=self.redis_client)
+        self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.cache_ttl = settings.CACHE_EMBEDDING_TTL
 
         # Vector Store için initialization flag
@@ -61,7 +76,7 @@ class EnhancedEmbeddingService(EmbeddingService):
 
         # Current model
         self.current_model_key = "small"
-        self.model_name = self.available_models[self.current_model_key]["name"]
+        self._model_name = self.available_models[self.current_model_key]["name"]
         self.embedding_dim = self.available_models[self.current_model_key]["dimensions"]
 
         # Statistics
@@ -71,6 +86,16 @@ class EnhancedEmbeddingService(EmbeddingService):
             "embeddings_computed": 0,
             "similarities_computed": 0,
         }
+
+    @property
+    def model_name(self) -> str:
+        """Get current model name (property to avoid protected namespace conflict)"""
+        return self._model_name
+
+    @model_name.setter
+    def model_name(self, value: str) -> None:
+        """Set current model name"""
+        self._model_name = value
 
     def switch_model(self, model_key: str) -> bool:
         """SBERT modelini değiştir"""
@@ -86,7 +111,7 @@ class EnhancedEmbeddingService(EmbeddingService):
             with self.model_lock:
                 old_model = self.current_model_key
                 self.current_model_key = model_key
-                self.model_name = self.available_models[model_key]["name"]
+                self._model_name = self.available_models[model_key]["name"]
                 self.embedding_dim = self.available_models[model_key]["dimensions"]
                 self.model = None  # Force reload
 
@@ -110,7 +135,7 @@ class EnhancedEmbeddingService(EmbeddingService):
         text_hash = hashlib.md5(text.encode()).hexdigest()
         return f"embedding:{self.current_model_key}:{text_hash}"
 
-    def compute_embedding_cached(self, text: str) -> List[float]:
+    async def compute_embedding_cached(self, text: str) -> List[float]:
         """Cache'li embedding hesaplama"""
         if not text or not text.strip():
             return [0.0] * self.embedding_dim
@@ -119,10 +144,13 @@ class EnhancedEmbeddingService(EmbeddingService):
         cache_key = self.get_embedding_cache_key(text)
 
         try:
-            cached_result = self.redis.get(cache_key)
+            cached_result = await self.redis.get(cache_key)
             if cached_result:
                 self.stats["cache_hits"] += 1
-                return json.loads(cached_result)
+                if isinstance(cached_result, bytes):
+                    return json.loads(cached_result.decode("utf-8"))
+                else:
+                    return json.loads(cached_result)
         except Exception as e:
             logger.debug("cache_read_error", error=str(e))
 
@@ -132,7 +160,7 @@ class EnhancedEmbeddingService(EmbeddingService):
 
         # Optimized cache write with pipeline
         try:
-            self.redis.setex(cache_key, self.cache_ttl, json.dumps(embedding))
+            await self.redis.setex(cache_key, self.cache_ttl, json.dumps(embedding))
         except Exception as e:
             logger.debug("cache_write_error", error=str(e))
 
@@ -178,7 +206,12 @@ class EnhancedEmbeddingService(EmbeddingService):
 
                         if cached_result:
                             try:
-                                results[i] = json.loads(cached_result)
+                                if isinstance(cached_result, bytes):
+                                    results[i] = json.loads(
+                                        cached_result.decode("utf-8")
+                                    )
+                                else:
+                                    results[i] = json.loads(cached_result)
                                 self.stats["cache_hits"] += 1
                             except json.JSONDecodeError:
                                 uncached_texts.append(text)
@@ -226,7 +259,7 @@ class EnhancedEmbeddingService(EmbeddingService):
     def semantic_similarity(self, text1: str, text2: str) -> float:
         """İki metin arasındaki semantic benzerlik"""
         try:
-            embeddings = self.compute_embeddings_batch_cached([text1, text2])
+            embeddings = self.compute_embeddings_batch([text1, text2])
             if len(embeddings) != 2:
                 return 0.0
 
@@ -245,7 +278,7 @@ class EnhancedEmbeddingService(EmbeddingService):
     def batch_similarity_matrix(self, texts: List[str]) -> np.ndarray:
         """Metinler arası similarity matrisi"""
         try:
-            embeddings = self.compute_embeddings_batch_cached(texts)
+            embeddings = self.compute_embeddings_batch(texts)
             if not embeddings:
                 return np.array([])
 
@@ -271,11 +304,11 @@ class EnhancedEmbeddingService(EmbeddingService):
                 return {"clusters": [], "labels": [], "centroids": []}
 
             # Embeddings'i hesapla
-            embeddings = self.compute_embeddings_batch_cached(texts)
+            embeddings = self.compute_embeddings_batch(texts)
             embedding_matrix = np.array(embeddings)
 
             # K-means clustering
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init="auto")
             labels = kmeans.fit_predict(embedding_matrix)
 
             # Sonuçları organize et
@@ -358,7 +391,7 @@ class EnhancedEmbeddingService(EmbeddingService):
             logger.error("semantic_outliers_error", error=str(e))
             return []
 
-    def semantic_search(
+    async def semantic_search(
         self,
         query: str,
         question_pool: List[Dict],
@@ -371,19 +404,17 @@ class EnhancedEmbeddingService(EmbeddingService):
                 return []
 
             # Query embedding'i hesapla
-            query_embedding = self.compute_embedding_cached(query)
+            query_embedding = await self.compute_embedding_cached(query)
 
             # Question embeddings'leri hesapla
             question_texts = [q.get("content", "") for q in question_pool]
-            question_embeddings = self.compute_embeddings_batch_cached(question_texts)
+            question_embeddings = self.compute_embeddings_batch(question_texts)
 
             # Similarity skorları hesapla
             query_vector = np.array(query_embedding).reshape(1, -1)
             results_with_scores = []
 
-            for i, (question, embedding) in enumerate(
-                zip(question_pool, question_embeddings)
-            ):
+            for question, embedding in zip(question_pool, question_embeddings):
                 if not embedding or sum(embedding) == 0:
                     continue
 
@@ -421,7 +452,7 @@ class EnhancedEmbeddingService(EmbeddingService):
     def find_similar_questions_by_id(
         self, question_id: int, db_session, threshold: float = 0.8, limit: int = 10
     ) -> List[Dict]:
-        """Helper method: Find similar questions by question ID"""
+        """Helper method: Find similar questions by question ID (sync version)"""
         try:
             # Get the question content
             from app.db.models import Question
@@ -434,13 +465,14 @@ class EnhancedEmbeddingService(EmbeddingService):
                 return []
 
             # Compute embedding for the question
-            query_embedding = self.compute_embedding(question.content)
+            query_embedding = self.compute_embedding(str(question.content))
             if not query_embedding:
                 logger.error("embedding_computation_failed", question_id=question_id)
                 return []
 
-            # Find similar questions using the embedding
-            return self.find_similar_questions(
+            # For sync version, we'll use a simple similarity search
+            # This is a fallback when async is not available
+            return self._sync_find_similar_questions(
                 query_embedding, threshold=threshold, limit=limit
             )
 
@@ -452,12 +484,99 @@ class EnhancedEmbeddingService(EmbeddingService):
             )
             return []
 
+    async def find_similar_questions_by_id_async(
+        self, question_id: int, db_session, threshold: float = 0.8, limit: int = 10
+    ) -> List[Dict]:
+        """Helper method: Find similar questions by question ID (async version)"""
+        try:
+            # Get the question content
+            from app.db.models import Question
+
+            question = (
+                db_session.query(Question).filter(Question.id == question_id).first()
+            )
+            if not question:
+                logger.warning("question_not_found", question_id=question_id)
+                return []
+
+            # Compute embedding for the question
+            query_embedding = self.compute_embedding(str(question.content))
+            if not query_embedding:
+                logger.error("embedding_computation_failed", question_id=question_id)
+                return []
+
+            # Find similar questions using the embedding
+            return await self.find_similar_questions(
+                query_embedding, threshold=threshold, limit=limit
+            )
+
+        except Exception as e:
+            logger.error(
+                "find_similar_questions_by_id_error",
+                question_id=question_id,
+                error=str(e),
+            )
+            return []
+
+    def _sync_find_similar_questions(
+        self, query_embedding: List[float], threshold: float = 0.8, limit: int = 10
+    ) -> List[Dict]:
+        """Synchronous fallback for finding similar questions"""
+        try:
+            # Simple similarity search using database
+
+            conn = self.get_postgres_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT id, content, embedding
+                FROM questions
+                WHERE embedding IS NOT NULL AND is_active = true
+                LIMIT 100
+                """
+            )
+
+            results = []
+            for row in cursor.fetchall():
+                question_id, content, embedding_json = row
+
+                if not embedding_json:
+                    continue
+
+                try:
+                    stored_embedding = json.loads(embedding_json)
+                    similarity = cosine_similarity(
+                        np.array(query_embedding).reshape(1, -1),
+                        np.array(stored_embedding).reshape(1, -1),
+                    )[0][0]
+
+                    if similarity >= threshold:
+                        results.append(
+                            {
+                                "id": question_id,
+                                "content": content,
+                                "similarity": float(similarity),
+                                "source": "sync_embedding",
+                            }
+                        )
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+            # Sort by similarity and limit
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            return results[:limit]
+
+        except Exception as e:
+            logger.error("sync_similar_questions_error", error=str(e))
+            return []
+
     def dimensionality_reduction(
         self, texts: List[str], target_dims: int = 2
-    ) -> Tuple[np.ndarray, PCA]:
+    ) -> Tuple[np.ndarray, Optional[PCA]]:
         """Embedding'leri boyut azaltma ile görselleştirme için hazırla"""
         try:
-            embeddings = self.compute_embeddings_batch_cached(texts)
+            embeddings = self.compute_embeddings_batch(texts)
             if not embeddings:
                 return np.array([]), None
 
@@ -538,7 +657,7 @@ class EnhancedEmbeddingService(EmbeddingService):
 
         try:
             # Embedding hesapla (cache'li)
-            embedding = self.compute_embedding_cached(question_text)
+            embedding = await self.compute_embedding_cached(question_text)
 
             # Vector store'a kaydet
             success = await vector_store_service.store_embedding(
@@ -576,7 +695,7 @@ class EnhancedEmbeddingService(EmbeddingService):
 
         try:
             # Query embedding hesapla
-            query_embedding = self.compute_embedding_cached(query_text)
+            query_embedding = await self.compute_embedding_cached(query_text)
 
             # Vector DB'den ara
             results = await vector_store_service.similarity_search(
@@ -657,7 +776,7 @@ class EnhancedEmbeddingService(EmbeddingService):
                         if not force_recompute:
                             existing = (
                                 await vector_store_service.get_embedding_by_question_id(
-                                    question.id
+                                    safe_int(question.id)
                                 )
                             )
                             if existing:
@@ -665,30 +784,36 @@ class EnhancedEmbeddingService(EmbeddingService):
                                 continue
 
                         # Embedding hesapla
-                        embedding = self.compute_embedding_cached(
-                            question.question_text
-                        )
+                        embedding = self.compute_embedding_cached(str(question.content))
 
                         embeddings_data.append(
                             {
-                                "question_id": question.id,
+                                "question_id": safe_int(question.id),
                                 "embedding": embedding,
-                                "content": question.question_text,
+                                "content": str(question.content),
                                 "metadata": {
                                     "created_at": question.created_at.isoformat()
-                                    if question.created_at
+                                    if question.created_at is not None
                                     else None
                                 },
-                                "subject_id": question.subject_id,
-                                "topic_id": question.topic_id,
-                                "difficulty_level": question.difficulty_level,
+                                "subject_id": safe_int(question.subject_id)
+                                if question.subject_id is not None
+                                else None,
+                                "topic_id": safe_int(question.topic_id)
+                                if question.topic_id is not None
+                                else None,
+                                "difficulty_level": safe_int(question.difficulty_level)
+                                if question.difficulty_level is not None
+                                else 1,
                             }
                         )
 
                     except Exception as e:
                         logger.error(
                             "embedding_computation_error",
-                            question_id=question.id,
+                            question_id=safe_int(question.id)
+                            if question.id is not None
+                            else None,
                             error=str(e),
                         )
                         stats["errors"] += 1
@@ -732,15 +857,14 @@ class EnhancedEmbeddingService(EmbeddingService):
             logger.error("get_vector_stats_error", error=str(e))
             return {}
 
-    def clear_cache(self) -> bool:
+    async def clear_cache(self) -> bool:
         """Embedding cache'ini temizle"""
         try:
             # Pattern ile embedding cache'ini temizle
             pattern = f"embedding:{self.current_model_key}:*"
-            keys = self.redis_client.keys(pattern)
-
+            keys = await self.redis.keys(pattern)
             if keys:
-                deleted_count = self.redis_client.delete(*keys)
+                deleted_count = await self.redis.delete(*keys)
                 logger.info("cache_cleared", deleted_keys=deleted_count)
             else:
                 logger.info("cache_already_empty")
@@ -761,9 +885,9 @@ enhanced_embedding_service = EnhancedEmbeddingService()
 
 
 # Enhanced convenience functions
-def compute_embedding_cached(text: str) -> List[float]:
+async def compute_embedding_cached(text: str) -> List[float]:
     """Cache'li embedding hesaplama"""
-    return enhanced_embedding_service.compute_embedding_cached(text)
+    return await enhanced_embedding_service.compute_embedding_cached(text)
 
 
 def semantic_similarity(text1: str, text2: str) -> float:
@@ -776,14 +900,14 @@ def semantic_clustering(texts: List[str], n_clusters: int = 5) -> Dict:
     return enhanced_embedding_service.semantic_clustering(texts, n_clusters)
 
 
-def semantic_search(
+async def semantic_search(
     query: str,
     question_pool: List[Dict],
     top_k: int = 10,
     similarity_threshold: float = 0.6,
 ) -> List[Dict]:
     """Gelişmiş semantic arama"""
-    return enhanced_embedding_service.semantic_search(
+    return await enhanced_embedding_service.semantic_search(
         query, question_pool, top_k, similarity_threshold
     )
 

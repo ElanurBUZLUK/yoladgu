@@ -37,13 +37,17 @@ class VectorStoreService:
     async def initialize(self):
         """Async connection pool başlat"""
         try:
-            self.pool = await asyncpg.create_pool(
-                settings.DATABASE_URL.replace(
+            database_url = getattr(settings, "DATABASE_URL", "")
+            if database_url:
+                database_url = database_url.replace(
                     "postgresql+psycopg2://", "postgresql://"
-                ),
-                min_size=settings.ASYNCPG_MIN_SIZE,
-                max_size=settings.ASYNCPG_MAX_SIZE,
-                timeout=settings.ASYNCPG_TIMEOUT,
+                )
+
+            self.pool = await asyncpg.create_pool(
+                database_url,
+                min_size=getattr(settings, "ASYNCPG_MIN_SIZE", 1),
+                max_size=getattr(settings, "ASYNCPG_MAX_SIZE", 10),
+                timeout=getattr(settings, "ASYNCPG_TIMEOUT", 30),
                 server_settings={
                     "application_name": "yoladgu_vector_store",
                     "jit": "off",  # Disable JIT for better performance on small queries
@@ -57,27 +61,29 @@ class VectorStoreService:
 
     async def _ensure_tables_exist(self):
         """pgvector extension ve tabloları oluştur"""
+        if not self.pool:
+            logger.error("pool_not_initialized")
+            return
         async with self.pool.acquire() as conn:
             # pgvector extension'ı aktifleştir
             await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
             # Embedding tablosu
             await conn.execute(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS question_embeddings (
                     id SERIAL PRIMARY KEY,
                     question_id INTEGER UNIQUE NOT NULL,
-                    embedding vector(%s) NOT NULL,
+                    embedding vector({self.embedding_dim}) NOT NULL,
                     content TEXT NOT NULL,
-                    metadata JSONB DEFAULT '{}',
+                    metadata JSONB DEFAULT '{{}}',
                     subject_id INTEGER,
                     topic_id INTEGER,
                     difficulty_level INTEGER,
                     created_at TIMESTAMP DEFAULT NOW(),
                     updated_at TIMESTAMP DEFAULT NOW()
                 );
-            """,
-                self.embedding_dim,
+            """
             )
 
             # Optimized HNSW index for KNN performance
@@ -129,6 +135,9 @@ class VectorStoreService:
 
             metadata = metadata or {}
 
+            if not self.pool:
+                logger.error("pool_not_initialized")
+                return False
             async with self.pool.acquire() as conn:
                 await conn.execute(
                     """
@@ -168,6 +177,9 @@ class VectorStoreService:
         stored_count = 0
 
         try:
+            if not self.pool:
+                logger.error("pool_not_initialized")
+                return 0
             async with self.pool.acquire() as conn:
                 async with conn.transaction():
                     for data in embeddings_data:
@@ -280,6 +292,9 @@ class VectorStoreService:
                 LIMIT $2
             """
 
+            if not self.pool:
+                logger.error("pool_not_initialized")
+                return []
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(query, *params)
 
@@ -314,6 +329,9 @@ class VectorStoreService:
     ) -> Optional[List[float]]:
         """Soru ID'sine göre embedding getir"""
         try:
+            if not self.pool:
+                logger.error("pool_not_initialized")
+                return None
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
@@ -333,6 +351,9 @@ class VectorStoreService:
     async def delete_embedding(self, question_id: int) -> bool:
         """Embedding'i sil"""
         try:
+            if not self.pool:
+                logger.error("pool_not_initialized")
+                return False
             async with self.pool.acquire() as conn:
                 result = await conn.execute(
                     """
@@ -352,6 +373,9 @@ class VectorStoreService:
     async def get_stats(self) -> Dict[str, Any]:
         """Vektör deposu istatistikleri"""
         try:
+            if not self.pool:
+                logger.error("pool_not_initialized")
+                return {}
             async with self.pool.acquire() as conn:
                 stats = await conn.fetchrow(
                     """

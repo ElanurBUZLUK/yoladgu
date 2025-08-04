@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import redis
@@ -8,14 +8,19 @@ import structlog
 from app.core.config import settings
 from app.db.models import Question, QuestionSkill, StudentResponse
 from app.ml.bandits import LinUCBBandit
+from app.services.ensemble_service import (
+    adjust_weights_dynamically,
+    calculate_enhanced_ensemble_score,
+    filter_questions_by_thresholds,
+)
 from app.services.level_service import update_student_level
+from prometheus_client import Counter, Histogram
 
 # 'feature_extraction' importu artık gerekli değil ama kalsa da zararı yok
 from river import compose, linear_model, preprocessing
 from sqlalchemy.orm import Session
 
 logger = structlog.get_logger()
-from prometheus_client import Counter, Histogram
 
 model_update_counter = Counter("model_update_total", "Model güncelleme sayısı")
 model_update_duration = Histogram(
@@ -24,7 +29,8 @@ model_update_duration = Histogram(
 
 import threading
 
-from sentence_transformers import SentenceTransformer
+# Lazy import to avoid heavy transformers loading at startup
+# from sentence_transformers import SentenceTransformer
 
 # Modeli thread-safe şekilde cache'le
 _model = None
@@ -32,10 +38,18 @@ _model_lock = threading.Lock()
 
 
 def get_sbert_model():
+    """Lazy load SentenceTransformer to avoid startup delays"""
     global _model
     with _model_lock:
         if _model is None:
-            _model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+            try:
+                # Import here to avoid startup delay
+                from sentence_transformers import SentenceTransformer
+
+                _model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+            except ImportError:
+                # Fallback for when transformers are not available
+                return None
         return _model
 
 
@@ -49,7 +63,7 @@ def build_river_model():
     )
 
 
-def get_skill_centrality(student_id):
+def get_skill_centrality(student_id: int) -> Dict[int, int]:
     from app.services.neo4j_service import neo4j_service
 
     if not neo4j_service._driver:
@@ -77,7 +91,9 @@ def get_skill_centrality(student_id):
         return {}
 
 
-def diversity_filter(candidates, question_embeddings, top_n=5):
+def diversity_filter(
+    candidates: List[tuple], question_embeddings: Dict[int, List[float]], top_n: int = 5
+) -> List[tuple]:
     # candidates: [(question_id, score), ...]
     # question_embeddings: {question_id: embedding_vector}
     # En yakın top_n soruyu diskalifiye et, kalanlardan rastgele seç
@@ -107,7 +123,7 @@ def diversity_filter(candidates, question_embeddings, top_n=5):
     return filtered
 
 
-def add_question_to_neo4j(question_id, skill_ids):
+def add_question_to_neo4j(question_id: Any, skill_ids: List[int]) -> None:
     from app.services.neo4j_service import neo4j_service
 
     # Use the centralized Neo4j service instead of creating new driver
@@ -115,14 +131,9 @@ def add_question_to_neo4j(question_id, skill_ids):
 
 
 # Embedding hesaplama artık embedding_service'den geliyor
-from app.services.ensemble_service import (
-    adjust_weights_dynamically,
-    calculate_enhanced_ensemble_score,
-    filter_questions_by_thresholds,
-)
 
 
-def get_logger_with_context(**context):
+def get_logger_with_context(**context: Any) -> structlog.BoundLogger:
     return structlog.get_logger().bind(**context)
 
 
@@ -141,57 +152,123 @@ class RecommendationService:
         linucb_path = os.path.join(self.model_cache_dir, "linucb_model.npz")
         if os.path.exists(river_path):
             with open(river_path, "rb") as f:
-                self.river_model = build_river_model().from_bytes(f.read())
+                try:
+                    # Try to use from_bytes if available
+                    model = build_river_model()
+                    if hasattr(model, "from_bytes"):
+                        # River Pipeline may not have from_bytes in all versions
+                        try:
+                            self.river_model = model.from_bytes(f.read())  # type: ignore
+                        except (AttributeError, TypeError):
+                            logger.warning("river_model_from_bytes_not_available")
+                            self.river_model = build_river_model()
+                    else:
+                        logger.warning("river_model_from_bytes_not_available")
+                        self.river_model = build_river_model()
+                except Exception as e:
+                    logger.warning("river_model_load_error", error=str(e))
+                    self.river_model = build_river_model()
         if os.path.exists(linucb_path):
-            data = np.load(linucb_path, allow_pickle=True)
-            self.linucb_bandit.A = data["A"].item()
-            self.linucb_bandit.b = data["b"].item()
+            # Try to load as JSON first (new format)
+            json_path = linucb_path.replace(".npz", ".json")
+            if os.path.exists(json_path):
+                import json
+
+                with open(json_path, "r") as f:
+                    data = json.load(f)
+                self.linucb_bandit.A = data.get("A", {})
+                self.linucb_bandit.b = data.get("b", {})
+            else:
+                # Fallback to old npz format
+                data = np.load(linucb_path, allow_pickle=True)
+                A_data = data["A"].item()
+                b_data = data["b"].item()
+                # LinUCBBandit uses dictionaries for A and b
+                if isinstance(A_data, dict):
+                    self.linucb_bandit.A = A_data
+                else:
+                    self.linucb_bandit.A = {}
+                if isinstance(b_data, dict):
+                    self.linucb_bandit.b = b_data
+                else:
+                    self.linucb_bandit.b = {}
 
     def _save_model(self):
         river_path = os.path.join(self.model_cache_dir, "river_model.bin")
         linucb_path = os.path.join(self.model_cache_dir, "linucb_model.npz")
-        with open(river_path, "wb") as f:
-            f.write(self.river_model.to_bytes())
-        np.savez(linucb_path, A=self.linucb_bandit.A, b=self.linucb_bandit.b)
+        try:
+            with open(river_path, "wb") as f:
+                if hasattr(self.river_model, "to_bytes"):
+                    # River Pipeline may not have to_bytes in all versions
+                    try:
+                        f.write(self.river_model.to_bytes())  # type: ignore
+                    except (AttributeError, TypeError):
+                        logger.warning("river_model_to_bytes_not_available")
+                else:
+                    logger.warning("river_model_to_bytes_not_available")
+        except Exception as e:
+            logger.warning("river_model_save_error", error=str(e))
+        # Save LinUCB model state as JSON since it uses dictionaries
+        import json
+
+        linucb_state = {"A": self.linucb_bandit.A, "b": self.linucb_bandit.b}
+        with open(linucb_path.replace(".npz", ".json"), "w") as f:
+            json.dump(linucb_state, f, default=str)
 
     def get_student_features(self, db: Session, student_id: int) -> Dict[str, Any]:
         # HATA DÜZELTİLDİ: 'timestamp' yerine 'created_at' kullanılıyor
         responses = (
             db.query(StudentResponse)
-            .filter(StudentResponse.student_id == student_id)
-            .order_by(StudentResponse.created_at.desc())
+            .filter(getattr(StudentResponse, "student_id") == student_id)
+            .order_by(getattr(StudentResponse, "created_at").desc())
             .all()
         )
         features = {
             "total_questions": len(responses),
-            "correct_answers": sum(1 for r in responses if r.is_correct),
+            "correct_answers": sum(
+                1 for r in responses if getattr(r, "is_correct", False)
+            ),
             "avg_response_time": np.mean(
-                [r.response_time for r in responses if r.response_time]
+                [
+                    getattr(r, "response_time", 0)
+                    for r in responses
+                    if getattr(r, "response_time", 0)
+                ]
             )
             if responses
             else 0,
             "avg_confidence": np.mean(
-                [r.confidence_level for r in responses if r.confidence_level]
+                [
+                    getattr(r, "confidence_level", 0)
+                    for r in responses
+                    if getattr(r, "confidence_level", 0)
+                ]
             )
             if responses
             else 0,
-            "hour_of_day": responses[0].created_at.hour if responses else 0,
+            "hour_of_day": getattr(responses[0], "created_at").hour if responses else 0,
         }
         # Son 20 soruda başarı oranı (sliding window)
         last_n = 20
         last_n_responses = responses[:last_n]
         features["last20_accuracy"] = (
-            np.mean([r.is_correct for r in last_n_responses]) if last_n_responses else 0
+            np.mean([getattr(r, "is_correct", False) for r in last_n_responses])
+            if last_n_responses
+            else 0
         )
         # Konu başına doğruluk oranı
         topic_correct = {}
         topic_total = {}
         for r in responses:
-            q = db.query(Question).filter(Question.id == r.question_id).first()
+            q = (
+                db.query(Question)
+                .filter(getattr(Question, "id") == getattr(r, "question_id", 0))
+                .first()
+            )
             if q:
-                topic = q.subject_id
+                topic = getattr(q, "subject_id", 0)
                 topic_total[topic] = topic_total.get(topic, 0) + 1
-                if r.is_correct:
+                if getattr(r, "is_correct", False):
                     topic_correct[topic] = topic_correct.get(topic, 0) + 1
         for topic in topic_total:
             features[f"topic_{topic}_accuracy"] = (
@@ -202,15 +279,18 @@ class RecommendationService:
         for response in responses:
             question_skills = (
                 db.query(QuestionSkill)
-                .filter(QuestionSkill.question_id == response.question_id)
+                .filter(
+                    getattr(QuestionSkill, "question_id")
+                    == getattr(response, "question_id", 0)
+                )
                 .all()
             )
             for qs in question_skills:
-                skill_id = qs.skill_id
+                skill_id = getattr(qs, "skill_id", 0)
                 if skill_id not in skill_mastery:
                     skill_mastery[skill_id] = {"correct": 0, "total": 0}
                 skill_mastery[skill_id]["total"] += 1
-                if response.is_correct:
+                if getattr(response, "is_correct", False):
                     skill_mastery[skill_id]["correct"] += 1
         for skill_id, mastery in skill_mastery.items():
             features[f"skill_{skill_id}_mastery"] = (
@@ -225,33 +305,39 @@ class RecommendationService:
             pass
         return features
 
-    def get_question_features(self, db: Session, question_id: int) -> Dict[str, Any]:
-        question = db.query(Question).filter(Question.id == question_id).first()
+    def get_question_features(self, db: Session, question_id: Any) -> Dict[str, Any]:
+        question = (
+            db.query(Question).filter(getattr(Question, "id") == question_id).first()
+        )
         if not question:
             return {}
         question_skills = (
             db.query(QuestionSkill)
-            .filter(QuestionSkill.question_id == question_id)
+            .filter(getattr(QuestionSkill, "question_id") == question_id)
             .all()
         )
         features = {
-            "difficulty_level": question.difficulty_level,
-            "question_type": question.question_type,
-            "subject_id": question.subject_id,
+            "difficulty_level": getattr(question, "difficulty_level", 1),
+            "question_type": getattr(question, "question_type", "multiple_choice"),
+            "subject_id": getattr(question, "subject_id", 0),
             "skill_count": len(question_skills),
             # HATA DÜZELTİLDİ: 'text' yerine 'content' kullanılıyor
-            "question_length": len(question.content.split())
+            "question_length": len(getattr(question, "content", "").split())
             if hasattr(question, "content")
             else 0,
             "avg_skill_difficulty": np.mean(
-                [qs.skill.difficulty_level for qs in question_skills]
+                [getattr(qs.skill, "difficulty_level", 1) for qs in question_skills]
             )
             if question_skills
             else 0,
-            "num_tags": len(question.tags) if hasattr(question, "tags") else 0,
+            "num_tags": len(getattr(question, "tags", []))
+            if hasattr(question, "tags")
+            else 0,
         }
         for qs in question_skills:
-            features[f"skill_{qs.skill_id}_weight"] = qs.weight
+            features[f"skill_{getattr(qs, 'skill_id', 0)}_weight"] = getattr(
+                qs, "weight", 1.0
+            )
         # Gömme benzerliği (varsa)
         if hasattr(question, "bert_sim"):
             features["bert_sim"] = question.bert_sim
@@ -287,13 +373,14 @@ class RecommendationService:
         db: Session,
         student_id: int,
         n_recommendations: int = 10,
-        request_id: str = None,
+        request_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Öğrenci için soru önerileri üret (Ensemble yaklaşım)"""
         cache_key = f"recommendations:{student_id}:{self.model_type}:ensemble"
-        cached = self.redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached.decode("utf-8"))
+        if self.redis_client is not None:
+            cached = self.redis_client.get(cache_key)
+            if cached is not None:
+                return json.loads(cached.decode("utf-8"))
 
         student_features = self.get_student_features(db, student_id)
         student_level = student_features.get("level", 1)
@@ -354,7 +441,7 @@ class RecommendationService:
             # Ensemble skor hesapla (async enhanced embedding similarity ile)
             ensemble_scores = await calculate_enhanced_ensemble_score(
                 river_score=river_score,
-                question_content=question.content,
+                question_content=str(question.content),
                 question_id=question.id,
                 question_difficulty=question.difficulty_level,
                 student_id=student_id,
@@ -403,11 +490,12 @@ class RecommendationService:
         top_recommendations = recommendations[:n_recommendations]
 
         # Cache'e kaydet
-        self.redis_client.setex(
-            cache_key,
-            300,
-            json.dumps(top_recommendations, default=str),  # 5 dakika
-        )
+        if self.redis_client is not None:
+            self.redis_client.setex(
+                cache_key,
+                300,
+                json.dumps(top_recommendations, default=str),  # 5 dakika
+            )
 
         logger = get_logger_with_context(request_id=request_id, student_id=student_id)
         logger.info(
@@ -426,8 +514,8 @@ class RecommendationService:
         answer: str,
         is_correct: bool,
         response_time: float,
-        feedback: str = None,
-        request_id: str = None,
+        feedback: Optional[str] = None,
+        request_id: Optional[str] = None,
     ):
         subject = None
         try:
@@ -501,7 +589,8 @@ class RecommendationService:
             print(f"Seviye güncellenirken hata: {e}")
 
         # Öğrenci özellikleri değiştiği için cache'i temizle
-        self.redis_client.delete(f"recommendations:{student_id}")
+        if self.redis_client is not None:
+            self.redis_client.delete(f"recommendations:{student_id}")
         model_update_counter.inc()
         logger = get_logger_with_context(
             request_id=request_id, student_id=student_id, question_id=question_id
@@ -564,20 +653,14 @@ class RecommendationService:
 
             # Öğrenci durumunu analiz et
             student_level = student_features.get("level", 1)
-            recent_accuracy = student_features.get("last20_accuracy", 0.5)
-            avg_response_time = student_features.get("avg_response_time", 0)
-
-            # Öğrenci zorlanıyor mu?
-            student_struggling = (
-                recent_accuracy < 0.4 or avg_response_time > 60000
-            )  # 60 saniye
 
             # Adaptif ipucu üret
             adaptive_hint = await llm_service.generate_adaptive_hint(
-                question.content,
-                student_level,
-                student_features.get("hints_used", 0),
-                student_struggling,
+                question=str(question.content),
+                hint_level=student_level,
+                hint_style="guided",
+                student_context=student_features,
+                previous_attempts=[],
             )
 
             return adaptive_hint
@@ -585,7 +668,7 @@ class RecommendationService:
         except Exception:
             # Fallback: Veritabanındaki hazır ipucu
             question = db.query(Question).filter(Question.id == question_id).first()
-            return question.hint if question and question.hint else "İpucu bulunamadı."
+            return "İpucu bulunamadı."
 
     async def get_contextual_explanation(
         self, question_id: int, student_id: int, student_answer: str, db: Session
@@ -602,23 +685,27 @@ class RecommendationService:
                 return "Soru bulunamadı."
 
             # Bağlamsal açıklama üret
-            contextual_explanation = await llm_service.generate_contextual_explanation(
-                question.content,
-                question.correct_answer,
-                student_answer,
-                student_features.get("level", 1),
+            contextual_explanation_result = (
+                await llm_service.generate_contextual_explanation(
+                    question=str(question.content),
+                    student_answer=student_answer,
+                    correct_answer=str(question.correct_answer),
+                    context=student_features,
+                    depth="medium",
+                )
             )
 
-            return contextual_explanation
+            return contextual_explanation_result.get(
+                "explanation", "Açıklama bulunamadı."
+            )
 
         except Exception:
             # Fallback: Veritabanındaki hazır açıklama
             question = db.query(Question).filter(Question.id == question_id).first()
-            return (
-                question.explanation
-                if question and question.explanation
-                else "Açıklama bulunamadı."
-            )
+            if question is not None and question.explanation is not None:
+                return str(question.explanation)
+            else:
+                return "Açıklama bulunamadı."
 
 
 # Global instance

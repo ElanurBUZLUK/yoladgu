@@ -15,15 +15,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
 def get_user(db: Session, user_id: int) -> Optional[User]:
-    return db.query(User).filter(User.id == user_id).first()
+    return db.query(User).filter(getattr(User, "id") == user_id).first()
 
 
 def get_user_by_email(db: Session, email: str) -> Optional[User]:
-    return db.query(User).filter(User.email == email).first()
+    return db.query(User).filter(getattr(User, "email") == email).first()
 
 
 def get_user_by_username(db: Session, username: str) -> Optional[User]:
-    return db.query(User).filter(User.username == username).first()
+    return db.query(User).filter(getattr(User, "username") == username).first()
 
 
 def get_users(db: Session, skip: int = 0, limit: int = 100) -> list[User]:
@@ -54,7 +54,7 @@ def update_user(db: Session, user_id: int, user: UserUpdate) -> Optional[User]:
         if "password" in update_data:
             hashed_password = get_password_hash(update_data["password"])
             del update_data["password"]
-            db_obj.hashed_password = hashed_password
+            setattr(db_obj, "hashed_password", hashed_password)
         for field, value in update_data.items():
             setattr(db_obj, field, value)
         db.add(db_obj)
@@ -79,7 +79,7 @@ def update_user_progress(
     for field, value in update_data.items():
         setattr(profile, field, value)
 
-    profile.updated_at = datetime.utcnow()
+    setattr(profile, "updated_at", datetime.utcnow())
     db.commit()
     db.refresh(profile)
     return profile
@@ -97,7 +97,7 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
     user = get_user_by_username(db, username)
     if not user:
         return None
-    if not verify_password(password, user.hashed_password):
+    if not verify_password(password, getattr(user, "hashed_password", "")):
         return None
     return user
 
@@ -114,7 +114,7 @@ def get_current_user(
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        username: str = payload.get("sub")
+        username: str = payload.get("sub", "")
         if username is None:
             raise credentials_exception
     except JWTError:

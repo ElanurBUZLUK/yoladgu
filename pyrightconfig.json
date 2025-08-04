@@ -1,0 +1,45 @@
+{
+    "include": [
+        "app"
+    ],
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "**/.git",
+        "**/.pytest_cache",
+        "**/typings"
+    ],
+    "ignore": [],
+    "defineConstant": {},
+    "stubPath": "./typings",
+    "venvPath": ".",
+    "venv": ".venv",
+    "pythonVersion": "3.12",
+    "pythonPlatform": "Linux",
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "pythonVersion": "3.12",
+            "pythonPlatform": "Linux",
+            "extraPaths": [
+                "./.venv/lib/python3.12/site-packages",
+                ".",
+                "./app"
+            ]
+        }
+    ],
+    "typeCheckingMode": "basic",
+    "useLibraryCodeForTypes": true,
+    "autoImportCompletions": true,
+    "reportMissingImports": "none",
+    "reportMissingTypeStubs": "none",
+    "reportImportCycles": "none",
+    "reportUnusedImport": "warning",
+    "reportUnusedClass": "warning",
+    "reportUnusedFunction": "warning",
+    "reportUnusedVariable": "warning",
+    "reportDuplicateImport": "warning",
+    "reportUnknownMemberType": "none",
+    "reportUnknownArgumentType": "none",
+    "reportUnknownVariableType": "none"
+}

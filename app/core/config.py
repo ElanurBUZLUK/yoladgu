@@ -1,11 +1,13 @@
 from typing import Dict, List, Optional
 
-from pydantic import AnyHttpUrl, ConfigDict, field_validator
-from pydantic_settings import BaseSettings
+from pydantic import AnyHttpUrl, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = ConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", case_sensitive=True, extra="ignore"
+    )
 
     PROJECT_NAME: str = "Question Recommendation System"
     VERSION: str = "1.0.0"
@@ -31,6 +33,18 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: Optional[str] = None  # Set if Redis requires auth
+
+    @property
+    def redis_url(self) -> str:
+        """Redis connection URL"""
+        if self.REDIS_PASSWORD:
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    @property
+    def is_development(self) -> bool:
+        """Check if running in development environment"""
+        return self.ENVIRONMENT.lower() in ["development", "dev"]
 
     # Neo4j Configuration - Must be set in environment variables
     NEO4J_URI: str  # Required: Neo4j connection URI
@@ -133,19 +147,6 @@ class Settings(BaseSettings):
 
         return f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}/{postgres_db}"
 
-    @property
-    def redis_url(self) -> str:
-        if self.REDIS_PASSWORD:
-            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
-    @property
-    def is_production(self) -> bool:
-        return self.ENVIRONMENT.lower() == "production"
-
-    @property
-    def is_development(self) -> bool:
-        return self.ENVIRONMENT.lower() == "development"
-
-
-settings = Settings()
+# Settings instance - will be populated from environment variables
+settings = Settings()  # type: ignore

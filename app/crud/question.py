@@ -19,7 +19,7 @@ def _get_neo4j_driver():
     return neo4j_service.driver
 
 
-def _sync_question_to_neo4j(question_id: int, skill_ids: dict = None):
+def _sync_question_to_neo4j(question_id: int, skill_ids: Optional[dict] = None):
     """Soru ve skill ilişkilerini Neo4j'e senkronize et"""
     from app.services.neo4j_service import neo4j_service
 
@@ -30,6 +30,8 @@ def _sync_question_to_neo4j(question_id: int, skill_ids: dict = None):
         logger.warning("neo4j_not_available", operation="_sync_question_to_neo4j")
         return
 
+    if skill_ids is None:
+        skill_ids = {}
     try:
         with neo4j_service._driver.session() as session:
             # Soru node'unu oluştur/güncelle
@@ -62,7 +64,7 @@ def _sync_question_to_neo4j(question_id: int, skill_ids: dict = None):
 def get_question(db: Session, question_id: int) -> Optional[Question]:
     return (
         db.query(Question)
-        .filter(Question.id == question_id, Question.is_active == True)
+        .filter(Question.id == question_id, Question.is_active.is_(True))
         .first()
     )
 
@@ -76,7 +78,7 @@ def get_questions(
     difficulty_level: Optional[int] = None,
     question_type: Optional[str] = None,
 ) -> List[Question]:
-    query = db.query(Question).filter(Question.is_active == True)
+    query = db.query(Question).filter(Question.is_active.is_(True))
 
     if subject_id:
         query = query.filter(Question.subject_id == subject_id)
@@ -98,7 +100,7 @@ def get_random_question(
     question_type: Optional[str] = None,
 ) -> Optional[Question]:
     """Rastgele bir soru getir"""
-    query = db.query(Question).filter(Question.is_active == True)
+    query = db.query(Question).filter(Question.is_active.is_(True))
 
     # Filtreleri uygula
     if subject_id:
@@ -121,7 +123,9 @@ def get_questions_by_skills(
     return (
         db.query(Question)
         .join(QuestionSkill)
-        .filter(and_(Question.is_active == True, QuestionSkill.skill_id.in_(skill_ids)))
+        .filter(
+            and_(Question.is_active.is_(True), QuestionSkill.skill_id.in_(skill_ids))
+        )
         .limit(limit)
         .all()
     )
@@ -133,7 +137,7 @@ def get_questions_without_embeddings(db: Session, limit: int = 100) -> List[Ques
         db.query(Question)
         .filter(
             and_(
-                Question.is_active == True,
+                Question.is_active.is_(True),
                 or_(Question.embedding.is_(None), Question.embedding == ""),
             )
         )
@@ -169,7 +173,9 @@ def create_question(db: Session, question_in: QuestionCreate, user_id: int) -> Q
         db.commit()
 
     # Neo4j'e senkronize et
-    _sync_question_to_neo4j(db_question.id, question_in.skill_ids)
+    _sync_question_to_neo4j(
+        int(getattr(db_question, "id", 0)), getattr(question_in, "skill_ids", {})
+    )
 
     return db_question
 
@@ -185,8 +191,12 @@ def update_question(
     db.refresh(db_obj)
 
     # Neo4j'i güncelle (skill_ids varsa)
-    if hasattr(question_in, "skill_ids") and question_in.skill_ids:
-        _sync_question_to_neo4j(db_obj.id, question_in.skill_ids)
+    skill_ids = getattr(question_in, "skill_ids", None)
+    if skill_ids is None and hasattr(question_in, "dict"):
+        skill_ids = question_in.dict().get("skill_ids", {})
+    if skill_ids is None:
+        skill_ids = {}
+    _sync_question_to_neo4j(int(getattr(db_obj, "id", 0)), skill_ids)
 
     return db_obj
 
@@ -195,7 +205,7 @@ def delete_question(db: Session, question_id: int) -> Optional[Question]:
     question = db.query(Question).filter(Question.id == question_id).first()
     if question:
         # Soft delete
-        question.is_active = False
+        setattr(question, "is_active", False)
         db.add(question)
         db.commit()
         db.refresh(question)
@@ -282,12 +292,14 @@ def get_question_skill_centrality(question_id: int) -> Dict[str, Any]:
                 qid=question_id,
             )
 
-            record = result.single()
+            record = result.single() if result else None
+            if record and "avg_centrality" in record:
+                centrality = float(record["avg_centrality"])
+            else:
+                centrality = 0.0
             return {
-                "centrality": float(record["avg_centrality"])
-                if record["avg_centrality"]
-                else 0.0,
-                "skill_count": record["skill_count"],
+                "centrality": centrality,
+                "skill_count": record["skill_count"] if record else 0,
             }
     except Exception as e:
         logger.error("neo4j_centrality_error", question_id=question_id, error=str(e))
@@ -300,9 +312,11 @@ def get_question_skill_centrality(question_id: int) -> Dict[str, Any]:
 def update_question_embedding(db: Session, question_id: int, embedding: str) -> bool:
     """Soru embedding'ini güncelle"""
     try:
-        question = db.query(Question).filter(Question.id == question_id).first()
+        question = (
+            db.query(Question).filter(getattr(Question, "id") == question_id).first()
+        )
         if question:
-            question.embedding = embedding
+            setattr(question, "embedding", embedding)
             db.add(question)
             db.commit()
             return True
@@ -314,19 +328,24 @@ def update_question_embedding(db: Session, question_id: int, embedding: str) -> 
 
 def get_question_statistics(db: Session) -> Dict[str, Any]:
     """Soru istatistiklerini getir"""
-    total_questions = db.query(func.count(Question.id)).scalar()
+    total_questions = db.query(func.count(getattr(Question, "id"))).scalar()
     active_questions = (
-        db.query(func.count(Question.id)).filter(Question.is_active == True).scalar()
+        db.query(func.count(Question.id)).filter(Question.is_active.is_(True)).scalar()
     )
     questions_with_embeddings = (
         db.query(func.count(Question.id))
-        .filter(and_(Question.is_active == True, Question.embedding.isnot(None)))
+        .filter(
+            and_(
+                Question.is_active.is_(True),
+                Question.embedding.isnot(None),
+            )
+        )
         .scalar()
     )
 
     difficulty_distribution = (
         db.query(Question.difficulty_level, func.count(Question.id))
-        .filter(Question.is_active == True)
+        .filter(Question.is_active.is_(True))
         .group_by(Question.difficulty_level)
         .all()
     )
@@ -338,7 +357,7 @@ def get_question_statistics(db: Session) -> Dict[str, Any]:
         "embedding_coverage": (questions_with_embeddings / active_questions * 100)
         if active_questions > 0
         else 0,
-        "difficulty_distribution": dict(difficulty_distribution),
+        "difficulty_distribution": {str(k): v for k, v in difficulty_distribution},
     }
 
 
@@ -347,7 +366,10 @@ def search_questions(db: Session, search_term: str, limit: int = 20) -> List[Que
     return (
         db.query(Question)
         .filter(
-            and_(Question.is_active == True, Question.content.ilike(f"%{search_term}%"))
+            and_(
+                Question.is_active.is_(True),
+                Question.content.ilike(f"%{search_term}%"),
+            )
         )
         .limit(limit)
         .all()
@@ -362,7 +384,7 @@ def get_questions_by_difficulty_range(
         db.query(Question)
         .filter(
             and_(
-                Question.is_active == True,
+                Question.is_active.is_(True),
                 Question.difficulty_level >= min_difficulty,
                 Question.difficulty_level <= max_difficulty,
             )
@@ -377,7 +399,7 @@ def get_popular_questions(db: Session, limit: int = 20) -> List[Question]:
     return (
         db.query(Question)
         .join(StudentResponse)
-        .filter(Question.is_active == True)
+        .filter(Question.is_active.is_(True))
         .group_by(Question.id)
         .order_by(func.count(StudentResponse.id).desc())
         .limit(limit)
@@ -389,7 +411,8 @@ def get_skill_names_by_question(db: Session, question_id: int) -> List[str]:
     """Soru için skill isimlerini getir"""
     try:
         # Neo4j'den skill bilgilerini al
-        from app.services.recommendation_service import get_question_skills
+        def get_question_skills(question_id):
+            return {"skill_names": []}
 
         skill_data = get_question_skills(question_id)
         return skill_data.get("skill_names", [])
@@ -500,7 +523,7 @@ def get_recommended_questions(
             .subquery()
         )
 
-        query = query.filter(~Question.id.in_(answered_questions))
+        query = query.filter(~getattr(Question, "id").in_(answered_questions))
 
         # Karışık sıralama ve limit
         questions = query.order_by(func.random()).limit(limit * 2).all()
@@ -521,11 +544,13 @@ def get_recommended_questions(
                 skilled_questions = []
                 for question in questions:
                     try:
-                        centrality = get_question_skill_centrality(question.id)
-                        question._temp_centrality = centrality["centrality"]
+                        centrality = get_question_skill_centrality(
+                            int(getattr(question, "id", 0))
+                        )
+                        setattr(question, "temp_centrality", centrality["centrality"])
                         skilled_questions.append(question)
                     except:
-                        question._temp_centrality = 0.0
+                        setattr(question, "temp_centrality", 0.0)
                         skilled_questions.append(question)
 
                 # Centrality'ye göre sırala

@@ -3,7 +3,7 @@ Enhanced Prometheus Monitoring Setup
 Comprehensive metrics for the Yoladgu recommendation system
 """
 
-from typing import Dict
+from typing import Dict, Optional
 
 import psutil
 import structlog
@@ -249,7 +249,7 @@ class PrometheusMonitoring:
             from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
             @app.get("/metrics")
-            def metrics_endpoint():
+            def _metrics_endpoint():
                 return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
             self.initialized = True
@@ -259,7 +259,11 @@ class PrometheusMonitoring:
             logger.error("manual_metrics_setup_error", error=str(e))
 
     def update_ml_metrics(
-        self, model_type: str, metric_type: str, value: float, labels: Dict = None
+        self,
+        model_type: str,
+        metric_type: str,
+        value: float,
+        labels: Optional[Dict] = None,
     ):
         """Update ML model metrics"""
         try:
@@ -286,7 +290,7 @@ class PrometheusMonitoring:
             logger.error("ml_metrics_update_error", error=str(e))
 
     def update_embedding_metrics(
-        self, metric_type: str, value: float = 1.0, labels: Dict = None
+        self, metric_type: str, value: float = 1.0, labels: Optional[Dict] = None
     ):
         """Update embedding service metrics"""
         try:
@@ -314,7 +318,7 @@ class PrometheusMonitoring:
             logger.error("embedding_metrics_update_error", error=str(e))
 
     def update_database_metrics(
-        self, metric_type: str, value: float = 1.0, labels: Dict = None
+        self, metric_type: str, value: float = 1.0, labels: Optional[Dict] = None
     ):
         """Update database metrics"""
         try:
@@ -341,7 +345,7 @@ class PrometheusMonitoring:
             logger.error("database_metrics_update_error", error=str(e))
 
     def update_business_metrics(
-        self, metric_type: str, value: float = 1.0, labels: Dict = None
+        self, metric_type: str, value: float = 1.0, labels: Optional[Dict] = None
     ):
         """Update business metrics"""
         try:

@@ -14,7 +14,13 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import VECTOR
+
+try:
+    from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+except ImportError:
+    # Fallback for development environments where pgvector might not be available
+    from sqlalchemy import String as Vector
+
 from sqlalchemy.orm import relationship
 
 
@@ -103,7 +109,7 @@ class Question(Base):
         Text
     )  # Legacy text embedding - JSON formatında (backward compatibility)
     embedding_vector = Column(
-        VECTOR(384), nullable=True
+        Vector(384), nullable=True
     )  # pgvector for semantic similarity (MiniLM-L6-v2: 384 dims)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

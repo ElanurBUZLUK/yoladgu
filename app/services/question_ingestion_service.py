@@ -64,16 +64,16 @@ class QuestionIngestionService:
 
                 # Batch işlemi: AI ile ön zenginleştirme
                 if question_data["content"]:
-                    # 1. İlk zorluk analizi
-                    difficulty_analysis = await llm_service.analyze_question_difficulty(
-                        question_data["content"], subject
-                    )
-                    question_data["difficulty_level"] = difficulty_analysis.get(
-                        "difficulty_level", 2
-                    )
-                    question_data["required_knowledge"] = difficulty_analysis.get(
-                        "required_knowledge", [subject]
-                    )
+                    # 1. Basit zorluk analizi (analyze_question_difficulty metodu eksik)
+                    # TODO: Implement analyze_question_difficulty method in LLMService
+                    content_length = len(question_data["content"])
+                    if content_length < 100:
+                        question_data["difficulty_level"] = 1
+                    elif content_length < 200:
+                        question_data["difficulty_level"] = 2
+                    else:
+                        question_data["difficulty_level"] = 3
+                    question_data["required_knowledge"] = [subject]
 
                     # 2. Temel ipucu (batch'te hazırla)
                     question_data["hint"] = await llm_service.generate_question_hint(
@@ -93,8 +93,8 @@ class QuestionIngestionService:
                     question_data["metadata"] = {
                         "batch_processed": True,
                         "initial_difficulty": question_data["difficulty_level"],
-                        "grade_level": difficulty_analysis.get("grade_level", "9-10"),
-                        "solution_steps": difficulty_analysis.get("solution_steps", 3),
+                        "grade_level": "9-10",  # Default grade level
+                        "solution_steps": 3,  # Default solution steps
                         "ai_generated": True,
                     }
 
@@ -156,7 +156,7 @@ class QuestionIngestionService:
             response = await self.client.get(url)
             response.raise_for_status()
 
-            soup = BeautifulSoup(response.content, "html.parser")
+            soup = BeautifulSoup(response.content.decode("utf-8"), "html.parser")
             questions = []
 
             # Soru elementlerini bul (site yapısına göre ayarlanmalı)
@@ -210,7 +210,8 @@ class QuestionIngestionService:
         for question_data in questions:
             try:
                 question_create = QuestionCreate(**question_data)
-                create_question(db, question_create)
+                # Add default user_id for system-created questions
+                create_question(db, question_create, user_id=1)
                 saved_count += 1
             except Exception as e:
                 logger.error(f"Soru kaydetme hatası: {str(e)}")

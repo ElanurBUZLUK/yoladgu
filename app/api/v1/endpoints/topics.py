@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from app.core.security import get_current_user
 from app.crud import topic as crud_topic
@@ -14,7 +14,7 @@ router = APIRouter()
 
 @router.get("/", response_model=List[schemas.TopicResponse])
 def read_topics(
-    subject_id: int = None,
+    subject_id: Optional[int] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),

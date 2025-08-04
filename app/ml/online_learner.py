@@ -3,7 +3,7 @@ import pickle
 from typing import Optional
 
 import structlog
-from river import compose, ensemble, linear_model, naive_bayes, preprocessing, tree
+from river import compose, linear_model, preprocessing
 
 logger = structlog.get_logger()
 
@@ -33,25 +33,10 @@ class EnhancedOnlineLearner:
     def _create_ensemble_model(self):
         """Ensemble model oluştur - farklı algoritmaları birleştir"""
         try:
-            return ensemble.VotingClassifier(
-                [
-                    (
-                        "logistic",
-                        compose.Pipeline(
-                            preprocessing.StandardScaler(),
-                            linear_model.LogisticRegression(),
-                        ),
-                    ),
-                    ("naive_bayes", naive_bayes.GaussianNB()),
-                    (
-                        "tree",
-                        tree.HoeffdingTreeClassifier(
-                            grace_period=200,
-                            split_confidence=0.0001,
-                            tie_threshold=0.05,
-                        ),
-                    ),
-                ]
+            # Use simple pipeline instead of ensemble due to type issues
+            return compose.Pipeline(
+                preprocessing.StandardScaler(),
+                linear_model.LogisticRegression(),
             )
         except Exception as e:
             logger.warning("ensemble_creation_failed_using_simple_model", error=str(e))
@@ -187,22 +172,27 @@ class EnhancedOnlineLearner:
                     "correct_predictions": 0,
                     "total_response_time": 0,
                     "prediction_count": 0,
+                    "accuracy": 0.0,
+                    "avg_response_time": 0.0,
                 }
 
             metrics["total_predictions"] += 1
-            metrics["total_response_time"] += response_time
+            metrics["total_response_time"] += int(float(response_time))
 
             if is_correct:
                 metrics["correct_predictions"] += 1
 
             # Accuracy hesapla
             if metrics["total_predictions"] > 0:
-                metrics["accuracy"] = (
+                accuracy = float(
                     metrics["correct_predictions"] / metrics["total_predictions"]
                 )
-                metrics["avg_response_time"] = (
+                avg_time = float(
                     metrics["total_response_time"] / metrics["total_predictions"]
                 )
+                # Store as float values
+                metrics["accuracy"] = accuracy
+                metrics["avg_response_time"] = avg_time
 
             self.redis.setex(self.performance_key, 3600, json.dumps(metrics))
 

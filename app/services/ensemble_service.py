@@ -8,7 +8,7 @@ Farklı ML modellerini birleştirerek optimal öneriler üretir:
 - Neo4j Graph Analysis
 """
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import redis
@@ -60,7 +60,7 @@ class EnhancedEnsembleScoringService:
             "min_confidence": 0.1,  # Minimum prediction confidence
         }
 
-    def calculate_comprehensive_ensemble_score(
+    async def calculate_comprehensive_ensemble_score(
         self,
         user_features: Dict,
         question_features: Dict,
@@ -136,7 +136,7 @@ class EnhancedEnsembleScoringService:
                     )
                     scores[
                         "embedding_similarity"
-                    ] = self.calculate_embedding_similarity_score(
+                    ] = await self.calculate_embedding_similarity_score(
                         question_content, recent_questions
                     )
                 except Exception as e:
@@ -147,7 +147,6 @@ class EnhancedEnsembleScoringService:
                     scores["skill_mastery"] = self.calculate_skill_mastery_score(
                         question_id,
                         user_features.get("user_id", 0),
-                        user_features.get("topic_mastery_math", 0.5),
                     )
                 except Exception as e:
                     logger.debug("skill_mastery_error", error=str(e))
@@ -157,6 +156,7 @@ class EnhancedEnsembleScoringService:
                     scores["difficulty_match"] = self.calculate_difficulty_match_score(
                         question_features.get("difficulty_level", 3),
                         user_features.get("accuracy_rate_overall", 0.5),
+                        user_features.get("recent_accuracy", 0.5),
                     )
                 except Exception as e:
                     logger.debug("difficulty_match_error", error=str(e))
@@ -233,13 +233,15 @@ class EnhancedEnsembleScoringService:
             elif response_time > user_features.get("avg_response_time", 5000) * 2:
                 reward -= 0.1  # Slow response penalty
 
-            self.bandit.update(
-                question_features.get("question_id"),
-                user_features,
-                question_features,
-                reward,
-                context,
-            )
+            question_id = question_features.get("question_id")
+            if question_id is not None:
+                self.bandit.update(
+                    question_id,
+                    user_features,
+                    question_features,
+                    reward,
+                    context,
+                )
 
             # 3. Update collaborative filter
             user_id = user_features.get("user_id")
@@ -309,32 +311,34 @@ class EnhancedEnsembleScoringService:
                 )
                 overlaps.append(overlap_ratio)
 
-            avg_overlap = np.mean(overlaps) if overlaps else 0
+            avg_overlap = float(np.mean(overlaps)) if overlaps else 0.0
             diversity_score = 1.0 - avg_overlap  # Lower overlap = higher diversity
 
-            return max(0.0, min(1.0, diversity_score))
+            return max(0.0, min(1.0, float(diversity_score)))
 
         except Exception as e:
             logger.debug("diversity_calculation_error", error=str(e))
             return 0.5
 
-    def calculate_embedding_similarity_score(
+    async def calculate_embedding_similarity_score(
         self, question_content: str, student_recent_questions: List[str]
     ) -> float:
         """Embedding benzerlik skoru hesapla"""
         if not student_recent_questions:
-            return 0.5  # Varsayılan skor
+            return 0.5
 
         try:
             # Cache'li embedding hesaplama kullan
             recent_embeddings = [
-                enhanced_embedding_service.compute_embedding_cached(q)
+                await enhanced_embedding_service.compute_embedding_cached(q)
                 for q in student_recent_questions
             ]
 
             # Mevcut sorunun embedding'ini hesapla
-            question_embedding = enhanced_embedding_service.compute_embedding_cached(
-                question_content
+            question_embedding = (
+                await enhanced_embedding_service.compute_embedding_cached(
+                    question_content
+                )
             )
 
             # Ortalama benzerlik hesapla
@@ -349,7 +353,7 @@ class EnhancedEnsembleScoringService:
                     similarities.append(similarity)
 
             if similarities:
-                return np.mean(similarities)
+                return float(np.mean(similarities))
             else:
                 return 0.5
 
@@ -418,7 +422,7 @@ class EnhancedEnsembleScoringService:
                 final_score=final_score,
             )
 
-            return max(0.1, min(1.0, final_score))  # 0.1-1.0 arasında clamp
+            return max(0.1, min(1.0, float(final_score)))  # 0.1-1.0 arasında clamp
 
         except Exception as e:
             logger.error(
@@ -432,10 +436,16 @@ class EnhancedEnsembleScoringService:
         """Skill mastery uyum skoru hesapla"""
         try:
             # Sorunun skill centrality'sini al
-            skill_centrality = get_question_skill_centrality(question_id)
+            try:
+                skill_centrality = get_question_skill_centrality(question_id)
+            except Exception:
+                skill_centrality = {}
 
             # Öğrencinin skill mastery'sini al
-            student_mastery = get_student_skill_mastery_from_neo4j(student_id)
+            try:
+                student_mastery = get_student_skill_mastery_from_neo4j(student_id)
+            except Exception:
+                student_mastery = {}
 
             if not skill_centrality or not student_mastery:
                 return 0.5
@@ -530,7 +540,7 @@ class EnhancedEnsembleScoringService:
             logger.error("neo4j_similarity_error", error=str(e))
             return 0.5
 
-    def calculate_ensemble_score(
+    async def calculate_ensemble_score(
         self,
         river_score: float,
         question_content: str,
@@ -545,7 +555,7 @@ class EnhancedEnsembleScoringService:
         """Ensemble skor hesapla"""
         try:
             # Her bileşenin skorunu hesapla
-            embedding_score = self.calculate_embedding_similarity_score(
+            embedding_score = await self.calculate_embedding_similarity_score(
                 question_content, student_recent_questions
             )
 
@@ -667,7 +677,7 @@ ensemble_service = EnhancedEnsembleScoringService()
 
 
 # Convenience functions
-def calculate_ensemble_score(
+async def calculate_ensemble_score(
     river_score: float,
     question_content: str,
     question_id: int,
@@ -679,7 +689,7 @@ def calculate_ensemble_score(
     student_recent_question_ids: List[int],
 ) -> Dict[str, float]:
     """Ensemble skor hesapla"""
-    return ensemble_service.calculate_ensemble_score(
+    return await ensemble_service.calculate_ensemble_score(
         river_score,
         question_content,
         question_id,
@@ -712,8 +722,8 @@ def adjust_weights_dynamically(student_performance: float, question_count: int) 
 async def calculate_enhanced_ensemble_score(
     river_score: float,
     question_content: str,
-    question_id: int,
-    question_difficulty: int,
+    question_id: Any,  # Can be int or Column[int]
+    question_difficulty: Any,  # Can be int or Column[int]
     student_id: int,
     student_level: int,
     student_recent_performance: float,
@@ -737,6 +747,12 @@ async def calculate_enhanced_ensemble_score(
     }
 
     try:
+        # Convert Column[int] to int if needed
+        question_id_int = int(question_id) if question_id is not None else 0
+        question_difficulty_int = (
+            int(question_difficulty) if question_difficulty is not None else 1
+        )
+
         # Global ensemble service instance (fallback için)
         global_ensemble = EnhancedEnsembleScoringService()
 
@@ -745,7 +761,7 @@ async def calculate_enhanced_ensemble_score(
             scores[
                 "embedding_similarity"
             ] = await global_ensemble.calculate_enhanced_embedding_similarity_score(
-                question_id=question_id,
+                question_id=question_id_int,
                 student_recent_question_ids=student_recent_question_ids,
                 diversity_weight=0.3,
             )
@@ -753,23 +769,23 @@ async def calculate_enhanced_ensemble_score(
             # Fallback: Eski yöntem
             scores[
                 "embedding_similarity"
-            ] = global_ensemble.calculate_embedding_similarity_score(
+            ] = await global_ensemble.calculate_embedding_similarity_score(
                 question_content, student_recent_questions
             )
 
         # 2. Skill mastery score
         scores["skill_mastery"] = global_ensemble.calculate_skill_mastery_score(
-            question_id, student_id
+            question_id_int, student_id
         )
 
         # 3. Difficulty match score
         scores["difficulty_match"] = global_ensemble.calculate_difficulty_match_score(
-            question_difficulty, student_recent_performance
+            question_difficulty_int, student_level, student_recent_performance
         )
 
         # 4. Diversity score (embedding tabanlı)
         scores["diversity_score"] = await calculate_diversity_score(
-            question_id, student_recent_question_ids
+            question_id_int, student_recent_question_ids
         )
 
         # 5. Neo4j similarity (varsa)
@@ -780,7 +796,7 @@ async def calculate_enhanced_ensemble_score(
                 scores[
                     "neo4j_similarity"
                 ] = global_ensemble.calculate_neo4j_similarity_score(
-                    question_id, student_recent_question_ids
+                    question_id_int, student_recent_question_ids
                 )
         except Exception:
             pass
@@ -797,7 +813,7 @@ async def calculate_enhanced_ensemble_score(
 
         logger.debug(
             "enhanced_ensemble_calculated",
-            question_id=question_id,
+            question_id=question_id_int,
             student_id=student_id,
             scores=scores,
         )

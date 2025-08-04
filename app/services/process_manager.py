@@ -141,7 +141,7 @@ class ProcessManager:
 
         # Cancel all tasks
         tasks_to_wait = []
-        for name, process_info in self.processes.items():
+        for _name, process_info in self.processes.items():
             task = process_info.get("task")
             if task and not task.done():
                 task.cancel()

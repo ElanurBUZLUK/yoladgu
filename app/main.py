@@ -56,8 +56,8 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
-# Rate limiter instance
-rate_limiter = get_rate_limiter()
+# Rate limiter instance - will be initialized during startup
+rate_limiter = None
 
 Instrumentator().instrument(app).expose(app)
 
@@ -66,6 +66,11 @@ Instrumentator().instrument(app).expose(app)
 @app.middleware("http")
 async def rate_limit_middleware(request, call_next):
     """Rate limiting ve cache middleware"""
+    global rate_limiter
+
+    # Initialize rate limiter if not already done
+    if rate_limiter is None:
+        rate_limiter = await get_rate_limiter()
 
     # 1. Cache check (sadece GET ve cacheable POST'lar için)
     cached_response = await rate_limiter.get_cached_response(request)
@@ -89,38 +94,6 @@ async def rate_limit_middleware(request, call_next):
     return response
 
 
-# Startup and shutdown events
-@app.on_event("startup")
-async def startup_event():
-    """Application startup tasks"""
-    try:
-        logger.info("application_startup_started")
-
-        # Initialize vector store and scheduler
-        await offline_scheduler.initialize()
-
-        logger.info("application_startup_completed")
-
-    except Exception as e:
-        logger.error("application_startup_error", error=str(e))
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Application shutdown tasks"""
-    try:
-        logger.info("application_shutdown_started")
-
-        # Shutdown scheduler gracefully
-        await offline_scheduler.shutdown()
-
-        logger.info("application_shutdown_completed")
-
-    except Exception as e:
-        logger.error("application_shutdown_error", error=str(e))
-
-
 # Custom metrics for Yoladgu
 yoladgu_requests_total = Counter(
     "yoladgu_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
@@ -138,7 +111,10 @@ yoladgu_service_health = Gauge(
 
 # Removed duplicate - handled by prometheus_monitoring
 
-# Set all CORS enabled origins
+# IMPORTANT: Middleware are applied in reverse order of registration
+# Last registered = First to process requests
+
+# CORS Middleware (should be last registered, first to process)
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -196,34 +172,51 @@ app.include_router(analytics.router, prefix=settings.API_V1_STR)
 # FastAPI lifecycle events for stream consumer
 import asyncio
 
+# FastAPI lifecycle events for stream consumer
+
 # Note: To use lifespan, initialize FastAPI with lifespan parameter:
 # app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, lifespan=lifespan)
 # For now, we'll use the deprecated but simpler @app.on_event approach
 
 
+# Startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
-    """Application startup event"""
-    logger.info("Starting application services...")
-
-    # Initialize singleton services
+    """Application startup tasks - optimized order for data flow"""
     try:
+        logger.info("application_startup_started")
+
+        # Step 1: Initialize database connections first
+        from app.db.database import init_async_db
+
+        init_async_db()
+        logger.info("Database connections initialized")
+
+        # Step 2: Initialize core infrastructure services (Redis, Neo4j)
         from app.services.neo4j_service import neo4j_service
         from app.services.redis_service import redis_service
 
-        # Initialize Neo4j service
-        neo4j_service  # This triggers __init__ if not already initialized
-        logger.info("Neo4j service initialized")
-
-        # Initialize Redis service
-        redis_service  # This triggers __init__ if not already initialized
+        # Initialize Redis service (needed for rate limiting, caching)
+        _ = redis_service  # This triggers __init__ if not already initialized
         logger.info("Redis service initialized")
 
-    except Exception as e:
-        logger.error("Failed to initialize singleton services", error=str(e))
+        # Initialize Neo4j service (graph database)
+        _ = neo4j_service  # This triggers __init__ if not already initialized
+        logger.info("Neo4j service initialized")
 
-    # Start stream consumer in background
-    try:
+        # Step 3: Initialize ML/AI services that depend on core services
+        await offline_scheduler.initialize()
+        logger.info("Offline scheduler initialized")
+
+        # Step 4: Initialize HTTP clients for external services
+        from app.services.question_ingestion_service import (
+            get_question_ingestion_service,
+        )
+
+        await get_question_ingestion_service()  # Initialize async client
+        logger.info("Question ingestion service initialized")
+
+        # Step 5: Start background consumers/workers (last)
         from app.services.enhanced_stream_consumer import stream_consumer_manager
 
         if stream_consumer_manager and not stream_consumer_manager.running:
@@ -232,66 +225,71 @@ async def startup_event():
             logger.info("Stream consumer started successfully")
         else:
             logger.info("Stream consumer already running or disabled")
-    except Exception as e:
-        logger.error("Failed to start stream consumer", error=str(e))
 
-    # Initialize async HTTP clients
-    try:
-        from app.services.question_ingestion_service import (
-            get_question_ingestion_service,
-        )
+        logger.info("application_startup_completed")
 
-        await get_question_ingestion_service()  # Initialize async client
-        logger.info("Question ingestion service initialized")
     except Exception as e:
-        logger.error("Failed to initialize question ingestion service", error=str(e))
+        logger.error("application_startup_error", error=str(e), exc_info=True)
+        raise
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Application shutdown event"""
-    logger.info("Shutting down application services...")
-
-    # Stop stream consumer
+    """Application shutdown tasks - reverse order of startup"""
     try:
+        logger.info("application_shutdown_started")
+
+        # Step 1: Stop background workers first
         from app.services.enhanced_stream_consumer import stream_consumer_manager
 
         if stream_consumer_manager and stream_consumer_manager.running:
             await stream_consumer_manager._cleanup_consumer()
             logger.info("Stream consumer stopped successfully")
-    except Exception as e:
-        logger.error("Error stopping stream consumer", error=str(e))
 
-    # Close singleton services
-    try:
-        from app.services.neo4j_service import neo4j_service
+        # Step 2: Shutdown ML/AI services
+        await offline_scheduler.shutdown()
+        logger.info("Offline scheduler shutdown")
+
+        # Step 3: Close HTTP clients
         from app.services.question_ingestion_service import (
             close_question_ingestion_service,
         )
-        from app.services.redis_service import redis_service
 
-        # Close HTTP clients
         await close_question_ingestion_service()
         logger.info("Question ingestion service closed")
+
+        # Step 4: Close infrastructure services (reverse order)
+        from app.services.neo4j_service import neo4j_service
+        from app.services.redis_service import redis_service
 
         # Close Neo4j driver
         neo4j_service.close()
         logger.info("Neo4j service closed")
 
-        # Close Redis client
+        # Close Redis client (last infrastructure service)
         redis_service.close()
         logger.info("Redis service closed")
 
+        # Step 5: Close database connections (last)
+        global async_engine
+        from app.db.database import async_engine
+
+        if async_engine:
+            await async_engine.dispose()
+            logger.info("Database connections closed")
+
+        logger.info("application_shutdown_completed")
+
     except Exception as e:
-        logger.error("Error closing singleton services", error=str(e))
+        logger.error("application_shutdown_error", error=str(e), exc_info=True)
 
 
 @app.get("/health")
 def health_check():
     """Gelişmiş sistem sağlık kontrolü with Prometheus metrics"""
-    import time
+    # import time  # Unused import removed
 
-    start_time = time.time()
+    # start_time = time.time()  # Unused variable removed
 
     health_status = {
         "status": "healthy",
@@ -303,15 +301,21 @@ def health_check():
     try:
         import psycopg2
 
-        conn = psycopg2.connect(
-            settings.DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
-        )
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
-        cursor.close()
-        conn.close()
-        health_status["services"]["postgresql"] = "healthy"
+        if settings.DATABASE_URL is None:
+            health_status["services"][
+                "postgresql"
+            ] = "unhealthy: DATABASE_URL not configured"
+            health_status["status"] = "degraded"
+        else:
+            conn = psycopg2.connect(
+                settings.DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
+            )
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            conn.close()
+            health_status["services"]["postgresql"] = "healthy"
     except Exception as e:
         health_status["services"]["postgresql"] = f"unhealthy: {str(e)}"
         health_status["status"] = "degraded"
@@ -320,9 +324,19 @@ def health_check():
     try:
         import redis
 
-        r = redis.from_url(settings.redis_url)
-        r.ping()
-        health_status["services"]["redis"] = "healthy"
+        if settings.redis_url is None:
+            health_status["services"]["redis"] = "unhealthy: redis_url not configured"
+            health_status["status"] = "degraded"
+        else:
+            r = redis.from_url(settings.redis_url)
+            if r is not None:
+                r.ping()
+                health_status["services"]["redis"] = "healthy"
+            else:
+                health_status["services"][
+                    "redis"
+                ] = "unhealthy: redis connection failed"
+                health_status["status"] = "degraded"
     except Exception as e:
         health_status["services"]["redis"] = f"unhealthy: {str(e)}"
         health_status["status"] = "degraded"
@@ -373,9 +387,10 @@ def readiness_check():
     try:
         # Temel servis kontrolü
         from app.db.database import SessionLocal
+        from sqlalchemy import text
 
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         return {"status": "ready"}
     except Exception as e:

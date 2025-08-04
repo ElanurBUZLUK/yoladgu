@@ -104,11 +104,20 @@ class CollaborativeFilterEngine:
             user_idx = self.user_to_index[user_id]
 
             # Get user profile from NMF
+            if self.nmf_model is None:
+                logger.error("nmf_model_not_initialized")
+                return self._fallback_recommendations(user_id, n_recommendations)
+            if self.interaction_matrix is None:
+                logger.error("interaction_matrix_not_initialized")
+                return self._fallback_recommendations(user_id, n_recommendations)
             user_profile = self.nmf_model.transform(
                 self.interaction_matrix[user_idx : user_idx + 1]
             )[0]
 
             # Calculate scores for all items
+            if self.nmf_model.components_ is None:
+                logger.error("nmf_model_components_not_available")
+                return self._fallback_recommendations(user_id, n_recommendations)
             item_scores = self.nmf_model.components_.T.dot(user_profile)
 
             # Get top recommendations
@@ -119,8 +128,11 @@ class CollaborativeFilterEngine:
 
             if exclude_seen:
                 # Get user's seen items
-                user_interactions = self.interaction_matrix[user_idx].nonzero()[1]
-                seen_items = {self.index_to_item[idx] for idx in user_interactions}
+                if self.interaction_matrix is not None:
+                    user_interactions = self.interaction_matrix[user_idx].nonzero()[1]
+                    seen_items = {self.index_to_item[idx] for idx in user_interactions}
+                else:
+                    seen_items = set()
 
             for item_idx in item_indices:
                 if len(recommendations) >= n_recommendations:
@@ -205,7 +217,7 @@ class CollaborativeFilterEngine:
 
             # Train NMF model
             self.nmf_model = NMF(
-                n_components=self.n_components,
+                n_components=int(self.n_components),
                 init="random",
                 random_state=42,
                 max_iter=200,
@@ -214,9 +226,15 @@ class CollaborativeFilterEngine:
             self.nmf_model.fit(self.interaction_matrix)
 
             # Train SVD model for diversity
+            if self.interaction_matrix is None:
+                logger.error("interaction_matrix_not_initialized")
+                return False
+            if self.interaction_matrix.shape[1] <= 1:
+                logger.warning("insufficient_items_for_svd")
+                return False
             self.svd_model = TruncatedSVD(
                 n_components=min(
-                    self.n_components, self.interaction_matrix.shape[1] - 1
+                    int(self.n_components), self.interaction_matrix.shape[1] - 1
                 ),
                 random_state=42,
             )
@@ -231,12 +249,20 @@ class CollaborativeFilterEngine:
             # Save model
             self._save_model()
 
-            logger.info(
-                "model_trained",
-                n_users=self.interaction_matrix.shape[0],
-                n_items=self.interaction_matrix.shape[1],
-                n_interactions=len(interactions),
-            )
+            if self.interaction_matrix is not None and hasattr(
+                self.interaction_matrix, "shape"
+            ):
+                logger.info(
+                    "model_trained",
+                    n_users=self.interaction_matrix.shape[0],
+                    n_items=self.interaction_matrix.shape[1],
+                    n_interactions=len(interactions),
+                )
+            else:
+                logger.info(
+                    "model_trained",
+                    n_interactions=len(interactions),
+                )
 
             return True
 
@@ -322,8 +348,10 @@ class CollaborativeFilterEngine:
             if len(item_ids) <= n_recommendations:
                 selected_items = item_ids
             else:
+                # Convert to numpy array for random choice
+                item_ids_array = np.array(item_ids)
                 selected_items = np.random.choice(
-                    item_ids, size=n_recommendations, replace=False
+                    item_ids_array, size=n_recommendations, replace=False
                 )
 
             recommendations = []

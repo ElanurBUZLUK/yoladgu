@@ -142,11 +142,11 @@ async def get_recent_tasks(
 
         redis_client = redis.from_url(settings.redis_url)
         pattern = f"{offline_scheduler.task_prefix}:*"
-        keys = redis_client.keys(pattern)
+        keys = redis_client.keys(pattern) if redis_client else []
 
         tasks = []
-        for key in keys[:limit]:
-            task_data = redis_client.get(key)
+        for key in keys[:limit] if keys else []:
+            task_data = redis_client.get(key) if redis_client else None
             if task_data:
                 task = json.loads(task_data)
 
@@ -212,7 +212,7 @@ async def get_scheduler_stats():
 
         # Summary stats
         stats_key = f"{offline_scheduler.stats_key}:summary"
-        summary_data = redis_client.get(stats_key)
+        summary_data = redis_client.get(stats_key) if redis_client else None
         summary_stats = json.loads(summary_data) if summary_data else {}
 
         # Vector stats (son 24 saat)
@@ -221,7 +221,7 @@ async def get_scheduler_stats():
         for i in range(24):
             hour_time = now - timedelta(hours=i)
             hour_key = f"{offline_scheduler.stats_key}:vector:{hour_time.strftime('%Y%m%d_%H')}"
-            hour_data = redis_client.get(hour_key)
+            hour_data = redis_client.get(hour_key) if redis_client else None
 
             if hour_data:
                 stats = json.loads(hour_data)
@@ -338,8 +338,9 @@ async def scheduler_health_check():
         # Redis bağlantısı?
         redis_healthy = False
         try:
-            offline_scheduler.redis_client.ping()
-            redis_healthy = True
+            if offline_scheduler.redis_client:
+                offline_scheduler.redis_client.ping()
+                redis_healthy = True
         except:
             pass
 

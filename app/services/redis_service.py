@@ -109,7 +109,11 @@ class RedisService:
 
             # Try to parse as JSON
             try:
-                return json.loads(value)
+                # Ensure value is a string for json.loads
+                str_value = str(value) if value is not None else None
+                if str_value:
+                    return json.loads(str_value)
+                return value
             except json.JSONDecodeError:
                 return value
         except Exception as e:
@@ -160,7 +164,7 @@ class RedisService:
             logger.debug(
                 "stream_message_added", stream=stream_name, message_id=message_id
             )
-            return message_id
+            return str(message_id) if message_id else None
         except Exception as e:
             logger.error("stream_add_error", stream=stream_name, error=str(e))
             return None
@@ -177,7 +181,11 @@ class RedisService:
             messages = self._client.xread({stream_name: "$"}, count=count, block=block)
             result = []
 
-            for stream, msgs in messages:
+            # Ensure messages is iterable and handle different response types
+            if not messages or not hasattr(messages, "__iter__"):
+                return result
+
+            for stream, msgs in messages:  # type: ignore
                 for msg_id, fields in msgs:
                     # Parse JSON fields back to objects
                     parsed_fields = {}
@@ -202,7 +210,16 @@ class RedisService:
             return 0
 
         try:
-            return self._client.xlen(stream_name)
+            length = self._client.xlen(stream_name)
+            # Handle different response types
+            if hasattr(length, "__int__"):
+                return int(length)  # type: ignore
+            elif isinstance(length, (str, bytes)):
+                return int(length)  # type: ignore
+            elif length is not None:
+                return length  # type: ignore
+            else:
+                return 0
         except Exception as e:
             logger.error("stream_length_error", stream=stream_name, error=str(e))
             return 0
@@ -234,9 +251,13 @@ class RedisService:
 
             # Memory info
             memory_info = self._client.info("memory")
+            if not isinstance(memory_info, dict):
+                memory_info = {}
 
             # Connection info
             client_info = self._client.info("clients")
+            if not isinstance(client_info, dict):
+                client_info = {}
 
             return {
                 "status": "healthy",

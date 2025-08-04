@@ -53,7 +53,7 @@ def create_solution(
     Yeni bir çözüm kaydı oluşturur (öğrenci).
     """
     return crud_solution.create_solution(
-        db=db, solution_in=solution_in, user_id=current_user.id
+        db=db, solution_in=solution_in, user_id=getattr(current_user, "id", 1)
     )
 
 
@@ -70,7 +70,10 @@ def update_solution(
     db_solution = crud_solution.get_solution(db, solution_id=solution_id)
     if not db_solution:
         raise HTTPException(status_code=404, detail="Solution not found")
-    if db_solution.user_id != current_user.id and current_user.role != "admin":
+    if (
+        getattr(db_solution, "user_id", 0) != getattr(current_user, "id", 0)
+        and getattr(current_user, "role", "") != "admin"
+    ):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return crud_solution.update_solution(
         db=db, db_obj=db_solution, solution_in=solution_in
@@ -89,6 +92,9 @@ def delete_solution(
     db_solution = crud_solution.get_solution(db, solution_id=solution_id)
     if not db_solution:
         raise HTTPException(status_code=404, detail="Solution not found")
-    if db_solution.user_id != current_user.id and current_user.role != "admin":
+    if (
+        getattr(db_solution, "user_id", 0) != getattr(current_user, "id", 0)
+        and getattr(current_user, "role", "") != "admin"
+    ):
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return crud_solution.delete_solution(db=db, solution_id=solution_id)

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QuestionBase(BaseModel):
@@ -58,8 +58,7 @@ class QuestionResponse(QuestionBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuestionRecommendation(BaseModel):
@@ -74,8 +73,7 @@ class QuestionRecommendation(BaseModel):
     original_difficulty: int
     question: QuestionResponse
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuestionSimilarity(BaseModel):
@@ -84,8 +82,7 @@ class QuestionSimilarity(BaseModel):
     shared_skills: List[str]
     question: QuestionResponse
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SubjectBase(BaseModel):
@@ -102,8 +99,7 @@ class SubjectResponse(SubjectBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TopicBase(BaseModel):
@@ -121,8 +117,7 @@ class TopicResponse(TopicBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SkillBase(BaseModel):
@@ -141,8 +136,7 @@ class SkillResponse(SkillBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SkillCentrality(BaseModel):
@@ -152,8 +146,7 @@ class SkillCentrality(BaseModel):
     question_count: int
     student_mastery_avg: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StudentResponseBase(BaseModel):
@@ -175,14 +168,7 @@ class StudentResponseResponse(StudentResponseBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
-
-
-class AnswerSubmission(BaseModel):
-    answer: str
-    confidence_level: Optional[int] = Field(None, ge=1, le=5)
-    feedback: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StudentSkillMastery(BaseModel):
@@ -193,8 +179,7 @@ class StudentSkillMastery(BaseModel):
     correct_answers: int
     average_response_time: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LearningPath(BaseModel):
@@ -205,8 +190,7 @@ class LearningPath(BaseModel):
     recommended_questions: List[int]
     estimated_time: int  # minutes
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RecommendationRequest(BaseModel):

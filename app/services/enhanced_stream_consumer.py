@@ -142,6 +142,9 @@ class StreamConsumerManager:
     async def _create_consumer_group(self):
         """Create Redis consumer group"""
         try:
+            if self.redis_client is None:
+                logger.error("redis_client_not_initialized")
+                return
             self.redis_client.xgroup_create(
                 self.main_stream, self.consumer_group, id="0", mkstream=True
             )
@@ -155,7 +158,10 @@ class StreamConsumerManager:
     async def _process_batch(self):
         """Process a batch of messages from streams"""
         try:
-            messages = self.redis_client.xreadgroup(
+            if self.redis_client is None:
+                logger.error("redis_client_not_initialized")
+                return
+            messages: Any = self.redis_client.xreadgroup(
                 self.consumer_group,
                 self.consumer_name,
                 {self.main_stream: ">"},
@@ -163,12 +169,30 @@ class StreamConsumerManager:
                 block=self.block_time,
             )
 
-            if messages:
+            if messages and isinstance(messages, list):
                 for stream_name, stream_messages in messages:
-                    for message_id, fields in stream_messages:
-                        await self._process_single_message(
-                            stream_name.decode(), message_id.decode(), fields
-                        )
+                    try:
+                        if (
+                            isinstance(stream_messages, list)
+                            and len(stream_messages) > 0
+                        ):
+                            for message_tuple in stream_messages:
+                                if (
+                                    isinstance(message_tuple, tuple)
+                                    and len(message_tuple) >= 2
+                                ):
+                                    message_id, fields = message_tuple
+                                    if isinstance(message_id, bytes) and isinstance(
+                                        fields, dict
+                                    ):
+                                        await self._process_single_message(
+                                            stream_name.decode(),
+                                            message_id.decode(),
+                                            fields,
+                                        )
+                    except Exception as e:
+                        logger.warning("invalid_stream_messages_format", error=str(e))
+                        break  # Break out of the loop on error
 
         except Exception as e:
             logger.error("batch_processing_error", error=str(e))
@@ -190,10 +214,13 @@ class StreamConsumerManager:
                 raise ValueError(f"No handler for message type: {message.type}")
 
             message.status = MessageStatus.PROCESSING
-            result = await handler(message)
+            _result = await handler(message)  # Store result but don't use it
 
             # Acknowledge successful processing
-            self.redis_client.xack(self.main_stream, self.consumer_group, message_id)
+            if self.redis_client is not None:
+                self.redis_client.xack(
+                    self.main_stream, self.consumer_group, message_id
+                )
             message.status = MessageStatus.COMPLETED
 
             # Update metrics
@@ -406,7 +433,8 @@ class StreamConsumerManager:
                 updated_fields["retry_count"] = str(retry_count + 1)
                 updated_fields["retry_timestamp"] = str(time.time())
 
-                self.redis_client.xadd(self.main_stream, updated_fields)
+                if self.redis_client is not None:
+                    self.redis_client.xadd(self.main_stream, updated_fields)
                 logger.warning(
                     "message_retried",
                     message_id=message_id,
@@ -420,14 +448,18 @@ class StreamConsumerManager:
                 dlq_fields["error"] = str(error)
                 dlq_fields["dlq_timestamp"] = str(time.time())
 
-                self.redis_client.xadd(self.dlq_stream, dlq_fields)
+                if self.redis_client is not None:
+                    self.redis_client.xadd(self.dlq_stream, dlq_fields)
                 logger.error(
                     "message_sent_to_dlq", message_id=message_id, error=str(error)
                 )
                 self.metrics["messages_dlq"] += 1
 
             # Acknowledge to remove from pending
-            self.redis_client.xack(self.main_stream, self.consumer_group, message_id)
+            if self.redis_client is not None:
+                self.redis_client.xack(
+                    self.main_stream, self.consumer_group, message_id
+                )
 
         except Exception as dlq_error:
             logger.error(
@@ -454,6 +486,8 @@ class StreamConsumerManager:
                 "retry_count": "0",
             }
 
+            if self.redis_client is None:
+                raise RuntimeError("Redis client not initialized")
             message_id = self.redis_client.xadd(self.main_stream, message_fields)
 
             logger.info(

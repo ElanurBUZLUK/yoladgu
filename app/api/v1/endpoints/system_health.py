@@ -270,6 +270,9 @@ async def get_streams_monitoring():
         stream_info = {}
         for stream_name in ["ml_updates", "ml_updates_dlq"]:
             try:
+                if redis_client is None:
+                    stream_info[stream_name] = {"status": "redis_not_available"}
+                    continue
                 length = redis_client.xlen(stream_name)
                 info = redis_client.xinfo_stream(stream_name)
                 stream_info[stream_name] = {
@@ -307,12 +310,13 @@ async def clear_system_caches(
 
         if "all" in cache_types or "redis" in cache_types:
             redis_client = redis.Redis.from_url(settings.redis_url)
-            # Clear specific cache patterns only
-            cache_patterns = ["cache:*", "recommendations:*", "embeddings:*"]
-            for pattern in cache_patterns:
-                keys = redis_client.keys(pattern)
-                if keys:
-                    redis_client.delete(*keys)
+            if redis_client is not None:
+                # Clear specific cache patterns only
+                cache_patterns = ["cache:*", "recommendations:*", "embeddings:*"]
+                for pattern in cache_patterns:
+                    keys = redis_client.keys(pattern)
+                    if keys:
+                        redis_client.delete(*keys)
             cleared_caches.append("redis_cache")
 
         return {
@@ -454,14 +458,25 @@ def _get_system_metrics() -> SystemMetrics:
         disk = psutil.disk_usage("/")
         network = psutil.net_io_counters()
 
+        # Handle network stats safely
+        network_bytes_sent = 0
+        network_bytes_recv = 0
+        if network is not None:
+            try:
+                network_bytes_sent = int(network.bytes_sent)
+                network_bytes_recv = int(network.bytes_recv)
+            except (AttributeError, TypeError):
+                # Fallback if network stats are not available
+                pass
+
         return SystemMetrics(
             timestamp=datetime.utcnow().isoformat(),
-            cpu_usage=cpu_percent,
-            memory_usage=memory.percent,
-            disk_usage=(disk.used / disk.total) * 100,
+            cpu_usage=float(cpu_percent),
+            memory_usage=float(memory.percent),
+            disk_usage=float((disk.used / disk.total) * 100),
             network_io={
-                "bytes_sent": network.bytes_sent,
-                "bytes_recv": network.bytes_recv,
+                "bytes_sent": network_bytes_sent,
+                "bytes_recv": network_bytes_recv,
             },
             process_count=len(psutil.pids()),
         )
@@ -481,7 +496,9 @@ async def _check_database_health(db: Session) -> DatabaseHealth:
     """Check database health and performance"""
     try:
         start_time = time.time()
-        result = db.execute("SELECT 1")
+        from sqlalchemy import text
+
+        _result = db.execute(text("SELECT 1"))  # Execute query but don't use result
         query_time = time.time() - start_time
 
         # Get connection count (simplified)
@@ -588,7 +605,8 @@ async def _check_redis_service() -> ServiceStatus:
     start_time = time.time()
     try:
         redis_client = redis.Redis.from_url(settings.redis_url)
-        redis_client.ping()
+        if redis_client is not None:
+            redis_client.ping()
         response_time = time.time() - start_time
         return ServiceStatus(
             name="redis",
@@ -624,15 +642,25 @@ async def _check_embedding_service() -> ServiceStatus:
     start_time = time.time()
     try:
         # Test embedding computation
-        test_embedding = enhanced_embedding_service.compute_embedding_cached("test")
+        test_embedding = await enhanced_embedding_service.compute_embedding_cached(
+            "test"
+        )
         response_time = time.time() - start_time
+
+        # Ensure test_embedding is a list and has content
+        embedding_dim = (
+            len(test_embedding)
+            if test_embedding and isinstance(test_embedding, list)
+            else 0
+        )
+        is_healthy = embedding_dim > 0
 
         return ServiceStatus(
             name="embedding_service",
-            status="healthy" if len(test_embedding) > 0 else "unhealthy",
+            status="healthy" if is_healthy else "unhealthy",
             response_time=response_time,
             last_check=datetime.utcnow().isoformat(),
-            details={"embedding_dim": len(test_embedding)},
+            details={"embedding_dim": embedding_dim},
         )
     except Exception as e:
         return ServiceStatus(

@@ -1,5 +1,41 @@
-from .endpoints import auth
+from .endpoints import (
+    ai,
+    analytics,
+    auth,
+    embeddings,
+    llm_assistant,
+    performance_monitor,
+    plan_items,
+    questions,
+    quiz_sessions,
+    recommendations,
+    scheduler,
+    solutions,
+    streams,
+    study_plans,
+    subjects,
+    system_health,
+    topics,
+    users,
+)
 
-__all__ = ["auth"]
-
-
+__all__ = [
+    "auth",
+    "analytics",
+    "ai",
+    "embeddings",
+    "llm_assistant",
+    "performance_monitor",
+    "plan_items",
+    "questions",
+    "quiz_sessions",
+    "recommendations",
+    "scheduler",
+    "solutions",
+    "streams",
+    "study_plans",
+    "subjects",
+    "system_health",
+    "topics",
+    "users",
+]

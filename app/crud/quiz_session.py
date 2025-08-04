@@ -64,9 +64,9 @@ def get_student_quiz_stats(db: Session, student_id: int) -> dict:
         }
 
     total_sessions = len(sessions)
-    total_questions = sum(s.total_questions for s in sessions)
-    total_correct = sum(s.correct_answers for s in sessions)
-    total_time = sum(s.total_time_seconds for s in sessions)
+    total_questions = sum(getattr(s, "total_questions", 0) for s in sessions)
+    total_correct = sum(getattr(s, "correct_answers", 0) for s in sessions)
+    total_time = sum(getattr(s, "total_time_seconds", 0) for s in sessions)
 
     average_accuracy = (
         (total_correct / total_questions * 100) if total_questions > 0 else 0.0
