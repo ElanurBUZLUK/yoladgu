@@ -17,6 +17,13 @@ from . import (
     system_health,
     topics,
     users,
+    # New modular routers
+    ai_services,
+    vector_services,
+    recommendation_services,
+    health,
+    admin,
+    docs,
 )
 
 __all__ = [
@@ -38,4 +45,11 @@ __all__ = [
     "system_health",
     "topics",
     "users",
+    # New modular routers
+    "ai_services",
+    "vector_services",
+    "recommendation_services",
+    "health",
+    "admin",
+    "docs",
 ]

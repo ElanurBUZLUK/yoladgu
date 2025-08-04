@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import structlog
 from app.api.v1.endpoints import (
     ai,
@@ -20,11 +18,17 @@ from app.api.v1.endpoints import (
     system_health,
     topics,
     users,
+    # New modular routers
+    ai_services,
+    vector_services,
+    recommendation_services,
+    health,
+    admin,
 )
 from app.core.config import settings
 from app.core.rate_limiter import get_rate_limiter
 from app.services.scheduler_service import offline_scheduler
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Gauge
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -142,6 +146,21 @@ app.include_router(study_plans.router, prefix=settings.API_V1_STR)
 app.include_router(topics.router, prefix=settings.API_V1_STR)
 app.include_router(subjects.router, prefix=settings.API_V1_STR)
 app.include_router(plan_items.router, prefix=settings.API_V1_STR)
+app.include_router(quiz_sessions.router, prefix=settings.API_V1_STR)
+app.include_router(analytics.router, prefix=settings.API_V1_STR)
+
+# New modular service routers
+app.include_router(ai_services.router, prefix=settings.API_V1_STR)
+app.include_router(vector_services.router, prefix=settings.API_V1_STR)
+app.include_router(recommendation_services.router, prefix=settings.API_V1_STR)
+app.include_router(health.router, prefix=settings.API_V1_STR)
+app.include_router(admin.router, prefix=settings.API_V1_STR)
+
+# Documentation router
+from app.api.v1.endpoints import docs
+app.include_router(docs.router, prefix=settings.API_V1_STR)
+
+# Legacy routers (for backward compatibility)
 app.include_router(ai.router, prefix=settings.API_V1_STR)
 app.include_router(
     embeddings.router, prefix=f"{settings.API_V1_STR}/embeddings", tags=["embeddings"]
@@ -166,8 +185,6 @@ app.include_router(
     prefix=f"{settings.API_V1_STR}/performance",
     tags=["performance"],
 )
-app.include_router(quiz_sessions.router, prefix=settings.API_V1_STR)
-app.include_router(analytics.router, prefix=settings.API_V1_STR)
 
 # FastAPI lifecycle events for stream consumer
 import asyncio
@@ -284,120 +301,9 @@ async def shutdown_event():
         logger.error("application_shutdown_error", error=str(e), exc_info=True)
 
 
-@app.get("/health")
-def health_check():
-    """Gelişmiş sistem sağlık kontrolü with Prometheus metrics"""
-    # import time  # Unused import removed
-
-    # start_time = time.time()  # Unused variable removed
-
-    health_status = {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "services": {},
-    }
-
-    # PostgreSQL health check
-    try:
-        import psycopg2
-
-        if settings.DATABASE_URL is None:
-            health_status["services"][
-                "postgresql"
-            ] = "unhealthy: DATABASE_URL not configured"
-            health_status["status"] = "degraded"
-        else:
-            conn = psycopg2.connect(
-                settings.DATABASE_URL.replace("postgresql+psycopg2://", "postgresql://")
-            )
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            cursor.fetchone()
-            cursor.close()
-            conn.close()
-            health_status["services"]["postgresql"] = "healthy"
-    except Exception as e:
-        health_status["services"]["postgresql"] = f"unhealthy: {str(e)}"
-        health_status["status"] = "degraded"
-
-    # Redis health check
-    try:
-        import redis
-
-        if settings.redis_url is None:
-            health_status["services"]["redis"] = "unhealthy: redis_url not configured"
-            health_status["status"] = "degraded"
-        else:
-            r = redis.from_url(settings.redis_url)
-            if r is not None:
-                r.ping()
-                health_status["services"]["redis"] = "healthy"
-            else:
-                health_status["services"][
-                    "redis"
-                ] = "unhealthy: redis connection failed"
-                health_status["status"] = "degraded"
-    except Exception as e:
-        health_status["services"]["redis"] = f"unhealthy: {str(e)}"
-        health_status["status"] = "degraded"
-
-    # Neo4j health check (using singleton service)
-    if settings.USE_NEO4J:
-        try:
-            from app.services.neo4j_service import neo4j_service
-
-            if neo4j_service._driver:
-                # Test existing connection
-                with neo4j_service._driver.session() as session:
-                    session.run("RETURN 1")
-                health_status["services"]["neo4j"] = "healthy"
-            else:
-                health_status["services"]["neo4j"] = "unhealthy: driver not initialized"
-                health_status["status"] = "degraded"
-        except Exception as e:
-            health_status["services"]["neo4j"] = f"unhealthy: {str(e)}"
-            health_status["status"] = "degraded"
-
-    # Embedding service health check
-    if settings.USE_EMBEDDING:
-        try:
-            from app.services.embedding_service import compute_embedding
-
-            test_embedding = compute_embedding("test")
-            if len(test_embedding) == settings.EMBEDDING_DIM:
-                health_status["services"]["embedding"] = "healthy"
-            else:
-                health_status["services"][
-                    "embedding"
-                ] = "unhealthy: invalid embedding dimension"
-                health_status["status"] = "degraded"
-        except Exception as e:
-            health_status["services"]["embedding"] = f"unhealthy: {str(e)}"
-            health_status["status"] = "degraded"
-
-    return health_status
-
+# Health endpoints are now handled by the unified health router at /health/
+# Legacy health endpoints removed - use /health/ instead
 
 # Metrics endpoint is now handled by instrumentator
 
-
-@app.get("/ready")
-def readiness_check():
-    """Kubernetes readiness probe"""
-    try:
-        # Temel servis kontrolü
-        from app.db.database import SessionLocal
-        from sqlalchemy import text
-
-        db = SessionLocal()
-        db.execute(text("SELECT 1"))
-        db.close()
-        return {"status": "ready"}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Service not ready: {str(e)}")
-
-
-@app.get("/live")
-def liveness_check():
-    """Kubernetes liveness probe"""
-    return {"status": "alive", "timestamp": datetime.utcnow().isoformat()}
+# Legacy readiness and liveness endpoints removed - use /health/ready and /health/live instead
