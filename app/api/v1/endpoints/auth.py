@@ -11,7 +11,7 @@ from app.crud.user import (
 )
 from app.db.database import get_db
 from app.schemas.token import Token
-from app.schemas.user import User, UserCreate
+from app.schemas.user import UserProfile, UserCreate
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -51,7 +51,7 @@ def login_access_token(
     }
 
 
-@router.post("/register", response_model=User)
+@router.post("/register", response_model=UserProfile)
 def register_user(
     *,
     db: Session = Depends(get_db),

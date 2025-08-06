@@ -6,6 +6,7 @@ Gelişmiş semantic similarity ve embedding yönetimi
 import hashlib
 import json
 from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 
 import numpy as np
 import redis
@@ -170,91 +171,269 @@ class EnhancedEmbeddingService(EmbeddingService):
     async def compute_embeddings_batch_cached_async(
         self, texts: List[str]
     ) -> List[List[float]]:
-        """Cache'li toplu embedding hesaplama"""
+        """
+        Batch embedding computation with caching and progress tracking
+        """
         if not texts:
             return []
 
+        # Progress tracking
+        total_texts = len(texts)
+        processed = 0
+        cached_count = 0
+        computed_count = 0
+        errors = []
+
         results = []
-        uncached_texts = []
-        uncached_indices = []
-
-        # Optimized batch cache lookup with Redis pipeline
-        cache_keys = []
-        for i, text in enumerate(texts):
-            if not text or not text.strip():
-                results.append([0.0] * self.embedding_dim)
-                cache_keys.append(None)
-            else:
-                cache_key = self.get_embedding_cache_key(text)
-                cache_keys.append(cache_key)
-                results.append(None)  # Placeholder
-
-        # Batch cache lookup
-        valid_keys = [key for key in cache_keys if key is not None]
-        if valid_keys:
-            try:
-                pipe = self.redis.pipeline()
-                for key in valid_keys:
-                    pipe.get(key)
-                cached_results = pipe.execute()
-
-                key_index = 0
-                for i, text in enumerate(texts):
-                    if cache_keys[i] is not None:
-                        cached_result = cached_results[key_index]
-                        key_index += 1
-
-                        if cached_result:
-                            try:
-                                if isinstance(cached_result, bytes):
-                                    results[i] = json.loads(
-                                        cached_result.decode("utf-8")
-                                    )
-                                else:
-                                    results[i] = json.loads(cached_result)
-                                self.stats["cache_hits"] += 1
-                            except json.JSONDecodeError:
-                                uncached_texts.append(text)
-                                uncached_indices.append(i)
-                                self.stats["cache_misses"] += 1
-                        else:
-                            uncached_texts.append(text)
-                            uncached_indices.append(i)
-                            self.stats["cache_misses"] += 1
-
-            except Exception as e:
-                logger.debug("batch_cache_read_error", error=str(e))
-                # Fallback: treat all as cache miss
-                for i, text in enumerate(texts):
-                    if cache_keys[i] is not None and results[i] is None:
-                        uncached_texts.append(text)
-                        uncached_indices.append(i)
-
-        # Cache'de olmayan metinleri hesapla
-        if uncached_texts:
-            uncached_embeddings = self.compute_embeddings_batch(uncached_texts)
-
-            # Optimized batch cache write with pipeline
-            try:
-                pipe = self.redis.pipeline()
-                for i, (text, embedding) in enumerate(
-                    zip(uncached_texts, uncached_embeddings)
-                ):
-                    index = uncached_indices[i]
-                    results[index] = embedding
-
-                    # Batch cache write
+        
+        # Process in smaller chunks for memory efficiency
+        chunk_size = 50
+        for i in range(0, total_texts, chunk_size):
+            chunk = texts[i:i + chunk_size]
+            chunk_results = []
+            
+            for text in chunk:
+                try:
+                    # Check cache first
                     cache_key = self.get_embedding_cache_key(text)
-                    pipe.setex(cache_key, self.cache_ttl, json.dumps(embedding))
-
-                pipe.execute()
-
-            except Exception as e:
-                logger.debug("batch_cache_write_error", error=str(e))
-
-            self.stats["embeddings_computed"] += len(uncached_texts)
-
+                    cached_embedding = self.redis.get(cache_key)
+                    
+                    if cached_embedding:
+                        embedding = json.loads(cached_embedding)
+                        cached_count += 1
+                        self.stats["cache_hits"] += 1
+                    else:
+                        # Compute new embedding
+                        embedding = await self.compute_embedding(text)
+                        
+                        # Cache the result
+                        self.redis.setex(
+                            cache_key, 
+                            self.cache_ttl, 
+                            json.dumps(embedding)
+                        )
+                        computed_count += 1
+                        self.stats["cache_misses"] += 1
+                        self.stats["embeddings_computed"] += 1
+                    
+                    chunk_results.append(embedding)
+                    processed += 1
+                    
+                    # Log progress every 10 items
+                    if processed % 10 == 0:
+                        logger.info(f"Batch processing progress: {processed}/{total_texts} ({processed/total_texts*100:.1f}%)")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing text '{text[:50]}...': {str(e)}")
+                    errors.append({"text": text[:50], "error": str(e)})
+                    # Add zero embedding as fallback
+                    chunk_results.append([0.0] * self.embedding_dim)
+                    processed += 1
+            
+            results.extend(chunk_results)
+        
+        # Final progress report
+        logger.info(f"Batch processing completed: {processed}/{total_texts} texts processed")
+        logger.info(f"Cache hits: {cached_count}, Computed: {computed_count}, Errors: {len(errors)}")
+        
+        if errors:
+            logger.warning(f"Batch processing had {len(errors)} errors")
+        
         return results
+
+    async def compute_embeddings_batch_with_metadata(
+        self, 
+        texts_with_metadata: List[Dict[str, any]]
+    ) -> List[Dict[str, any]]:
+        """
+        Batch embedding computation with metadata tracking
+        """
+        results = []
+        
+        for item in texts_with_metadata:
+            text = item.get("text", "")
+            metadata = item.get("metadata", {})
+            
+            try:
+                embedding = await self.compute_embedding_cached(text)
+                
+                result = {
+                    "text": text,
+                    "embedding": embedding,
+                    "metadata": metadata,
+                    "embedding_dim": len(embedding),
+                    "model_used": self.model_name,
+                    "computed_at": datetime.now().isoformat()
+                }
+                
+                results.append(result)
+                
+            except Exception as e:
+                logger.error(f"Error processing text with metadata: {str(e)}")
+                results.append({
+                    "text": text,
+                    "embedding": [0.0] * self.embedding_dim,
+                    "metadata": metadata,
+                    "error": str(e),
+                    "embedding_dim": self.embedding_dim,
+                    "model_used": self.model_name,
+                    "computed_at": datetime.now().isoformat()
+                })
+        
+        return results
+
+    async def batch_similarity_analysis(
+        self, 
+        texts: List[str], 
+        similarity_threshold: float = 0.8
+    ) -> Dict[str, any]:
+        """
+        Advanced batch similarity analysis with clustering and outlier detection
+        """
+        try:
+            # Compute embeddings
+            embeddings = await self.compute_embeddings_batch_cached_async(texts)
+            
+            # Convert to numpy array
+            embeddings_array = np.array(embeddings)
+            
+            # Compute similarity matrix
+            similarity_matrix = cosine_similarity(embeddings_array)
+            
+            # Find similar pairs
+            similar_pairs = []
+            for i in range(len(texts)):
+                for j in range(i + 1, len(texts)):
+                    similarity = similarity_matrix[i][j]
+                    if similarity >= similarity_threshold:
+                        similar_pairs.append({
+                            "text1": texts[i],
+                            "text2": texts[j],
+                            "similarity": float(similarity),
+                            "index1": i,
+                            "index2": j
+                        })
+            
+            # Sort by similarity
+            similar_pairs.sort(key=lambda x: x["similarity"], reverse=True)
+            
+            # Clustering analysis
+            clustering_result = self.semantic_clustering(texts, n_clusters=min(5, len(texts)))
+            
+            # Outlier detection
+            outliers = self.find_semantic_outliers(texts, threshold=0.3)
+            
+            return {
+                "total_texts": len(texts),
+                "similarity_matrix_shape": similarity_matrix.shape,
+                "similar_pairs_count": len(similar_pairs),
+                "similar_pairs": similar_pairs[:10],  # Top 10
+                "clustering": clustering_result,
+                "outliers": outliers,
+                "average_similarity": float(np.mean(similarity_matrix)),
+                "similarity_std": float(np.std(similarity_matrix))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch similarity analysis: {str(e)}")
+            raise
+
+    async def batch_embedding_quality_check(
+        self, 
+        texts: List[str]
+    ) -> Dict[str, any]:
+        """
+        Quality check for batch embeddings
+        """
+        quality_metrics = {
+            "total_texts": len(texts),
+            "empty_texts": 0,
+            "very_short_texts": 0,
+            "very_long_texts": 0,
+            "duplicate_texts": 0,
+            "embedding_quality_scores": []
+        }
+        
+        # Check text quality
+        for text in texts:
+            if not text or text.strip() == "":
+                quality_metrics["empty_texts"] += 1
+            elif len(text) < 10:
+                quality_metrics["very_short_texts"] += 1
+            elif len(text) > 1000:
+                quality_metrics["very_long_texts"] += 1
+        
+        # Check for duplicates
+        unique_texts = set(texts)
+        quality_metrics["duplicate_texts"] = len(texts) - len(unique_texts)
+        
+        # Compute embeddings and check quality
+        embeddings = await self.compute_embeddings_batch_cached_async(texts)
+        
+        for i, embedding in enumerate(embeddings):
+            # Check embedding quality (norm, variance, etc.)
+            embedding_array = np.array(embedding)
+            norm = np.linalg.norm(embedding_array)
+            variance = np.var(embedding_array)
+            
+            quality_score = {
+                "text_index": i,
+                "text_length": len(texts[i]),
+                "embedding_norm": float(norm),
+                "embedding_variance": float(variance),
+                "quality_score": float(norm * variance)  # Simple quality metric
+            }
+            
+            quality_metrics["embedding_quality_scores"].append(quality_score)
+        
+        return quality_metrics
+
+    async def batch_embedding_optimization(
+        self, 
+        texts: List[str], 
+        target_dimensions: Optional[int] = None
+    ) -> Dict[str, any]:
+        """
+        Optimize batch embeddings for storage and performance
+        """
+        try:
+            # Compute embeddings
+            embeddings = await self.compute_embeddings_batch_cached_async(texts)
+            embeddings_array = np.array(embeddings)
+            
+            # Dimensionality reduction if requested
+            if target_dimensions and target_dimensions < embeddings_array.shape[1]:
+                reduced_embeddings, pca_model = self.dimensionality_reduction(
+                    texts, target_dims=target_dimensions
+                )
+                
+                # Calculate information retention
+                original_variance = np.var(embeddings_array, axis=0).sum()
+                reduced_variance = np.var(reduced_embeddings, axis=0).sum()
+                retention_rate = reduced_variance / original_variance
+                
+                return {
+                    "original_dimensions": embeddings_array.shape[1],
+                    "target_dimensions": target_dimensions,
+                    "reduced_embeddings": reduced_embeddings.tolist(),
+                    "retention_rate": float(retention_rate),
+                    "pca_model_components": pca_model.n_components_ if pca_model else None,
+                    "optimization_successful": True
+                }
+            else:
+                return {
+                    "original_dimensions": embeddings_array.shape[1],
+                    "target_dimensions": embeddings_array.shape[1],
+                    "reduced_embeddings": embeddings,
+                    "retention_rate": 1.0,
+                    "pca_model_components": None,
+                    "optimization_successful": False,
+                    "message": "No dimensionality reduction needed"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in batch embedding optimization: {str(e)}")
+            raise
 
     def semantic_similarity(self, text1: str, text2: str) -> float:
         """İki metin arasındaki semantic benzerlik"""

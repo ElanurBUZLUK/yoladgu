@@ -55,6 +55,45 @@ class Settings(BaseSettings):
     MODEL_CACHE_DIR: str = "./models"
     RECOMMENDATION_BATCH_SIZE: int = 100
     LEARNING_RATE: float = 0.01
+    
+    # Model Service Configuration
+    MODEL_PATHS: Dict[str, str] = {
+        "cf": "models/cf_model.pkl",
+        "bandit": "models/bandit_model.pkl", 
+        "online": "models/online_model.pkl",
+        "river": "models/river_model.pkl",
+        "linucb": "models/linucb_model.pkl"
+    }
+    
+    MODEL_TIMEOUTS: Dict[str, int] = {
+        "cf": 5,
+        "bandit": 3,
+        "online": 3,
+        "river": 2,
+        "linucb": 2
+    }
+    
+    AB_VARIANTS: Dict[str, float] = {
+        "cf_only": 0.1,
+        "bandit_only": 0.1,
+        "hybrid": 0.8
+    }
+    
+    MODEL_WEIGHTS: Dict[str, float] = {
+        "cf": 0.3,
+        "bandit": 0.2,
+        "online": 0.2,
+        "river": 0.15,
+        "linucb": 0.15
+    }
+    
+    # Circuit Breaker Configuration
+    CIRCUIT_BREAKER_FAIL_MAX: int = 3
+    CIRCUIT_BREAKER_RESET_TIMEOUT: int = 30
+    
+    # Model Versioning
+    DEFAULT_MODEL_VERSION: str = "v1"
+    USE_ADVANCED_MODELS: bool = False
 
     # Embedding Configuration
     EMBEDDING_MODEL: str = "paraphrase-MiniLM-L6-v2"

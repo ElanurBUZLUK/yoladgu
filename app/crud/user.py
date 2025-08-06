@@ -5,7 +5,7 @@ from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
 from app.db.database import get_db
 from app.db.models import StudentProfile, User
-from app.schemas.user import ProgressUpdate, UserCreate, UserUpdate
+from app.schemas.user import UserCreate, UserUpdate
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -35,11 +35,11 @@ def create_user(db: Session, user: UserCreate) -> User:
     db_user = User(
         email=user.email,
         username=user.username,
-        full_name=user.full_name,
-        grade=user.grade,
+        full_name=f"{user.first_name} {user.last_name}",
+        grade=user.grade_level,
         hashed_password=hashed_password,
         role=user.role,
-        is_active=user.is_active,
+        is_active=True,
     )
     db.add(db_user)
     db.commit()
@@ -64,7 +64,7 @@ def update_user(db: Session, user_id: int, user: UserUpdate) -> Optional[User]:
 
 
 def update_user_progress(
-    db: Session, user_id: int, progress: ProgressUpdate
+    db: Session, user_id: int, progress_data: dict
 ) -> Optional[StudentProfile]:
     # Önce profile'ı bul veya oluştur
     profile = (
@@ -75,9 +75,9 @@ def update_user_progress(
         db.add(profile)
 
     # Progress verilerini güncelle
-    update_data = progress.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(profile, field, value)
+    for field, value in progress_data.items():
+        if hasattr(profile, field):
+            setattr(profile, field, value)
 
     setattr(profile, "updated_at", datetime.utcnow())
     db.commit()

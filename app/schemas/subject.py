@@ -1,27 +1,24 @@
-from typing import Optional
+"""
+Subject Schemas - Import from common to avoid duplication
+"""
 
-from pydantic import BaseModel, ConfigDict
+from .common import (
+    SubjectBase,
+    SubjectCreate,
+    SubjectUpdate,
+    SubjectResponse,
+    PaginationRequest,
+    FilterRequest,
+    ListResponse
+)
 
-
-class SubjectBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-
-
-class SubjectCreate(SubjectBase):
-    pass
-
-
-class SubjectUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-
-
-class SubjectInDB(SubjectBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-
-
-class SubjectResponse(SubjectInDB):
-    pass
+# Re-export for backward compatibility
+__all__ = [
+    "SubjectBase",
+    "SubjectCreate", 
+    "SubjectUpdate",
+    "SubjectResponse",
+    "PaginationRequest",
+    "FilterRequest",
+    "ListResponse"
+]

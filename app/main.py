@@ -24,13 +24,19 @@ from app.api.v1.endpoints import (
     recommendation_services,
     health,
     admin,
+    gamification,
+    # Async endpoints
+    async_questions,
+    # New endpoints
+    search,
+    evaluation,
 )
 from app.core.config import settings
 from app.core.rate_limiter import get_rate_limiter
 from app.services.scheduler_service import offline_scheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import Counter, Gauge
+# from prometheus_client import Counter, Gauge  # Commented out to avoid conflicts
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # Structured logging setup
@@ -98,22 +104,20 @@ async def rate_limit_middleware(request, call_next):
     return response
 
 
-# Custom metrics for Yoladgu
-yoladgu_requests_total = Counter(
-    "yoladgu_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
-)
+# Custom metrics for Yoladgu (commented out to avoid conflicts with Prometheus Instrumentator)
+# yoladgu_custom_requests_total = Counter(
+#     "yoladgu_custom_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
+# )
 
-yoladgu_health_checks = Counter(
-    "yoladgu_health_checks_total", "Total health checks performed", ["service"]
-)
+# yoladgu_custom_health_checks = Counter(
+#     "yoladgu_custom_health_checks_total", "Total health checks performed", ["service"]
+# )
 
-yoladgu_service_health = Gauge(
-    "yoladgu_service_health_status",
-    "Service health status (1=healthy, 0=unhealthy)",
-    ["service"],
-)
-
-# Removed duplicate - handled by prometheus_monitoring
+# yoladgu_custom_service_health = Gauge(
+#     "yoladgu_custom_service_health_status",
+#     "Service health status (1=healthy, 0=unhealthy)",
+#     ["service"],
+# )
 
 # IMPORTANT: Middleware are applied in reverse order of registration
 # Last registered = First to process requests
@@ -155,6 +159,14 @@ app.include_router(vector_services.router, prefix=settings.API_V1_STR)
 app.include_router(recommendation_services.router, prefix=settings.API_V1_STR)
 app.include_router(health.router, prefix=settings.API_V1_STR)
 app.include_router(admin.router, prefix=settings.API_V1_STR)
+app.include_router(gamification.router, prefix=settings.API_V1_STR)
+
+# Async endpoints (high performance)
+app.include_router(async_questions.router, prefix=f"{settings.API_V1_STR}/async", tags=["async"])
+
+# New endpoints
+app.include_router(search.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
+app.include_router(evaluation.router, prefix=f"{settings.API_V1_STR}/evaluation", tags=["evaluation"])
 
 # Documentation router
 from app.api.v1.endpoints import docs

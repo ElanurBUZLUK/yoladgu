@@ -6,21 +6,201 @@ Comprehensive ML-powered recommendation system
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+import hashlib
+import json
 
 import structlog
 from app.crud.user import get_current_user
 from app.db.database import get_db
-from app.db.models import StudentResponse, User
+from app.db.models import StudentResponse, User, Question
 from app.services.enhanced_embedding_service import enhanced_embedding_service
 from app.services.enhanced_stream_consumer import MessageType, stream_consumer_manager
 from app.services.ensemble_service import ensemble_service
 from app.services.recommendation_service import recommendation_service
+from app.services.vector_store_service import vector_store_service
+from app.schemas.recommendation_services import (
+    RecommendationRequest as SchemaRecommendationRequest,
+    RecommendationResponse as SchemaRecommendationResponse,
+    QuestionRecommendation as SchemaQuestionRecommendation
+)
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
+
+
+def get_recommendation_cache_key(
+    user_id: int, 
+    subject_id: Optional[int], 
+    topic_id: Optional[int],
+    difficulty_level: Optional[int],
+    count: int
+) -> str:
+    """Recommendation cache key oluştur"""
+    # Create a unique key based on all parameters
+    key_parts = [
+        str(user_id),
+        str(subject_id or "all"),
+        str(topic_id or "all"),
+        str(difficulty_level or "all"),
+        str(count)
+    ]
+    key_string = ":".join(key_parts)
+    key_hash = hashlib.md5(key_string.encode()).hexdigest()
+    return f"rec:{key_hash}"
+
+
+@router.post("/questions", response_model=SchemaRecommendationResponse)
+async def get_question_recommendations(
+    request: SchemaRecommendationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soru önerisi endpoint'i - cache ve rerank ile"""
+    try:
+        # 1. Cache Kontrol
+        cache_key = get_recommendation_cache_key(
+            request.user_id,
+            request.subject_id,
+            request.topic_id,
+            request.difficulty_level,
+            request.count
+        )
+        
+        cached_results = enhanced_embedding_service.redis.get(cache_key)
+        if cached_results:
+            logger.info("recommendation_cache_hit", cache_key=cache_key)
+            cached_data = json.loads(cached_results.decode('utf-8') if isinstance(cached_results, bytes) else cached_results)
+            return SchemaRecommendationResponse(**cached_data)
+        
+        # 2. Aday Getirme - VectorStoreService.semantic_search(...) → embedding tabanlı
+        logger.info("recommendation_cache_miss", cache_key=cache_key)
+        
+        # Get user's recent questions for context
+        recent_questions = db.query(StudentResponse).filter(
+            StudentResponse.student_id == request.user_id
+        ).order_by(StudentResponse.created_at.desc()).limit(10).all()
+        
+        # Create search query from recent questions
+        search_query = "mathematics problem solving"  # Default query
+        if recent_questions:
+            # Use the most recent question as search context
+            latest_question = recent_questions[0]
+            question = db.query(Question).filter(Question.id == latest_question.question_id).first()
+            if question and hasattr(question, 'content') and question.content:
+                search_query = str(question.content)[:200]  # Use first 200 chars as context
+        
+        # Get candidates from vector search
+        candidates = await vector_store_service.semantic_search(
+            query_text=search_query,
+            k=request.count * 3,  # Get more candidates for reranking
+            similarity_threshold=0.5,  # Lower threshold to get more candidates
+            filters={
+                "subject_id": request.subject_id,
+                "topic_id": request.topic_id,
+                "difficulty_level": request.difficulty_level
+            }
+        )
+        
+        # 3. User Profile Oluştur
+        user_profile = await _get_user_profile(db, request.user_id)
+        
+        # 4. Sıralama & Filtreleme - RecommendationService.rerank(candidates, user_profile, difficulty)
+        reranked_candidates = await recommendation_service.rerank(
+            candidates=candidates,
+            user_profile=user_profile,
+            difficulty=request.difficulty_level,
+            db=db
+        )
+        
+        # Take top N recommendations
+        top_recommendations = reranked_candidates[:request.count]
+        
+        # 5. Response Format
+        recommendations = []
+        for i, candidate in enumerate(top_recommendations):
+            recommendations.append(SchemaQuestionRecommendation(
+                question_id=candidate["question_id"],
+                content=candidate["content"],
+                subject_id=candidate.get("subject_id"),
+                topic_id=candidate.get("topic_id"),
+                difficulty_level=candidate.get("difficulty_level"),
+                confidence_score=candidate.get("ensemble_score", candidate.get("similarity", 0.0)),
+                recommendation_reason=f"Based on your learning pattern and similarity to recent questions"
+            ))
+        
+        response = SchemaRecommendationResponse(
+            user_id=request.user_id,
+            recommendations=recommendations,
+            total_recommendations=len(recommendations)
+        )
+        
+        # 6. Cache Yazma - Cache'e kaydet TTL ile
+        cache_data = response.dict()
+        enhanced_embedding_service.redis.setex(
+            cache_key,
+            enhanced_embedding_service.cache_ttl,
+            json.dumps(cache_data)
+        )
+        
+        logger.info("recommendations_generated", 
+                   user_id=request.user_id,
+                   count=len(recommendations),
+                   cache_key=cache_key)
+        
+        return response
+        
+    except Exception as e:
+        logger.error("question_recommendation_error", 
+                   user_id=request.user_id, 
+                   error=str(e))
+        raise HTTPException(status_code=500, detail=f"Recommendation generation failed: {str(e)}")
+
+
+async def _get_user_profile(db: Session, user_id: int) -> Dict[str, Any]:
+    """Kullanıcı profili oluştur"""
+    try:
+        # Get user's recent performance
+        recent_responses = db.query(StudentResponse).filter(
+            StudentResponse.student_id == user_id
+        ).order_by(StudentResponse.created_at.desc()).limit(50).all()
+        
+        # Calculate performance metrics
+        total_questions = len(recent_responses)
+        correct_answers = sum(1 for r in recent_responses if r.is_correct)
+        accuracy = correct_answers / total_questions if total_questions > 0 else 0.5
+        
+        # Calculate average difficulty level
+        avg_difficulty = 3.0  # Default
+        if recent_responses:
+            difficulties = []
+            for response in recent_responses:
+                question = db.query(Question).filter(Question.id == response.question_id).first()
+                if question and question.difficulty_level:
+                    difficulties.append(question.difficulty_level)
+            if difficulties:
+                avg_difficulty = sum(difficulties) / len(difficulties)
+        
+        return {
+            "user_id": user_id,
+            "level": avg_difficulty,
+            "accuracy": accuracy,
+            "total_questions_answered": total_questions,
+            "recent_performance": accuracy
+        }
+        
+    except Exception as e:
+        logger.error("get_user_profile_error", user_id=user_id, error=str(e))
+        # Return default profile
+        return {
+            "user_id": user_id,
+            "level": 3.0,
+            "accuracy": 0.5,
+            "total_questions_answered": 0,
+            "recent_performance": 0.5
+        }
 
 
 # Request/Response Models
@@ -983,3 +1163,63 @@ async def _log_recommendation_analytics(
         algorithm=algorithm,
         generation_time=generation_time,
     )
+
+
+@router.get("/next-question")
+async def get_next_question(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    subject: Optional[str] = Query(None),
+    topic: Optional[str] = Query(None),
+):
+    """
+    Get the next recommended question for a student.
+    This endpoint provides a simple interface for getting the next question
+    based on the student's current progress and preferences.
+    """
+    try:
+        # Get recommendations using the existing service
+        student_id = getattr(current_user, 'id', None)
+        if student_id is None:
+            raise HTTPException(status_code=400, detail="Invalid user ID")
+            
+        recommendations = await recommendation_service.get_recommendations(
+            db=db,
+            student_id=student_id,
+            n_recommendations=1,  # Get just one question
+            request_id=None
+        )
+        
+        if not recommendations:
+            raise HTTPException(
+                status_code=404, 
+                detail="No questions available for recommendation"
+            )
+        
+        # Get the first (and only) recommendation
+        recommended_question = recommendations[0]
+        
+        # Filter by subject and topic if provided
+        if subject:
+            # You might need to implement subject filtering logic
+            # For now, we'll return the recommendation as is
+            pass
+            
+        if topic:
+            # You might need to implement topic filtering logic
+            # For now, we'll return the recommendation as is
+            pass
+        
+        return {"question": recommended_question}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "next_question_recommendation_error",
+            student_id=student_id,
+            subject=subject,
+            topic=topic,
+            error=str(e)
+        )
+        raise HTTPException(status_code=500, detail=str(e))

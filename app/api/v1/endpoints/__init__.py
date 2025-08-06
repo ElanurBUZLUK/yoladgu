@@ -23,7 +23,13 @@ from . import (
     recommendation_services,
     health,
     admin,
+    gamification,
     docs,
+    # Async endpoints
+    async_questions,
+    # New endpoints
+    search,
+    evaluation,
 )
 
 __all__ = [
@@ -51,5 +57,11 @@ __all__ = [
     "recommendation_services",
     "health",
     "admin",
+    "gamification",
     "docs",
+    # Async endpoints
+    "async_questions",
+    # New endpoints
+    "search",
+    "evaluation",
 ]

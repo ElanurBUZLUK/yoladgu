@@ -1,29 +1,24 @@
-from typing import Optional
+"""
+Topic Schemas - Import from common to avoid duplication
+"""
 
-from pydantic import BaseModel, ConfigDict
+from .common import (
+    TopicBase,
+    TopicCreate,
+    TopicUpdate,
+    TopicResponse,
+    PaginationRequest,
+    FilterRequest,
+    ListResponse
+)
 
-
-class TopicBase(BaseModel):
-    subject_id: int
-    name: str
-    description: Optional[str] = None
-
-
-class TopicCreate(TopicBase):
-    pass
-
-
-class TopicUpdate(BaseModel):
-    subject_id: Optional[int] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-
-
-class TopicInDB(TopicBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-
-
-class TopicResponse(TopicInDB):
-    pass
+# Re-export for backward compatibility
+__all__ = [
+    "TopicBase",
+    "TopicCreate",
+    "TopicUpdate", 
+    "TopicResponse",
+    "PaginationRequest",
+    "FilterRequest",
+    "ListResponse"
+]

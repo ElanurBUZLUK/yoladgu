@@ -1,7 +1,6 @@
 import enum
 from datetime import datetime
 
-from app.db.database import Base
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -21,7 +20,12 @@ except ImportError:
     # Fallback for development environments where pgvector might not be available
     from sqlalchemy import String as Vector
 
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+# Base class definition
+class Base(DeclarativeBase):
+    pass
 
 
 class UserRole(enum.Enum):

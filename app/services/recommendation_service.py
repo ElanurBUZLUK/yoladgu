@@ -7,27 +7,38 @@ import redis
 import structlog
 from app.core.config import settings
 from app.db.models import Question, QuestionSkill, StudentResponse
-from app.ml.bandits import LinUCBBandit
-from app.services.ensemble_service import (
-    adjust_weights_dynamically,
-    calculate_enhanced_ensemble_score,
-    filter_questions_by_thresholds,
+# from app.ml.bandits import LinUCBBandit  # Removed - ml module deleted
+# from app.services.ensemble_service import (
+#     adjust_weights_dynamically,
+#     calculate_enhanced_ensemble_score,
+#     filter_questions_by_thresholds,
+# )  # Removed - ensemble_service deleted
+# from app.services.level_service import update_student_level  # Removed - level_service deleted
+from app.services.enhanced_embedding_service import enhanced_embedding_service
+from app.services.real_models import cf_model, bandit_model, online_model
+from app.services.advanced_models import (
+    create_advanced_models, 
+    assign_variant, 
+    mix_advanced_scores,
+    AdvancedCFModel,
+    AdvancedBanditModel, 
+    AdvancedOnlineModel,
+    QuestionReranker,
+    QuestionDTO
 )
-from app.services.level_service import update_student_level
 from prometheus_client import Counter, Histogram
-
-# 'feature_extraction' importu artık gerekli değil ama kalsa da zararı yok
 from river import compose, linear_model, preprocessing
 from sqlalchemy.orm import Session
+import threading
 
+# Global logger instance
 logger = structlog.get_logger()
 
+# Prometheus metrics
 model_update_counter = Counter("model_update_total", "Model güncelleme sayısı")
 model_update_duration = Histogram(
     "model_update_duration_seconds", "Model update süresi", ["subject", "environment"]
 )
-
-import threading
 
 # Lazy import to avoid heavy transformers loading at startup
 # from sentence_transformers import SentenceTransformer
@@ -64,28 +75,13 @@ def build_river_model():
 
 
 def get_skill_centrality(student_id: int) -> Dict[int, int]:
-    from app.services.neo4j_service import neo4j_service
+    # from app.services.neo4j_service import neo4j_service  # Removed - using async_neo4j_service instead
 
-    if not neo4j_service._driver:
-        logger.warning("neo4j_not_available", operation="get_skill_centrality")
-        return {}
-
+    # Using async_neo4j_service instead
     try:
-        with neo4j_service._driver.session() as session:
-            res = session.run(
-                """
-                MATCH (u:User {id: $student_id})-[:SOLVED]->(q:Question)-[:HAS_SKILL]->(s:Skill)
-                RETURN s.id AS skill_id, count(*) AS freq
-                """,
-                student_id=student_id,
-            )
-            centrality = {r["skill_id"]: r["freq"] for r in res}
-            logger.info(
-                "skill_centrality_retrieved",
-                student_id=student_id,
-                skill_count=len(centrality),
-            )
-            return centrality
+        # This would need to be converted to async call
+        logger.warning("skill_centrality_not_implemented", student_id=student_id)
+        return {}
     except Exception as e:
         logger.error("get_skill_centrality_error", student_id=student_id, error=str(e))
         return {}
@@ -124,10 +120,10 @@ def diversity_filter(
 
 
 def add_question_to_neo4j(question_id: Any, skill_ids: List[int]) -> None:
-    from app.services.neo4j_service import neo4j_service
+    # from app.services.neo4j_service import neo4j_service  # Removed - using async_neo4j_service instead
 
-    # Use the centralized Neo4j service instead of creating new driver
-    neo4j_service.add_question_skills(question_id, skill_ids)
+    # Using async_neo4j_service instead
+    logger.warning("add_question_to_neo4j_not_implemented", question_id=question_id)
 
 
 # Embedding hesaplama artık embedding_service'den geliyor
@@ -142,10 +138,30 @@ class RecommendationService:
         self.redis_client = redis.Redis.from_url(settings.redis_url)
         self.model_type = model_type
         self.river_model = build_river_model()
-        self.linucb_bandit = LinUCBBandit(self.redis_client, alpha=1.0, feature_dim=10)
+        # self.linucb_bandit = LinUCBBandit(self.redis_client, alpha=1.0, feature_dim=10)  # Removed - ml module deleted
         self.model_cache_dir = settings.MODEL_CACHE_DIR
         os.makedirs(self.model_cache_dir, exist_ok=True)
         self._load_model()
+        
+        # Gerçek modeller için initialization
+        self.cf_model = cf_model
+        self.bandit_model = bandit_model
+        self.online_model = online_model
+        
+        # Advanced models (optional)
+        try:
+            if self.redis_client is not None:
+                self.advanced_models = create_advanced_models(self.redis_client)
+                self.use_advanced_models = getattr(settings, "USE_ADVANCED_MODELS", False)
+                logger.info("advanced_models_initialized", use_advanced=self.use_advanced_models)
+            else:
+                self.advanced_models = None
+                self.use_advanced_models = False
+                logger.warning("redis_client_not_available_for_advanced_models")
+        except Exception as e:
+            logger.warning("advanced_models_not_available", error=str(e))
+            self.advanced_models = None
+            self.use_advanced_models = False
 
     def _load_model(self):
         river_path = os.path.join(self.model_cache_dir, "river_model.bin")
@@ -176,14 +192,14 @@ class RecommendationService:
 
                 with open(json_path, "r") as f:
                     data = json.load(f)
-                self.linucb_bandit.A = data.get("A", {})
-                self.linucb_bandit.b = data.get("b", {})
+                            # self.linucb_bandit.A = data.get("A", {})  # Removed - ml module deleted
+            # self.linucb_bandit.b = data.get("b", {})  # Removed - ml module deleted
             else:
                 # Fallback to old npz format
                 data = np.load(linucb_path, allow_pickle=True)
                 A_data = data["A"].item()
                 b_data = data["b"].item()
-                # LinUCBBandit uses dictionaries for A and b
+                # LinUCBBandit uses dictionaries for A and b  # Removed - ml module deleted
                 if isinstance(A_data, dict):
                     self.linucb_bandit.A = A_data
                 else:
@@ -216,6 +232,27 @@ class RecommendationService:
             json.dump(linucb_state, f, default=str)
 
     def get_student_features(self, db: Session, student_id: int) -> Dict[str, Any]:
+        """
+        Öğrenci özelliklerini hesapla ve döndür.
+        
+        Returns:
+            Dict[str, Any]: Öğrenci özellikleri
+                - level: Öğrenci seviyesi (1-5)
+                - total_questions: Toplam çözülen soru sayısı
+                - correct_answers: Doğru cevap sayısı
+                - avg_response_time: Ortalama cevap süresi (ms)
+                - last20_accuracy: Son 20 sorudaki doğruluk oranı
+                - strong_topics: Güçlü olduğu konular listesi
+                - weak_topics: Zayıf olduğu konular listesi
+                - avg_confidence: Ortalama güven skoru
+                - recent_accuracy: Son dönem doğruluk oranı
+                - difficulty_preference: Tercih ettiği zorluk seviyesi
+                - speed_factor: Hız faktörü
+                - consistency_score: Tutarlılık skoru
+                - engagement_level: Katılım seviyesi
+                - learning_style: Öğrenme stili
+                - motivation_score: Motivasyon skoru
+        """
         # HATA DÜZELTİLDİ: 'timestamp' yerine 'created_at' kullanılıyor
         responses = (
             db.query(StudentResponse)
@@ -306,6 +343,31 @@ class RecommendationService:
         return features
 
     def get_question_features(self, db: Session, question_id: Any) -> Dict[str, Any]:
+        """
+        Soru özelliklerini hesapla ve döndür.
+        
+        Args:
+            db: Database session
+            question_id: Soru ID'si
+            
+        Returns:
+            Dict[str, Any]: Soru özellikleri
+                - difficulty_level: Zorluk seviyesi (1-5)
+                - subject_id: Konu ID'si
+                - topic_id: Alt konu ID'si
+                - question_type: Soru tipi (1-5)
+                - complexity_score: Karmaşıklık skoru (0-1)
+                - prerequisite_count: Ön koşul sayısı
+                - estimated_time: Tahmini çözüm süresi (saniye)
+                - skill_requirements: Gerekli beceriler listesi
+                - popularity_score: Popülerlik skoru (0-1)
+                - quality_score: Kalite skoru (0-1)
+                - embedding_vector: Embedding vektörü (varsa)
+                - skill_count: Beceri sayısı
+                - question_length: Soru uzunluğu (kelime sayısı)
+                - avg_skill_difficulty: Ortalama beceri zorluğu
+                - num_tags: Etiket sayısı
+        """
         question = (
             db.query(Question).filter(getattr(Question, "id") == question_id).first()
         )
@@ -368,6 +430,186 @@ class RecommendationService:
         )
         self._save_model()
 
+    async def recommend_with_embedding(
+        self, 
+        db: Session,
+        student_id: int, 
+        past_questions: List[Dict[str, Any]], 
+        top_k: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Past_questions embed vector'larını kullanarak Faiss index ile öneri üret.
+        """
+        try:
+            if not past_questions or not any("embedding" in q for q in past_questions):
+                logger.warning("no_embedding_data_available", student_id=student_id)
+                return []
+            
+            # Ortalama embedding hesapla
+            embeddings = [q["embedding"] for q in past_questions if "embedding" in q]
+            if not embeddings:
+                logger.warning("no_valid_embeddings", student_id=student_id)
+                return []
+                
+            avg_embedding = np.mean(embeddings, axis=0).tolist()
+            
+            # Enhanced embedding service ile benzer soruları bul
+            similar_questions = await enhanced_embedding_service.semantic_search_vector_db(
+                query_text="",  # We'll use the embedding directly
+                k=top_k,
+                similarity_threshold=0.7,
+                filters=None
+            )
+            
+            # Eğer vector store kullanılamıyorsa, fallback olarak semantic search kullan
+            if not similar_questions:
+                # Fallback: Question pool'dan semantic search
+                from app.crud.question import get_questions
+                question_pool = get_questions(db=db, limit=100)  # Get recent questions
+                
+                # Convert Question objects to dict format
+                question_dicts = []
+                for question in question_pool:
+                    question_dicts.append({
+                        "id": question.id,
+                        "content": question.content,
+                        "difficulty_level": question.difficulty_level,
+                        "subject_id": question.subject_id,
+                        "topic_id": question.topic_id
+                    })
+                
+                similar_questions = await enhanced_embedding_service.semantic_search(
+                    query="",  # We'll use embedding similarity
+                    question_pool=question_dicts,
+                    top_k=top_k,
+                    similarity_threshold=0.6
+                )
+            
+            # Sonuçları formatla
+            formatted_results = []
+            for q in similar_questions:
+                result = {
+                    "question_id": q.get("id", 0),
+                    "method": "embedding",
+                    "similarity_score": q.get("semantic_similarity", 0.0),
+                    "content": q.get("content", ""),
+                    "difficulty_level": q.get("difficulty_level", 1),
+                    "subject_id": q.get("subject_id", None),
+                    "topic_id": q.get("topic_id", None)
+                }
+                formatted_results.append(result)
+            
+            # Metrik güncelle
+            model_update_counter.labels(model_type="embedding", subject="all", environment=settings.ENVIRONMENT).inc()
+            
+            logger.info(
+                "embedding_recommendation_generated", 
+                student_id=student_id, 
+                count=len(formatted_results),
+                avg_similarity=np.mean([r["similarity_score"] for r in formatted_results]) if formatted_results else 0.0
+            )
+            
+            return formatted_results
+            
+        except Exception as e:
+            logger.error("embedding_recommendation_error", student_id=student_id, error=str(e))
+            return []
+
+    async def get_cf_recommendations(
+        self, 
+        db: Session, 
+        student_id: int, 
+        top_k: int = 50
+    ) -> List[QuestionDTO]:
+        """Collaborative Filtering önerileri"""
+        try:
+            recommendations = await self.cf_model.score(student_id, db, top_k)
+            logger.info("cf_recommendations_generated", student_id=student_id, count=len(recommendations))
+            return recommendations
+        except Exception as e:
+            logger.error("cf_recommendations_error", student_id=student_id, error=str(e))
+            return []
+
+    async def get_bandit_recommendations(
+        self,
+        db: Session,
+        student_id: int,
+        user_features: Dict[str, Any],
+        top_k: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Bandit model önerileri"""
+        try:
+            # Tüm soruları al
+            questions = db.query(Question).filter(Question.is_active == True).all()
+            
+            # Her soru için bandit skoru hesapla
+            scored_questions = []
+            for question in questions:
+                # Question ID'yi güvenli şekilde dönüştür
+                qid = int(getattr(question, "id", 0))
+                question_features = self.get_question_features(db, qid)
+                bandit_score = self.bandit_model.predict(user_features, question_features, qid)
+                
+                scored_questions.append({
+                    "question_id": question.id,
+                    "bandit_score": bandit_score,
+                    "content": question.content,
+                    "difficulty_level": question.difficulty_level,
+                    "subject_id": question.subject_id,
+                    "topic_id": question.topic_id
+                })
+            
+            # Skora göre sırala ve top_k al
+            scored_questions.sort(key=lambda x: x["bandit_score"], reverse=True)
+            recommendations = scored_questions[:top_k]
+            
+            logger.info("bandit_recommendations_generated", student_id=student_id, count=len(recommendations))
+            return recommendations
+            
+        except Exception as e:
+            logger.error("bandit_recommendations_error", student_id=student_id, error=str(e))
+            return []
+
+    async def get_online_recommendations(
+        self,
+        db: Session,
+        student_id: int,
+        user_features: Dict[str, Any],
+        top_k: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Online learning model önerileri"""
+        try:
+            # Tüm soruları al
+            questions = db.query(Question).filter(Question.is_active == True).all()
+            
+            # Her soru için online model skoru hesapla
+            scored_questions = []
+            for question in questions:
+                # Question ID'yi güvenli şekilde dönüştür
+                qid = int(getattr(question, "id", 0))
+                question_features = self.get_question_features(db, qid)
+                online_score = self.online_model.predict(student_id, user_features, question_features)
+                
+                scored_questions.append({
+                    "question_id": question.id,
+                    "online_score": online_score,
+                    "content": question.content,
+                    "difficulty_level": question.difficulty_level,
+                    "subject_id": question.subject_id,
+                    "topic_id": question.topic_id
+                })
+            
+            # Skora göre sırala ve top_k al
+            scored_questions.sort(key=lambda x: x["online_score"], reverse=True)
+            recommendations = scored_questions[:top_k]
+            
+            logger.info("online_recommendations_generated", student_id=student_id, count=len(recommendations))
+            return recommendations
+            
+        except Exception as e:
+            logger.error("online_recommendations_error", student_id=student_id, error=str(e))
+            return []
+
     async def get_recommendations(
         self,
         db: Session,
@@ -407,6 +649,110 @@ class RecommendationService:
 
         # Ağırlıkları dinamik olarak ayarla
         adjust_weights_dynamically(student_recent_performance, len(recent_responses))
+
+        # Model stratejilerine göre öneri üret
+        if self.model_type == "cf":
+            # Collaborative Filtering
+            cf_recommendations = await self.get_cf_recommendations(db, student_id, n_recommendations)
+            
+            # Cache'e kaydet
+            if self.redis_client is not None:
+                cache_data = json.dumps([{"question_id": q.id, "cf_score": q.features.get("cf_similarity", 0.0) if q.features else 0.0} for q in cf_recommendations])
+                self.redis_client.setex(cache_key, 300, cache_data)
+            
+            return [{"question_id": q.id, "method": "cf", "score": q.features.get("cf_similarity", 0.0) if q.features else 0.0} for q in cf_recommendations]
+            
+        elif self.model_type == "bandit":
+            # Contextual Bandit
+            bandit_recommendations = await self.get_bandit_recommendations(db, student_id, student_features, n_recommendations)
+            
+            # Cache'e kaydet
+            if self.redis_client is not None:
+                cache_data = json.dumps(bandit_recommendations)
+                self.redis_client.setex(cache_key, 300, cache_data)
+            
+            return bandit_recommendations
+            
+        elif self.model_type == "online":
+            # Online Learning
+            online_recommendations = await self.get_online_recommendations(db, student_id, student_features, n_recommendations)
+            
+            # Cache'e kaydet
+            if self.redis_client is not None:
+                cache_data = json.dumps(online_recommendations)
+                self.redis_client.setex(cache_key, 300, cache_data)
+            
+            return online_recommendations
+            
+        elif self.model_type == "advanced":
+            # Advanced retriever/reranker pipeline
+            return await self._get_advanced_recommendations(
+                db=db,
+                student_id=student_id,
+                student_features=student_features,
+                n_recommendations=n_recommendations
+            )
+            
+        elif self.model_type == "embedding":
+            # Embedding tabanlı strateji
+            student_recent_questions_with_embedding = []
+            for response in recent_responses:
+                question = (
+                    db.query(Question).filter(Question.id == response.question_id).first()
+                )
+                if question and hasattr(question, 'embedding_vector') and getattr(question, 'embedding_vector', None):
+                    student_recent_questions_with_embedding.append({
+                        "id": question.id,
+                        "content": question.content,
+                        "embedding": question.embedding_vector
+                    })
+            
+            embedding_recommendations = await self.recommend_with_embedding(
+                db=db,
+                student_id=student_id,
+                past_questions=student_recent_questions_with_embedding,
+                top_k=n_recommendations
+            )
+            
+            # Cache'e kaydet
+            if self.redis_client is not None:
+                cache_data = json.dumps(embedding_recommendations)
+                self.redis_client.setex(cache_key, 300, cache_data)
+            
+            return embedding_recommendations
+            
+        elif self.model_type == "advanced":
+            # Advanced retriever/reranker pipeline
+            return await self._get_advanced_recommendations(
+                db=db,
+                student_id=student_id,
+                student_features=student_features,
+                n_recommendations=n_recommendations
+            )
+
+        # Ensemble strateji için embedding önerilerini hazırla
+        embedding_recommendations = []
+        if self.model_type == "ensemble":
+            # Öğrencinin geçmiş sorularını embedding formatında hazırla
+            student_recent_questions_with_embedding = []
+            for response in recent_responses:
+                question = (
+                    db.query(Question).filter(Question.id == response.question_id).first()
+                )
+                if question and hasattr(question, 'embedding_vector') and getattr(question, 'embedding_vector', None):
+                    student_recent_questions_with_embedding.append({
+                        "id": question.id,
+                        "content": question.content,
+                        "embedding": question.embedding_vector
+                    })
+            
+            # Embedding tabanlı öneri üret (ensemble için daha fazla öneri)
+            embedding_recommendations = await self.recommend_with_embedding(
+                db=db,
+                student_id=student_id,
+                past_questions=student_recent_questions_with_embedding,
+                top_k=n_recommendations * 2  # Ensemble için daha fazla öneri
+            )
 
         questions = db.query(Question).filter(Question.is_active == True).all()
         recommendations = []
@@ -451,11 +797,21 @@ class RecommendationService:
                 student_recent_question_ids=student_recent_question_ids,
             )
 
+            # Embedding similarity skorunu hesapla (ensemble için)
+            embedding_similarity_score = 0.0
+            if embedding_recommendations:
+                # Bu soru embedding önerilerinde var mı kontrol et
+                for emb_rec in embedding_recommendations:
+                    if emb_rec.get("question_id") == question.id:
+                        embedding_similarity_score = emb_rec.get("similarity_score", 0.0)
+                        break
+
             recommendation = {
                 "question_id": question.id,
                 "ensemble_score": ensemble_scores["ensemble_score"],
                 "river_score": ensemble_scores["river_score"],
                 "embedding_similarity": ensemble_scores["embedding_similarity"],
+                "embedding_similarity_boost": embedding_similarity_score,  # Yeni embedding skoru
                 "skill_mastery": ensemble_scores["skill_mastery"],
                 "difficulty_match": ensemble_scores["difficulty_match"],
                 "neo4j_similarity": ensemble_scores["neo4j_similarity"],
@@ -497,16 +853,175 @@ class RecommendationService:
                 json.dumps(top_recommendations, default=str),  # 5 dakika
             )
 
+        # Metrik güncelle (embedding dahil)
+        model_update_counter.labels(
+            model_type=self.model_type, 
+            subject="all", 
+            environment=settings.ENVIRONMENT
+        ).inc()
+
         logger = get_logger_with_context(request_id=request_id, student_id=student_id)
         logger.info(
             "ensemble_recommendations_generated",
             recommendations=[r["question_id"] for r in top_recommendations],
             ensemble_scores=[r["ensemble_score"] for r in top_recommendations],
+            model_type=self.model_type,
+            embedding_recommendations_count=len(embedding_recommendations) if 'embedding_recommendations' in locals() else 0,
         )
 
         return top_recommendations
 
-    def process_student_response(
+    async def _get_advanced_recommendations(
+        self,
+        db: Session,
+        student_id: int,
+        student_features: Dict[str, Any],
+        n_recommendations: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Advanced retriever/reranker pipeline"""
+        try:
+            if not self.use_advanced_models or not self.advanced_models:
+                logger.warning("advanced_models_not_available_fallback")
+                return []
+            
+            # A/B test variant assignment
+            variant = assign_variant(str(student_id))
+            logger.info("advanced_variant_assigned", student_id=student_id, variant=variant)
+            
+            # Get candidates from different retrievers
+            cf_candidates = []
+            bandit_candidates = []
+            online_candidates = []
+            
+            if variant in ["cf-only", "hybrid"]:
+                cf_candidates = await self.advanced_models["cf"].score(
+                    str(student_id), db, top_k=50
+                )
+            
+            if variant in ["bandit-only", "hybrid"]:
+                # Get questions for bandit scoring
+                questions = db.query(Question).filter(Question.is_active == True).limit(100).all()
+                for question in questions:
+                    question_features = self.get_question_features(db, question.id)
+                    score = await self.advanced_models["bandit"].predict(
+                        student_features, question_features, question.id
+                    )
+                    bandit_candidates.append({
+                        "question_id": question.id,
+                        "content": question.content,
+                        "difficulty_level": question.difficulty_level,
+                        "subject_id": question.subject_id,
+                        "topic_id": question.topic_id,
+                        "score": score,
+                        "method": "advanced_bandit"
+                    })
+                bandit_candidates.sort(key=lambda x: x["score"], reverse=True)
+                bandit_candidates = bandit_candidates[:50]
+            
+            if variant in ["online-only", "hybrid"]:
+                # Get questions for online scoring
+                questions = db.query(Question).filter(Question.is_active == True).limit(100).all()
+                for question in questions:
+                    question_features = self.get_question_features(db, question.id)
+                    score = await self.advanced_models["online"].predict(
+                        student_id, student_features, question_features
+                    )
+                    online_candidates.append({
+                        "question_id": question.id,
+                        "content": question.content,
+                        "difficulty_level": question.difficulty_level,
+                        "subject_id": question.subject_id,
+                        "topic_id": question.topic_id,
+                        "score": score,
+                        "method": "advanced_online"
+                    })
+                online_candidates.sort(key=lambda x: x["score"], reverse=True)
+                online_candidates = online_candidates[:50]
+            
+            # Mix candidates based on variant
+            if variant == "cf-only":
+                candidates = cf_candidates
+            elif variant == "bandit-only":
+                candidates = bandit_candidates
+            elif variant == "online-only":
+                candidates = online_candidates
+            else:  # hybrid
+                # Convert to QuestionDTO format for mixing
+                cf_dtos = [QuestionDTO(
+                    id=int(c["question_id"]),
+                    content=c["content"],
+                    difficulty_level=c["difficulty_level"],
+                    subject_id=c["subject_id"],
+                    topic_id=c["topic_id"],
+                    features={"cf_score": c["score"], "method": c["method"]}
+                ) for c in cf_candidates]
+                
+                bandit_dtos = [QuestionDTO(
+                    id=int(c["question_id"]),
+                    content=c["content"],
+                    difficulty_level=c["difficulty_level"],
+                    subject_id=c["subject_id"],
+                    topic_id=c["topic_id"],
+                    features={"bandit_score": c["score"], "method": c["method"]}
+                ) for c in bandit_candidates]
+                
+                online_dtos = [QuestionDTO(
+                    id=int(c["question_id"]),
+                    content=c["content"],
+                    difficulty_level=c["difficulty_level"],
+                    subject_id=c["subject_id"],
+                    topic_id=c["topic_id"],
+                    features={"online_score": c["score"], "method": c["method"]}
+                ) for c in online_candidates]
+                
+                candidates = mix_advanced_scores(cf_dtos, bandit_dtos, online_dtos)
+            
+            # Rerank candidates if available
+            if self.advanced_models["reranker"] and candidates:
+                # Create user context from recent responses
+                recent_responses = (
+                    db.query(StudentResponse)
+                    .filter(StudentResponse.student_id == student_id)
+                    .order_by(StudentResponse.created_at.desc())
+                    .limit(10)
+                    .all()
+                )
+                
+                user_context = " ".join([
+                    f"Question {r.question_id}" for r in recent_responses
+                ])
+                
+                # Rerank top candidates
+                reranked_candidates = await self.advanced_models["reranker"].rerank(
+                    user_context, candidates[:100], top_n=n_recommendations
+                )
+                
+                # Convert back to dict format
+                final_recommendations = []
+                for candidate in reranked_candidates:
+                    final_recommendations.append({
+                        "question_id": int(candidate.question_id),
+                        "content": candidate.content,
+                        "difficulty_level": candidate.difficulty_level,
+                        "subject_id": candidate.subject_id,
+                        "topic_id": candidate.topic_id,
+                        "score": candidate.score,
+                        "method": candidate.method,
+                        "features": candidate.features or {}
+                    })
+                
+                return final_recommendations
+            else:
+                # Return top candidates without reranking
+                return candidates[:n_recommendations]
+                
+        except Exception as e:
+            logger.error("advanced_recommendations_error", 
+                        student_id=student_id, 
+                        error=str(e))
+            return []
+
+    async def process_student_response(
         self,
         db: Session,
         student_id: int,
@@ -526,9 +1041,11 @@ class RecommendationService:
         env = "prod"  # veya settings.ENVIRONMENT
         if getattr(settings, "USE_PROMETHEUS_HISTOGRAM", True):
             with model_update_duration.labels(
-                subject=str(subject), environment=env
+                subject=str(subject), 
+                environment=env,
+                model_type=self.model_type
             ).time():
-                self._process_student_response_inner(
+                await self._process_student_response_inner(
                     db,
                     student_id,
                     question_id,
@@ -539,7 +1056,7 @@ class RecommendationService:
                     request_id,
                 )
         else:
-            self._process_student_response_inner(
+            await self._process_student_response_inner(
                 db,
                 student_id,
                 question_id,
@@ -550,7 +1067,7 @@ class RecommendationService:
                 request_id,
             )
 
-    def _process_student_response_inner(
+    async def _process_student_response_inner(
         self,
         db,
         student_id,
@@ -561,6 +1078,61 @@ class RecommendationService:
         feedback,
         request_id,
     ):
+        """Gerçek modellerin feedback loop'u"""
+        try:
+            # Question ID'yi güvenli şekilde dönüştür
+            qid = int(getattr(question_id, "id", question_id) if hasattr(question_id, "id") else question_id)
+            
+            # Reward hesapla
+            reward = 1.0 if is_correct else 0.0
+            
+            # Kullanıcı ve soru özelliklerini al
+            user_features = self.get_student_features(db, student_id)
+            question_features = self.get_question_features(db, qid)
+            
+            # Prometheus metrics ile model güncellemeleri
+            env = getattr(settings, "ENVIRONMENT", "development")
+            subject = question_features.get("subject_id", "unknown")
+            
+            # Gerçek modelleri güncelle
+            if self.model_type == "bandit":
+                with model_update_duration.labels(subject=str(subject), environment=env).time():
+                    self.bandit_model.update(user_features, question_features, qid, reward)
+                model_update_counter.labels(model_type="bandit", subject=str(subject), environment=env).inc()
+                
+            elif self.model_type == "online":
+                with model_update_duration.labels(subject=str(subject), environment=env).time():
+                    self.online_model.update(student_id, user_features, question_features, reward)
+                model_update_counter.labels(model_type="online", subject=str(subject), environment=env).inc()
+            
+            # River model güncelle (her zaman)
+            self.update_river_model(user_features, question_features, is_correct, response_time)
+            
+            # LinUCB model güncelle (her zaman)
+            self.update_linucb_model(user_features, question_features, qid, reward)
+            
+            # Student level güncelle
+            update_student_level(db, student_id, is_correct, response_time)
+            
+            structlog.get_logger().info(
+                "student_response_processed",
+                student_id=student_id,
+                question_id=qid,
+                is_correct=is_correct,
+                reward=reward,
+                model_type=self.model_type
+            )
+            
+        except Exception as e:
+            structlog.get_logger().error("process_student_response_error", 
+                        student_id=student_id, 
+                        question_id=question_id, 
+                        error=str(e))
+            # Fallback: Sadece temel güncellemeleri yap
+            try:
+                update_student_level(db, student_id, is_correct, response_time)
+            except Exception as fallback_error:
+                structlog.get_logger().error("fallback_update_error", error=str(fallback_error))
         question = db.query(Question).filter(Question.id == question_id).first()
         if not question:
             return
@@ -706,6 +1278,103 @@ class RecommendationService:
                 return str(question.explanation)
             else:
                 return "Açıklama bulunamadı."
+
+    async def rerank(
+        self,
+        candidates: List[Dict[str, Any]],
+        user_profile: Dict[str, Any],
+        difficulty: Optional[int] = None,
+        db: Session = None
+    ) -> List[Dict[str, Any]]:
+        """Candidates'ı user profile ve difficulty'a göre yeniden sırala"""
+        try:
+            if not candidates:
+                return []
+            
+            # Collaborative filtering score
+            cf_scores = {}
+            try:
+                cf_recommendations = await self.get_cf_recommendations(
+                    db, user_profile.get("user_id", 0), top_k=len(candidates)
+                )
+                for rec in cf_recommendations:
+                    cf_scores[rec.question_id] = rec.score
+            except Exception as e:
+                logger.warning("cf_scoring_failed", error=str(e))
+            
+            # Bandit score
+            bandit_scores = {}
+            try:
+                bandit_recommendations = await self.get_bandit_recommendations(
+                    db, user_profile.get("user_id", 0), user_profile, top_k=len(candidates)
+                )
+                for rec in bandit_recommendations:
+                    bandit_scores[rec["question_id"]] = rec.get("score", 0.0)
+            except Exception as e:
+                logger.warning("bandit_scoring_failed", error=str(e))
+            
+            # Online learning score
+            online_scores = {}
+            try:
+                online_recommendations = await self.get_online_recommendations(
+                    db, user_profile.get("user_id", 0), user_profile, top_k=len(candidates)
+                )
+                for rec in online_recommendations:
+                    online_scores[rec["question_id"]] = rec.get("score", 0.0)
+            except Exception as e:
+                logger.warning("online_scoring_failed", error=str(e))
+            
+            # Rerank candidates with ensemble scoring
+            reranked_candidates = []
+            for candidate in candidates:
+                question_id = candidate.get("question_id")
+                
+                # Get scores from different models
+                cf_score = cf_scores.get(question_id, 0.0)
+                bandit_score = bandit_scores.get(question_id, 0.0)
+                online_score = online_scores.get(question_id, 0.0)
+                
+                # Ensemble scoring (weighted average)
+                ensemble_score = (
+                    0.4 * cf_score +
+                    0.3 * bandit_score +
+                    0.3 * online_score
+                )
+                
+                # Difficulty adjustment
+                if difficulty and candidate.get("difficulty_level"):
+                    difficulty_diff = abs(candidate["difficulty_level"] - difficulty)
+                    difficulty_penalty = max(0, difficulty_diff - 1) * 0.1
+                    ensemble_score -= difficulty_penalty
+                
+                # User level adjustment
+                user_level = user_profile.get("level", 3.0)
+                if candidate.get("difficulty_level"):
+                    level_diff = abs(candidate["difficulty_level"] - user_level)
+                    level_penalty = max(0, level_diff - 1) * 0.05
+                    ensemble_score -= level_penalty
+                
+                reranked_candidates.append({
+                    **candidate,
+                    "ensemble_score": ensemble_score,
+                    "cf_score": cf_score,
+                    "bandit_score": bandit_score,
+                    "online_score": online_score
+                })
+            
+            # Sort by ensemble score
+            reranked_candidates.sort(key=lambda x: x["ensemble_score"], reverse=True)
+            
+            logger.info("rerank_completed", 
+                       candidates_count=len(candidates),
+                       reranked_count=len(reranked_candidates))
+            
+            return reranked_candidates
+            
+        except Exception as e:
+            logger.error("rerank_error", error=str(e))
+            # Fallback to original candidates
+            return candidates
 
 
 # Global instance

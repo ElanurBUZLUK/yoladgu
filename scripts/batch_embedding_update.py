@@ -14,7 +14,23 @@ import structlog
 # Proje root'unu Python path'ine ekle
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app.services.embedding_service import embedding_service
+# from app.services.embedding_service import embedding_service  # Removed - use enhanced_embedding_service if needed
+
+# All embedding_service usage below should be replaced with enhanced_embedding_service or removed.
+# For now, raise NotImplementedError for all embedding_service calls.
+
+def not_implemented(*args, **kwargs):
+    raise NotImplementedError('embedding_service is removed. Use enhanced_embedding_service instead.')
+
+embedding_service = type('Dummy', (), {
+    'batch_update_embeddings': staticmethod(not_implemented),
+    'get_questions_without_embeddings': staticmethod(not_implemented),
+    'compute_embeddings_batch': staticmethod(not_implemented),
+    'save_embeddings_batch': staticmethod(not_implemented),
+    'update_question_embedding': staticmethod(not_implemented),
+    'get_embedding_stats': staticmethod(not_implemented),
+})()
+
 from app.core.config import settings
 
 logger = structlog.get_logger()

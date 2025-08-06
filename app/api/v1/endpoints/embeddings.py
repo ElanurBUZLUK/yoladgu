@@ -1,376 +1,263 @@
 """
-Enhanced Embedding API Endpoints
-SBERT tabanlı semantic similarity ve embedding yönetimi için API
+Embeddings Endpoints
+Embedding işlemleri endpointleri
 """
 
-from typing import Any, Dict, List, Optional
-
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from pydantic import BaseModel, Field
 import structlog
 from app.services.enhanced_embedding_service import enhanced_embedding_service
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from app.services.vector_store_service import vector_store_service
+from app.schemas.vector import (
+    EmbeddingRequest, EmbeddingResponse,
+    EmbeddingComputeRequest, EmbeddingComputeResponse,
+    BatchEmbeddingRequest, BatchEmbeddingResponse,
+    SemanticSimilarityRequest, SemanticSimilarityResponse,
+    SemanticClusteringRequest, SemanticClusteringResponse,
+    OutlierDetectionRequest, OutlierDetectionResponse
+)
 
 logger = structlog.get_logger()
 
-router = APIRouter()
+router = APIRouter(prefix="/embeddings", tags=["embeddings"])
+
+# New batch processing models
+class BatchEmbeddingWithMetadataRequest(BaseModel):
+    texts_with_metadata: List[Dict[str, Any]]
+
+class BatchSimilarityAnalysisRequest(BaseModel):
+    texts: List[str]
+    similarity_threshold: float = 0.8
+
+class BatchQualityCheckRequest(BaseModel):
+    texts: List[str]
+
+class BatchOptimizationRequest(BaseModel):
+    texts: List[str]
+    target_dimensions: Optional[int] = None
+
+class ComputeAndStoreRequest(BaseModel):
+    """Embedding hesaplama ve kaydetme isteği"""
+    text: str = Field(..., description="Hesaplanacak metin")
+    question_id: int = Field(..., description="Soru ID")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Ek metadata")
+
+@router.post("/compute", response_model=EmbeddingResponse)
+async def compute_embedding_with_cache(request: EmbeddingRequest):
+    """Embedding hesaplama ve cache işlemleri"""
+    try:
+        # 1. Embedding hesaplama (cache varsa EnhancedEmbeddingService.compute_embedding_cached)
+        embedding = await enhanced_embedding_service.compute_embedding_cached(request.text)
+        
+        # 2. Cache durumunu kontrol et (Redis'te emb:query:{hash} olarak saklanır)
+        cache_key = enhanced_embedding_service.get_embedding_cache_key(request.text)
+        cached = enhanced_embedding_service.redis.exists(cache_key)
+        
+        # 3. DB'ye Upsert (VectorStoreService.upsert)
+        # Note: This would require question_id and metadata from the request
+        # For now, we'll just return the embedding without upserting
+        
+        return EmbeddingResponse(
+            embedding=embedding,
+            dim=len(embedding),
+            cached=bool(cached)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding computation failed: {str(e)}")
 
 
-@router.post("/compute")
-async def compute_embedding(text: str):
+@router.post("/compute-and-store", response_model=EmbeddingResponse)
+async def compute_embedding_and_store(request: ComputeAndStoreRequest):
+    """Embedding hesaplama, cache ve DB'ye kaydetme"""
+    try:
+        # 1. Embedding hesaplama (cache varsa EnhancedEmbeddingService.compute_embedding_cached)
+        embedding = await enhanced_embedding_service.compute_embedding_cached(request.text)
+        
+        # 2. Cache durumunu kontrol et (Redis'te emb:query:{hash} olarak saklanır)
+        cache_key = enhanced_embedding_service.get_embedding_cache_key(request.text)
+        cached = enhanced_embedding_service.redis.exists(cache_key)
+        
+        # 3. DB'ye Upsert (VectorStoreService.upsert)
+        upsert_success = await vector_store_service.upsert(
+            question_id=request.question_id,
+            embedding=embedding,
+            metadata=request.metadata
+        )
+        
+        if not upsert_success:
+            logger.warning("upsert_failed", question_id=request.question_id)
+        
+        return EmbeddingResponse(
+            embedding=embedding,
+            dim=len(embedding),
+            cached=bool(cached)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding computation and storage failed: {str(e)}")
+
+
+@router.post("/batch/compute", response_model=List[List[float]])
+async def compute_embeddings_batch(request: BatchEmbeddingRequest):
+    """Çoklu metin için embedding hesapla"""
+    try:
+        embeddings = await enhanced_embedding_service.compute_embeddings_batch_cached_async(
+            request.texts
+        )
+        return embeddings
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch embedding computation failed: {str(e)}")
+
+@router.post("/batch/compute-with-metadata", response_model=List[Dict[str, Any]])
+async def compute_embeddings_batch_with_metadata(request: BatchEmbeddingWithMetadataRequest):
+    """Metadata ile birlikte çoklu embedding hesapla"""
+    try:
+        results = await enhanced_embedding_service.compute_embeddings_batch_with_metadata(
+            request.texts_with_metadata
+        )
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch embedding with metadata failed: {str(e)}")
+
+@router.post("/batch/similarity-analysis", response_model=Dict[str, Any])
+async def batch_similarity_analysis(request: BatchSimilarityAnalysisRequest):
+    """Çoklu metin için gelişmiş benzerlik analizi"""
+    try:
+        analysis = await enhanced_embedding_service.batch_similarity_analysis(
+            request.texts, request.similarity_threshold
+        )
+        return analysis
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch similarity analysis failed: {str(e)}")
+
+@router.post("/batch/quality-check", response_model=Dict[str, Any])
+async def batch_embedding_quality_check(request: BatchQualityCheckRequest):
+    """Çoklu embedding için kalite kontrolü"""
+    try:
+        quality_metrics = await enhanced_embedding_service.batch_embedding_quality_check(
+            request.texts
+        )
+        return quality_metrics
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch quality check failed: {str(e)}")
+
+@router.post("/batch/optimize", response_model=Dict[str, Any])
+async def batch_embedding_optimization(request: BatchOptimizationRequest):
+    """Çoklu embedding için optimizasyon"""
+    try:
+        optimization_result = await enhanced_embedding_service.batch_embedding_optimization(
+            request.texts, request.target_dimensions
+        )
+        return optimization_result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch optimization failed: {str(e)}")
+
+@router.post("/compute", response_model=EmbeddingComputeResponse)
+async def compute_embedding(request: EmbeddingComputeRequest):
     """Tek metin için embedding hesapla"""
     try:
-        if not text or not text.strip():
-            raise HTTPException(status_code=400, detail="Text cannot be empty")
-
-        embedding = enhanced_embedding_service.compute_embedding_cached(text)
-
-        return {
-            "text": text,
-            "embedding": embedding,
-            "dimensions": len(embedding),
-            "model": enhanced_embedding_service.current_model_key,
-        }
-
-    except Exception as e:
-        logger.error("compute_embedding_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/similarity")
-async def semantic_similarity(request: dict):
-    """İki metin arasındaki semantic benzerlik"""
-    try:
-        text1 = request.get("text1")
-        text2 = request.get("text2")
-
-        if not text1 or not text2:
-            raise HTTPException(status_code=400, detail="Both texts are required")
-
-        similarity = enhanced_embedding_service.semantic_similarity(text1, text2)
-
-        return {
-            "text1": text1,
-            "text2": text2,
-            "similarity": similarity,
-            "model": enhanced_embedding_service.current_model_key,
-        }
-
-    except Exception as e:
-        logger.error("semantic_similarity_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/search")
-async def semantic_search(
-    query: str,
-    question_pool: List[Dict],
-    top_k: int = Query(10, ge=1, le=50),
-    similarity_threshold: float = Query(0.6, ge=0.0, le=1.0),
-):
-    """Semantic arama yap"""
-    try:
-        if not query:
-            raise HTTPException(status_code=400, detail="Query cannot be empty")
-
-        if not question_pool:
-            raise HTTPException(status_code=400, detail="Question pool cannot be empty")
-
-        results = enhanced_embedding_service.semantic_search(
-            query, question_pool, top_k, similarity_threshold
+        embedding = await enhanced_embedding_service.compute_embedding_cached(request.text)
+        return EmbeddingComputeResponse(
+            text=request.text,
+            embedding=embedding,
+            dimensions=len(embedding),
+            model=enhanced_embedding_service.model_name
         )
-
-        return {
-            "query": query,
-            "results": results,
-            "total_found": len(results),
-            "search_params": {
-                "top_k": top_k,
-                "similarity_threshold": similarity_threshold,
-            },
-        }
-
     except Exception as e:
-        logger.error("semantic_search_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Embedding computation failed: {str(e)}")
 
-
-@router.post("/clustering")
-async def semantic_clustering(
-    texts: List[str], n_clusters: int = Query(5, ge=2, le=20)
-):
-    """Metinleri semantic olarak kümelere ayır"""
+@router.post("/similarity", response_model=SemanticSimilarityResponse)
+async def compute_semantic_similarity(request: SemanticSimilarityRequest):
+    """İki metin arasındaki semantik benzerliği hesapla"""
     try:
-        if not texts or len(texts) < 2:
-            raise HTTPException(status_code=400, detail="At least 2 texts required")
+        similarity = enhanced_embedding_service.semantic_similarity(
+            request.text1, request.text2
+        )
+        return SemanticSimilarityResponse(
+            text1=request.text1,
+            text2=request.text2,
+            similarity=similarity,
+            model=enhanced_embedding_service.model_name
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Similarity computation failed: {str(e)}")
 
-        if len(texts) < n_clusters:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Number of texts ({len(texts)}) must be >= n_clusters ({n_clusters})",
-            )
-
+@router.post("/clustering", response_model=SemanticClusteringResponse)
+async def semantic_clustering(request: SemanticClusteringRequest):
+    """Metinleri semantik olarak kümele"""
+    try:
         clustering_result = enhanced_embedding_service.semantic_clustering(
-            texts, n_clusters
+            request.texts, request.n_clusters
         )
-
-        return {
-            "input_texts": texts,
-            "n_clusters": n_clusters,
-            "clustering_result": clustering_result,
-            "model": enhanced_embedding_service.current_model_key,
-        }
-
+        return SemanticClusteringResponse(
+            texts=request.texts,
+            n_clusters=request.n_clusters,
+            clusters=clustering_result["clusters"],
+            cluster_centers=clustering_result["cluster_centers"],
+            model=enhanced_embedding_service.model_name
+        )
     except Exception as e:
-        logger.error("semantic_clustering_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Clustering failed: {str(e)}")
 
-
-@router.post("/outliers")
-async def find_outliers(
-    texts: List[str], threshold: float = Query(0.3, ge=0.0, le=1.0)
-):
-    """Semantic outlier'ları bul"""
+@router.post("/outliers", response_model=OutlierDetectionResponse)
+async def find_semantic_outliers(request: OutlierDetectionRequest):
+    """Semantik aykırı değerleri tespit et"""
     try:
-        if not texts or len(texts) < 3:
-            raise HTTPException(status_code=400, detail="At least 3 texts required")
-
-        outliers = enhanced_embedding_service.find_semantic_outliers(texts, threshold)
-
-        return {
-            "input_texts": texts,
-            "threshold": threshold,
-            "outliers": outliers,
-            "outlier_count": len(outliers),
-        }
-
+        outliers = enhanced_embedding_service.find_semantic_outliers(
+            request.texts, request.threshold
+        )
+        return OutlierDetectionResponse(
+            texts=request.texts,
+            threshold=request.threshold,
+            outliers=outliers,
+            model=enhanced_embedding_service.model_name
+        )
     except Exception as e:
-        logger.error("find_outliers_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/models")
-async def get_available_models():
-    """Kullanılabilir SBERT modellerini listele"""
-    try:
-        return {
-            "current_model": enhanced_embedding_service.current_model_key,
-            "available_models": enhanced_embedding_service.available_models,
-            "model_info": {
-                "name": enhanced_embedding_service.model_name,
-                "dimensions": enhanced_embedding_service.embedding_dim,
-            },
-        }
-
-    except Exception as e:
-        logger.error("get_models_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/models/switch")
-async def switch_model(model_key: str):
-    """SBERT modelini değiştir"""
-    try:
-        if model_key not in enhanced_embedding_service.available_models:
-            available = list(enhanced_embedding_service.available_models.keys())
-            raise HTTPException(
-                status_code=400, detail=f"Invalid model key. Available: {available}"
-            )
-
-        success = enhanced_embedding_service.switch_model(model_key)
-
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to switch model")
-
-        return {
-            "message": "Model switched successfully",
-            "new_model": model_key,
-            "model_info": enhanced_embedding_service.available_models[model_key],
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("switch_model_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
+        raise HTTPException(status_code=500, detail=f"Outlier detection failed: {str(e)}")
 
 @router.get("/stats")
 async def get_embedding_stats():
-    """Embedding service istatistikleri"""
+    """Embedding servisi istatistiklerini getir"""
     try:
         stats = enhanced_embedding_service.get_enhanced_stats()
         return stats
-
     except Exception as e:
-        logger.error("get_stats_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
-
-@router.post("/cache/clear")
-async def clear_cache():
+@router.post("/clear-cache")
+async def clear_embedding_cache():
     """Embedding cache'ini temizle"""
     try:
-        success = enhanced_embedding_service.clear_cache()
-
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to clear cache")
-
-        return {
-            "message": "Cache cleared successfully",
-            "model": enhanced_embedding_service.current_model_key,
-        }
-
-    except HTTPException:
-        raise
+        success = await enhanced_embedding_service.clear_cache()
+        return {"success": success, "message": "Cache cleared successfully"}
     except Exception as e:
-        logger.error("clear_cache_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
 
-
-@router.post("/batch/update")
-async def batch_update_embeddings(batch_size: int = Query(50, ge=1, le=200)):
-    """Toplu embedding güncelleme"""
+@router.get("/models")
+async def get_available_models():
+    """Kullanılabilir embedding modellerini listele"""
     try:
-        result = await enhanced_embedding_service.batch_update_embeddings(batch_size)
-
         return {
-            "message": "Batch update completed",
-            "result": result,
-            "batch_size": batch_size,
+            "available_models": enhanced_embedding_service.available_models,
+            "current_model": enhanced_embedding_service.current_model_key,
+            "current_model_name": enhanced_embedding_service.model_name
         }
-
     except Exception as e:
-        logger.error("batch_update_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get models: {str(e)}")
 
-
-# === VECTOR STORE ENDPOINTS ===
-
-
-class VectorSearchRequest(BaseModel):
-    query: str
-    k: int = 10
-    similarity_threshold: float = 0.7
-    filters: Optional[Dict[str, Any]] = None
-
-
-class StoreQuestionRequest(BaseModel):
-    question_id: int
-    question_text: str
-    metadata: Optional[Dict[str, Any]] = None
-    subject_id: Optional[int] = None
-    topic_id: Optional[int] = None
-    difficulty_level: Optional[int] = None
-
-
-@router.post("/vector/search")
-async def vector_semantic_search(request: VectorSearchRequest):
-    """
-    Vector Database üzerinden O(log N) hızında semantic arama
-    Büyük soru havuzlarında çok daha hızlı sonuçlar verir
-    """
+@router.post("/switch-model/{model_key}")
+async def switch_embedding_model(model_key: str):
+    """Embedding modelini değiştir"""
     try:
-        results = await enhanced_embedding_service.semantic_search_vector_db(
-            query_text=request.query,
-            k=request.k,
-            similarity_threshold=request.similarity_threshold,
-            filters=request.filters,
-        )
-
-        return {
-            "query": request.query,
-            "results": results,
-            "total_found": len(results),
-            "search_params": {
-                "k": request.k,
-                "similarity_threshold": request.similarity_threshold,
-                "filters": request.filters,
-            },
-        }
-
+        success = enhanced_embedding_service.switch_model(model_key)
+        if success:
+            return {
+                "success": True,
+                "message": f"Model switched to {model_key}",
+                "current_model": enhanced_embedding_service.current_model_key,
+                "current_model_name": enhanced_embedding_service.model_name
+            }
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid model key: {model_key}")
     except Exception as e:
-        logger.error("vector_search_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/vector/store")
-async def store_question_embedding(request: StoreQuestionRequest):
-    """
-    Yeni soru embedding'ini vector store'a kaydet
-    Yeni sorular eklendiğinde hemen aranabilir hale gelir
-    """
-    try:
-        success = await enhanced_embedding_service.store_question_embedding(
-            question_id=request.question_id,
-            question_text=request.question_text,
-            metadata=request.metadata,
-            subject_id=request.subject_id,
-            topic_id=request.topic_id,
-            difficulty_level=request.difficulty_level,
-        )
-
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to store embedding")
-
-        return {
-            "message": "Question embedding stored successfully",
-            "question_id": request.question_id,
-            "stored": success,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("store_embedding_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/vector/stats")
-async def get_vector_store_stats():
-    """Vector store performans istatistikleri"""
-    try:
-        stats = await enhanced_embedding_service.get_vector_store_stats()
-
-        return {
-            "vector_store_stats": stats,
-            "timestamp": enhanced_embedding_service.stats,
-        }
-
-    except Exception as e:
-        logger.error("vector_stats_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/vector/initialize")
-async def initialize_vector_store():
-    """Vector store'u başlat (sistem kurulumu için)"""
-    try:
-        await enhanced_embedding_service.initialize_vector_store()
-
-        return {"message": "Vector store initialized successfully", "status": "ready"}
-
-    except Exception as e:
-        logger.error("vector_init_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/vector/batch-store")
-async def batch_store_embeddings(batch_size: int = Query(100, ge=1, le=500)):
-    """
-    Mevcut tüm soruları vector store'a toplu kaydetme
-    İlk kurulum veya büyük veri güncellemeleri için
-    """
-    try:
-        stats = await enhanced_embedding_service.batch_update_embeddings(
-            batch_size=batch_size, force_recompute=False
-        )
-
-        return {
-            "message": "Batch vector store update completed",
-            "stats": stats,
-            "batch_size": batch_size,
-        }
-
-    except Exception as e:
-        logger.error("batch_vector_store_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to switch model: {str(e)}")

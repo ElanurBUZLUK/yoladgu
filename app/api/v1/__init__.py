@@ -17,6 +17,8 @@ from .endpoints import (
     system_health,
     topics,
     users,
+    # Async endpoints
+    async_questions,
 )
 
 __all__ = [
@@ -38,4 +40,6 @@ __all__ = [
     "system_health",
     "topics",
     "users",
+    # Async endpoints
+    "async_questions",
 ]

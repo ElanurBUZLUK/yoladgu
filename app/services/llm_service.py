@@ -1,482 +1,518 @@
 """
-Enhanced LLM Service for Educational AI Features
-Comprehensive AI-powered educational assistance
+LLM Service
+OpenAI, Anthropic ve local model entegrasyonları
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional
-
+import asyncio
+import json
 import structlog
+from typing import Dict, List, Optional, Any, Union
+from enum import Enum
+from datetime import datetime
+import aiohttp
+from pydantic import BaseModel
+from app.core.config import settings
 
 logger = structlog.get_logger()
 
 
+class ModelProvider(Enum):
+    """Model sağlayıcıları"""
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    LOCAL = "local"
+    HUGGINGFACE = "huggingface"
+
+
+class ModelType(Enum):
+    """Model türleri"""
+    CHAT = "chat"
+    COMPLETION = "completion"
+    EMBEDDING = "embedding"
+    IMAGE_GENERATION = "image_generation"
+
+
+class LLMRequest(BaseModel):
+    """LLM isteği"""
+    prompt: str
+    model: str = "gpt-3.5-turbo"
+    max_tokens: int = 1000
+    temperature: float = 0.7
+    top_p: float = 1.0
+    frequency_penalty: float = 0.0
+    presence_penalty: float = 0.0
+    stop: Optional[List[str]] = None
+    system_prompt: Optional[str] = None
+    messages: Optional[List[Dict[str, str]]] = None
+
+
+class LLMResponse(BaseModel):
+    """LLM yanıtı"""
+    text: str
+    model: str
+    usage: Dict[str, int]
+    finish_reason: str
+    created_at: datetime
+
+
 class LLMService:
-    """Enhanced LLM service for educational content generation and assistance"""
+    """LLM servisi"""
 
     def __init__(self):
+        self.current_model = "gpt-3.5-turbo"
+        self.current_provider = ModelProvider.OPENAI
+        self.api_keys = {}
+        self.session = None
         self.initialized = False
-        self.model_cache = {}
-
-    async def generate_adaptive_hint(
-        self,
-        question: str,
-        hint_level: int,
-        hint_style: str,
-        student_context: Dict[str, Any],
-        previous_attempts: List[str],
-    ) -> str:
-        """Generate adaptive hints based on student context and learning style"""
+        
+        # Model configurations
+        self.models = {
+            "openai": {
+                "gpt-3.5-turbo": {"max_tokens": 4096, "cost_per_1k": 0.002},
+                "gpt-4": {"max_tokens": 8192, "cost_per_1k": 0.03},
+                "gpt-4-turbo": {"max_tokens": 128000, "cost_per_1k": 0.01},
+            },
+            "anthropic": {
+                "claude-3-sonnet": {"max_tokens": 200000, "cost_per_1k": 0.015},
+                "claude-3-haiku": {"max_tokens": 200000, "cost_per_1k": 0.00025},
+                "claude-3-opus": {"max_tokens": 200000, "cost_per_1k": 0.15},
+            },
+            "local": {
+                "llama-2-7b": {"max_tokens": 4096, "cost_per_1k": 0.0},
+                "mistral-7b": {"max_tokens": 8192, "cost_per_1k": 0.0},
+            }
+        }
+    
+    async def initialize(self):
+        """LLM servisini başlat"""
         try:
-            logger.info(
-                "generating_adaptive_hint", hint_level=hint_level, hint_style=hint_style
+            # API keys'i yükle
+            self.api_keys = {
+                "openai": getattr(settings, 'OPENAI_API_KEY', None),
+                "anthropic": getattr(settings, 'ANTHROPIC_API_KEY', None),
+            }
+            
+            # HTTP session oluştur
+            self.session = aiohttp.ClientSession()
+            
+            self.initialized = True
+            logger.info("llm_service_initialized")
+            
+        except Exception as e:
+            logger.error("llm_service_initialization_error", error=str(e))
+            raise
+    
+    async def generate_text(self, request: LLMRequest) -> str:
+        """generate_text(prompt, max_tokens, temp)"""
+        try:
+            # Rate limiting check
+            await self._check_rate_limit()
+            
+            # Execute with retry
+            result = await self._execute_with_retry(
+                lambda: self._generate_text_internal(request)
             )
+            
+            return str(result) if result else ""
+            
+        except Exception as e:
+            logger.error("generate_text_error", error=str(e))
+            raise
 
-            # Simulate hint generation based on level and style
-            base_hints = {
-                1: "Try to identify the key mathematical operation needed here.",
-                2: "Look at the relationship between the given values and what you need to find.",
-                3: "The solution involves applying the formula: [specific formula based on question]",
+    async def _generate_text_internal(self, request: LLMRequest) -> str:
+        """Internal text generation with provider selection"""
+        if self.current_provider == ModelProvider.OPENAI:
+            return await self._generate_openai(request)
+        elif self.current_provider == ModelProvider.ANTHROPIC:
+            return await self._generate_anthropic(request)
+        elif self.current_provider == ModelProvider.LOCAL:
+            return await self._generate_local(request)
+        else:
+            raise ValueError(f"Unsupported provider: {self.current_provider}")
+    
+    async def _generate_openai(self, request: LLMRequest) -> str:
+        """OpenAI ile metin üret"""
+        try:
+            if not self.api_keys.get("openai"):
+                raise ValueError("OpenAI API key not configured")
+            
+            headers = {
+                "Authorization": f"Bearer {self.api_keys['openai']}",
+                "Content-Type": "application/json"
             }
-
-            style_modifiers = {
-                "guided": "Let's work through this step by step: ",
-                "direct": "The approach is: ",
-                "socratic": "What do you think happens when ",
-                "visual": "Imagine this problem as a diagram where ",
+            
+            # Messages formatını hazırla
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "system", "content": request.system_prompt})
+            
+            if request.messages:
+                messages.extend(request.messages)
+            else:
+                messages.append({"role": "user", "content": request.prompt})
+            
+            data = {
+                "model": request.model,
+                "messages": messages,
+                "max_tokens": request.max_tokens,
+                "temperature": request.temperature,
+                "top_p": request.top_p,
+                "frequency_penalty": request.frequency_penalty,
+                "presence_penalty": request.presence_penalty,
             }
-
-            base_hint = base_hints.get(hint_level, base_hints[1])
-            style_prefix = style_modifiers.get(hint_style, "")
-
-            # Incorporate student context
-            if student_context.get("learning_style") == "visual":
-                base_hint += " Try drawing a diagram to visualize the problem."
-
-            return style_prefix + base_hint
+            
+            if request.stop:
+                data["stop"] = request.stop
+            
+            if not self.session:
+                raise ValueError("HTTP session not initialized")
+                
+            async with self.session.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=data
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result["choices"][0]["message"]["content"]
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"OpenAI API error: {error_text}")
 
         except Exception as e:
-            logger.error("adaptive_hint_generation_error", error=str(e))
-            return "Try breaking down the problem into smaller parts."
-
-    async def generate_contextual_explanation(
-        self,
-        question: str,
-        student_answer: Optional[str],
-        correct_answer: str,
-        context: Dict[str, Any],
-        depth: str,
-    ) -> Dict[str, Any]:
-        """Generate contextual explanations based on student's answer and context"""
+            logger.error("openai_generation_error", error=str(e))
+            raise
+    
+    async def _generate_anthropic(self, request: LLMRequest) -> str:
+        """Anthropic ile metin üret"""
         try:
-            logger.info("generating_contextual_explanation", depth=depth)
-
-            # Analyze student answer vs correct answer
-            explanation_depth_map = {
-                "basic": "Here's a simple explanation: ",
-                "medium": "Let's understand why this works: ",
-                "detailed": "For a complete understanding, let's examine each step: ",
-                "expert": "From a theoretical perspective: ",
+            if not self.api_keys.get("anthropic"):
+                raise ValueError("Anthropic API key not configured")
+            
+            headers = {
+                "x-api-key": self.api_keys["anthropic"],
+                "Content-Type": "application/json",
+                "anthropic-version": "2023-06-01"
             }
-
-            depth_prefix = explanation_depth_map.get(depth, "")
-
-            # Generate explanation based on context
-            if student_answer and student_answer != correct_answer:
-                explanation = (
-                    f"{depth_prefix}Your answer '{student_answer}' shows good thinking, but "
-                    f"the correct approach is '{correct_answer}'. "
-                    "The key difference is in the method used to solve the problem."
-                )
+            
+            # System message'ı messages'a ekle
+            messages = []
+            if request.system_prompt:
+                messages.append({"role": "user", "content": f"System: {request.system_prompt}\n\nUser: {request.prompt}"})
             else:
-                explanation = (
-                    f"{depth_prefix}The correct answer '{correct_answer}' "
-                    "demonstrates the proper application of the underlying principles."
-                )
-
-            return {
-                "explanation": explanation,
-                "confidence": 0.85,
-                "generated_at": datetime.utcnow().isoformat(),
+                messages.append({"role": "user", "content": request.prompt})
+            
+            data = {
+                "model": request.model,
+                "messages": messages,
+                "max_tokens": request.max_tokens,
+                "temperature": request.temperature,
+                "top_p": request.top_p,
             }
-
+            
+            if not self.session:
+                raise ValueError("HTTP session not initialized")
+                
+            async with self.session.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=data
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result["content"][0]["text"]
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"Anthropic API error: {error_text}")
+                    
         except Exception as e:
-            logger.error("contextual_explanation_error", error=str(e))
-            return {
-                "explanation": "The solution involves applying the relevant mathematical concepts step by step.",
-                "confidence": 0.5,
-            }
-
-    async def generate_personalized_feedback(
-        self,
-        student_answer: str,
-        question: str,
-        learning_profile: Dict[str, Any],
-        performance_context: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Generate personalized feedback based on student's learning profile"""
+            logger.error("anthropic_generation_error", error=str(e))
+            raise
+    
+    async def _generate_local(self, request: LLMRequest) -> str:
+        """Local model ile metin üret"""
         try:
-            logger.info("generating_personalized_feedback")
-
-            response_time = performance_context.get("response_time", 300)
-            attempt_number = performance_context.get("attempt_number", 1)
-
-            # Generate feedback based on performance
-            if response_time < 60:
-                speed_feedback = "Great speed! You solved this quickly."
-            elif response_time < 300:
-                speed_feedback = "Good pacing on this problem."
-            else:
-                speed_feedback = "Take your time to think through each step carefully."
-
-            # Attempt-based feedback
-            if attempt_number == 1:
-                attempt_feedback = "Excellent! You got it right on the first try."
-            elif attempt_number <= 3:
-                attempt_feedback = (
-                    "Good persistence! You worked through the challenges."
-                )
-            else:
-                attempt_feedback = "Remember, making mistakes is part of learning."
-
-            # Generate encouragement based on learning profile
-            learning_style = learning_profile.get("learning_style", "visual")
-            if learning_style == "visual":
-                encouragement = "Try visualizing problems with diagrams or graphs."
-            else:
-                encouragement = "You're making good progress! Keep practicing."
-
-            return {
-                "feedback": f"{speed_feedback} {attempt_feedback}",
-                "encouragement": encouragement,
-                "improvements": [
-                    "Consider double-checking your work",
-                    "Practice similar problems to build confidence",
-                ],
-                "next_steps": [
-                    "Try the next difficulty level",
-                    "Review related concepts",
-                ],
-            }
-
+            # Local model için basit implementasyon
+            # Gerçek uygulamada Ollama, vLLM gibi local model servisleri kullanılır
+            
+            logger.warning("local_model_not_implemented", model=request.model)
+            return f"[Local model {request.model} response placeholder]"
+            
         except Exception as e:
-            logger.error("personalized_feedback_error", error=str(e))
-            return {
-                "feedback": "Good work on this problem!",
-                "encouragement": "Keep practicing to improve your skills.",
-                "improvements": ["Review the solution steps"],
-                "next_steps": ["Try more practice problems"],
-            }
-
-    async def generate_study_plan(
-        self,
-        student_profile: Dict[str, Any],
-        subject_areas: List[str],
-        time_available: int,
-        target_timeline: int,
-        learning_style: Optional[str],
-        current_skills: Dict[str, int],
-    ) -> Dict[str, Any]:
-        """Generate personalized study plan using AI planning"""
+            logger.error("local_generation_error", error=str(e))
+            raise
+    
+    async def analyze_text(self, text: str, analysis_type: str = "general") -> Dict[str, Any]:
+        """analyze_text(text, type) + retry / rate-limit"""
         try:
-            logger.info(
-                "generating_study_plan",
-                subjects=subject_areas,
-                timeline=target_timeline,
+            # Rate limiting check
+            await self._check_rate_limit()
+            
+            # Prepare analysis prompt based on type
+            if analysis_type == "difficulty":
+                prompt = f"Analyze the difficulty level of this question (1-5 scale): {text}"
+                system_prompt = "You are an educational content analyzer. Rate difficulty from 1 (easiest) to 5 (hardest)."
+            elif analysis_type == "topic":
+                prompt = f"Identify the main topic and subtopics for this question: {text}"
+                system_prompt = "You are a subject matter expert. Identify the main topic and related subtopics."
+            elif analysis_type == "quality":
+                prompt = f"Evaluate the quality and clarity of this question: {text}"
+                system_prompt = "You are an educational content evaluator. Assess question quality and clarity."
+            else:
+                prompt = f"Analyze this text: {text}"
+                system_prompt = "You are a general text analyzer."
+            
+            # Create request with retry mechanism
+            request = LLMRequest(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                max_tokens=500,
+                temperature=0.3
             )
+            
+            # Execute with retry
+            result = await self._execute_with_retry(
+                lambda: self.generate_text(request)
+            )
+            
+            return {
+                "analysis_type": analysis_type,
+                "text": text,
+                "result": result,
+                "model": self.current_model,
+                "provider": self.current_provider.value
+            }
+            
+        except Exception as e:
+            logger.error("analyze_text_error", analysis_type=analysis_type, error=str(e))
+            raise
+    
+    async def generate_study_plan(self, user_profile: Dict[str, Any]) -> Dict[str, Any]:
+        """AI ile çalışma planı oluştur"""
+        try:
+            system_prompt = """You are an expert educational planner. Create a personalized study plan based on the user's profile. 
+            Consider their current level, target subjects, available time, and learning preferences."""
+            
+            user_prompt = f"""
+            Create a study plan for a student with the following profile:
+            - Current level: {user_profile.get('level', 'beginner')}
+            - Target subjects: {user_profile.get('target_subjects', [])}
+            - Available time per day: {user_profile.get('study_hours_per_day', 2)} hours
+            - Learning preferences: {user_profile.get('learning_preferences', 'visual')}
+            - Weak areas: {user_profile.get('weak_areas', [])}
+            
+            Provide a structured study plan with daily activities, recommended resources, and progress milestones.
+            """
+            
+            request = LLMRequest(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                max_tokens=1000,
+                temperature=0.7
+            )
+            
+            response = await self.generate_text(request)
 
-            # Calculate daily time allocation
-            daily_time = time_available
-            total_days = target_timeline
+            return {
+                "study_plan": response,
+                "user_profile": user_profile,
+                "generated_at": datetime.now().isoformat()
+            }
 
-            # Generate daily sessions
-            daily_sessions = []
-            for day in range(1, min(total_days + 1, 8)):  # Show first week
-                session = {
-                    "day": day,
-                    "date": (datetime.utcnow().date()).isoformat(),
-                    "duration": daily_time,
-                    "activities": [
-                        {
-                            "type": "review",
-                            "subject": subject_areas[0]
-                            if subject_areas
-                            else "mathematics",
-                            "duration": daily_time // 3,
-                            "description": "Review fundamental concepts",
-                        },
-                        {
-                            "type": "practice",
-                            "subject": subject_areas[0]
-                            if subject_areas
-                            else "mathematics",
-                            "duration": daily_time * 2 // 3,
-                            "description": "Solve practice problems",
-                        },
-                    ],
+        except Exception as e:
+            logger.error("generate_study_plan_error", error=str(e))
+            raise
+    
+    async def generate_explanation(self, question_text: str, user_answer: str, correct_answer: str) -> str:
+        """Soru açıklaması oluştur"""
+        try:
+            system_prompt = """You are an expert teacher. Provide a clear, educational explanation for why the student's answer is correct or incorrect. 
+            Focus on the learning concept and help the student understand the reasoning."""
+            
+            user_prompt = f"""
+            Question: {question_text}
+            Student's answer: {user_answer}
+            Correct answer: {correct_answer}
+            
+            Provide an educational explanation that helps the student understand the concept.
+            """
+            
+            request = LLMRequest(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                max_tokens=300,
+                temperature=0.5
+            )
+            
+            return await self.generate_text(request)
+
+        except Exception as e:
+            logger.error("generate_explanation_error", error=str(e))
+            raise
+    
+    async def switch_model(self, model_key: str) -> bool:
+        """Model switch mekanizması (switch_model(key))"""
+        try:
+            # Parse model key to get provider and model name
+            if "/" in model_key:
+                provider_name, model_name = model_key.split("/", 1)
+            else:
+                # Default to OpenAI if no provider specified
+                provider_name = "openai"
+                model_name = model_key
+            
+            # Validate provider
+            try:
+                provider = ModelProvider(provider_name.lower())
+            except ValueError:
+                logger.error("invalid_provider", provider=provider_name)
+                return False
+            
+            # Validate model exists for provider
+            if provider.value not in self.models or model_name not in self.models[provider.value]:
+                logger.error("model_not_found", provider=provider.value, model=model_name)
+                return False
+            
+            # Switch model
+            self.current_provider = provider
+            self.current_model = model_name
+            
+            logger.info("model_switched", 
+                       provider=provider.value, 
+                       model=model_name)
+            return True
+            
+        except Exception as e:
+            logger.error("switch_model_error", model_key=model_key, error=str(e))
+            return False
+    
+    async def get_available_models(self) -> Dict[str, Any]:
+        """get_available_models()"""
+        try:
+            available_models = {}
+            
+            for provider_name, models in self.models.items():
+                provider_models = []
+                for model_name, config in models.items():
+                    provider_models.append({
+                        "name": model_name,
+                        "max_tokens": config["max_tokens"],
+                        "cost_per_1k": config["cost_per_1k"],
+                        "available": True  # TODO: Add availability check
+                    })
+                
+                available_models[provider_name] = {
+                    "models": provider_models,
+                    "current_model": self.current_model if self.current_provider.value == provider_name else None
                 }
-                daily_sessions.append(session)
-
-            # Generate milestones
-            milestones = [
-                {
-                    "week": 1,
-                    "goal": "Complete foundation review",
-                    "completion_criteria": "Score 80% on practice tests",
-                },
-                {
-                    "week": 2,
-                    "goal": "Master intermediate concepts",
-                    "completion_criteria": "Solve complex problems consistently",
-                },
-            ]
-
+            
             return {
-                "daily_sessions": daily_sessions,
-                "milestones": milestones,
-                "completion_date": (datetime.utcnow().date()).isoformat(),
-                "total_hours": daily_time * total_days / 60,
+                "available_models": available_models,
+                "current_provider": self.current_provider.value,
+                "current_model": self.current_model
             }
-
+            
         except Exception as e:
-            logger.error("study_plan_generation_error", error=str(e))
-            return {
-                "daily_sessions": [],
-                "milestones": [],
-                "completion_date": datetime.utcnow().isoformat(),
-                "total_hours": 0,
-            }
-
-    async def generate_question(
-        self,
-        topic: str,
-        difficulty_level: int,
-        question_type: str,
-        learning_objectives: List[str],
-        similar_context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Generate new questions using AI"""
+            logger.error("get_available_models_error", error=str(e))
+            raise
+    
+    async def get_stats(self) -> Dict[str, Any]:
+        """LLM servisi istatistiklerini getir"""
         try:
-            logger.info(
-                "generating_question",
-                topic=topic,
-                difficulty=difficulty_level,
-                type=question_type,
+            return {
+                "current_model": self.current_model,
+                "current_provider": self.current_provider.value,
+                "initialized": self.initialized,
+                "api_keys_configured": {
+                    provider: bool(api_key) 
+                    for provider, api_key in self.api_keys.items()
+                }
+            }
+            
+        except Exception as e:
+            logger.error("get_llm_stats_error", error=str(e))
+            return {"error": str(e)}
+    
+    async def is_healthy(self) -> bool:
+        """LLM servisi sağlık kontrolü"""
+        try:
+            if not self.initialized:
+                return False
+            
+            # Basit bir test isteği yap
+            test_request = LLMRequest(
+                prompt="Hello",
+                max_tokens=10,
+                temperature=0.0
             )
-
-            # Base question templates by type
-            if question_type == "multiple_choice":
-                question_text = f"Which of the following best describes {topic}?"
-                options = [
-                    "Option A: First choice",
-                    "Option B: Second choice",
-                    "Option C: Third choice",
-                    "Option D: Fourth choice",
-                ]
-                correct_answer = "Option A: First choice"
-            elif question_type == "short_answer":
-                question_text = f"Explain the concept of {topic} in your own words."
-                options = None
-                correct_answer = (
-                    f"A clear explanation of {topic} covering key principles."
+            
+            # Test isteği yap (timeout ile)
+            try:
+                await asyncio.wait_for(
+                    self.generate_text(test_request),
+                    timeout=10.0
                 )
-            else:
-                question_text = f"Solve the following problem related to {topic}:"
-                options = None
-                correct_answer = "Step-by-step solution provided."
-
-            explanation = f"This question tests understanding of {topic} at difficulty level {difficulty_level}."
-
-            return {
-                "question": question_text,
-                "answer": correct_answer,
-                "options": options,
-                "explanation": explanation,
-                "quality_score": 0.8,
-            }
-
+                return True
+            except asyncio.TimeoutError:
+                logger.warning("llm_service_timeout")
+                return False
+                
         except Exception as e:
-            logger.error("question_generation_error", error=str(e))
-            return {
-                "question": f"Sample question about {topic}",
-                "answer": "Sample answer",
-                "options": None,
-                "explanation": "Sample explanation",
-                "quality_score": 0.5,
-            }
-
-    async def explain_concept(
-        self,
-        concept: str,
-        student_level: str,
-        explanation_type: str,
-        context: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Generate comprehensive concept explanations"""
+            logger.error("llm_health_check_error", error=str(e))
+            return False
+    
+    async def cleanup(self):
+        """LLM servisini temizle"""
         try:
-            logger.info("explaining_concept", concept=concept, level=student_level)
-
-            # Level-appropriate explanations
-            level_explanations = {
-                "beginner": f"{concept} is a fundamental concept that involves...",
-                "intermediate": f"Building on basic knowledge, {concept} can be understood as...",
-                "advanced": f"At an advanced level, {concept} encompasses the sophisticated principles of...",
-            }
-
-            explanation = level_explanations.get(
-                student_level, level_explanations["intermediate"]
-            )
-
-            # Generate examples
-            examples = [
-                f"Example 1: A simple case of {concept}",
-                f"Example 2: A practical application of {concept}",
-                f"Example 3: An advanced scenario involving {concept}",
-            ]
-
-            # Generate analogies
-            analogies = [
-                f"Think of {concept} like a familiar everyday process",
-                f"You can compare {concept} to how nature works",
-            ]
-
-            return {
-                "explanation": explanation,
-                "examples": examples,
-                "analogies": analogies,
-                "visual_aids": [
-                    f"Diagram showing {concept}",
-                    f"Chart illustrating {concept}",
-                ],
-                "further_reading": [
-                    f"Advanced topics in {concept}",
-                    f"Applications of {concept}",
-                ],
-            }
+            if self.session:
+                await self.session.close()
+            
+            logger.info("llm_service_cleanup_completed")
 
         except Exception as e:
-            logger.error("concept_explanation_error", error=str(e))
-            return {
-                "explanation": f"Basic explanation of {concept}",
-                "examples": [],
-                "analogies": [],
-                "visual_aids": [],
-                "further_reading": [],
-            }
+            logger.error("llm_cleanup_error", error=str(e))
 
-    async def conduct_learning_assessment(
-        self,
-        learning_history: Dict[str, Any],
-        assessment_type: str,
-        subject_areas: List[str],
-    ) -> Dict[str, Any]:
-        """Conduct AI-powered learning assessment"""
-        try:
-            logger.info("conducting_assessment", type=assessment_type)
+    # Retry and Rate Limiting
+    async def _execute_with_retry(self, operation, max_retries: int = 3, base_delay: float = 1.0):
+        """Execute operation with exponential backoff retry"""
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                return await operation()
+            except Exception as e:
+                last_exception = e
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.warning("retry_attempt", 
+                                 attempt=attempt + 1, 
+                                 max_retries=max_retries,
+                                 delay=delay,
+                                 error=str(e))
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("max_retries_exceeded", 
+                               max_retries=max_retries,
+                               error=str(e))
+                    raise last_exception
 
-            # Analyze learning history
-            responses = learning_history.get("responses", [])
-            total_responses = len(responses)
-
-            if total_responses > 0:
-                correct_responses = sum(
-                    1 for r in responses if r.get("is_correct", False)
-                )
-                accuracy = correct_responses / total_responses
-            else:
-                accuracy = 0.5
-
-            # Generate assessment based on type
-            if assessment_type == "diagnostic":
-                strengths = ["Problem-solving approach"] if accuracy > 0.7 else []
-                weaknesses = ["Calculation accuracy"] if accuracy < 0.5 else []
-            else:
-                strengths = ["Mathematical reasoning", "Conceptual understanding"]
-                weaknesses = ["Time management", "Complex problem solving"]
-
-            # Identify skill gaps
-            skill_gaps = []
-            for subject in subject_areas:
-                skill_gaps.append(
-                    {
-                        "subject": subject,
-                        "gap_level": "moderate",
-                        "priority": "high",
-                        "description": f"Need improvement in {subject} fundamentals",
-                    }
-                )
-
-            return {
-                "strengths": strengths,
-                "weaknesses": weaknesses,
-                "skill_gaps": skill_gaps,
-                "overall_score": accuracy,
-            }
-
-        except Exception as e:
-            logger.error("learning_assessment_error", error=str(e))
-            return {
-                "strengths": [],
-                "weaknesses": [],
-                "skill_gaps": [],
-                "overall_score": 0.5,
-            }
-
-    async def generate_question_hint(self, question: str, subject: str) -> str:
-        """Generate hint for a specific question"""
-        return (
-            f"Consider the key principles of {subject} when approaching this problem."
-        )
-
-    async def generate_question_explanation(
-        self, question: str, answer: str, subject: str
-    ) -> str:
-        """Generate explanation for a question and answer"""
-        return f"This {subject} problem is solved by applying the relevant concepts step by step."
-
-    async def adjust_difficulty_runtime(
-        self,
-        question_content: str,
-        student_level: int,
-        current_difficulty: int,
-        performance_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Dynamically adjust question difficulty based on student performance"""
-        try:
-            logger.info(
-                "adjusting_difficulty_runtime",
-                student_level=student_level,
-                current_difficulty=current_difficulty,
-            )
-
-            # Simple difficulty adjustment logic
-            recent_accuracy = performance_data.get("recent_accuracy", 0.5)
-            avg_response_time = performance_data.get("avg_response_time", 0)
-
-            adjusted_difficulty = current_difficulty
-
-            # Adjust based on performance
-            if recent_accuracy > 0.8 and avg_response_time < 30000:  # 30 seconds
-                # Student is doing well, increase difficulty
-                adjusted_difficulty = min(current_difficulty + 1, 5)
-            elif recent_accuracy < 0.4 or avg_response_time > 60000:  # 60 seconds
-                # Student is struggling, decrease difficulty
-                adjusted_difficulty = max(current_difficulty - 1, 1)
-
-            return {
-                "adjusted_difficulty": adjusted_difficulty,
-                "reason": f"Performance-based adjustment: accuracy={recent_accuracy:.2f}, time={avg_response_time}ms",
-                "confidence": 0.7,
-            }
-
-        except Exception as e:
-            logger.error("difficulty_adjustment_error", error=str(e))
-            return {
-                "adjusted_difficulty": current_difficulty,
-                "reason": "Fallback to original difficulty",
-                "confidence": 0.5,
-            }
+    async def _check_rate_limit(self):
+        """Rate limiting check"""
+        # Simple rate limiting - can be enhanced with Redis
+        current_time = datetime.now()
+        
+        if not hasattr(self, '_last_request_time'):
+            self._last_request_time = current_time
+            return
+        
+        time_diff = (current_time - self._last_request_time).total_seconds()
+        min_interval = 0.1  # Minimum 100ms between requests
+        
+        if time_diff < min_interval:
+            await asyncio.sleep(min_interval - time_diff)
+        
+        self._last_request_time = datetime.now()
 
 
-# Global LLM service instance
+# Global instance
 llm_service = LLMService()

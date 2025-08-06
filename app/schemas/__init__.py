@@ -1,31 +1,24 @@
-from .plan_item import PlanItemCreate, PlanItemResponse, PlanItemUpdate
-from .question import QuestionCreate, QuestionResponse, QuestionUpdate
-from .solution import SolutionCreate, SolutionResponse, SolutionUpdate
-from .study_plan import StudyPlanCreate, StudyPlanResponse, StudyPlanUpdate
-from .subject import SubjectCreate, SubjectResponse, SubjectUpdate
-from .topic import TopicCreate, TopicResponse, TopicUpdate
-from .user import User, UserCreate, UserUpdate
+"""
+Schemas package
+Veri transfer objeleri paketi
+"""
+
+from . import (
+    vector,
+    ai_services,
+    recommendation_services,
+    token,
+    user,
+    question,
+    answer,
+)
 
 __all__ = [
-    "User",
-    "UserCreate",
-    "UserUpdate",
-    "SolutionResponse",
-    "SolutionCreate",
-    "SolutionUpdate",
-    "StudyPlanResponse",
-    "StudyPlanCreate",
-    "StudyPlanUpdate",
-    "TopicResponse",
-    "TopicCreate",
-    "TopicUpdate",
-    "SubjectResponse",
-    "SubjectCreate",
-    "SubjectUpdate",
-    "QuestionResponse",
-    "QuestionCreate",
-    "QuestionUpdate",
-    "PlanItemResponse",
-    "PlanItemCreate",
-    "PlanItemUpdate",
+    "vector",
+    "ai_services", 
+    "recommendation_services",
+    "token",
+    "user",
+    "question",
+    "answer",
 ]

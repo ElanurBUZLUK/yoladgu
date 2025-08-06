@@ -1,274 +1,344 @@
 """
-Redis Service for Centralized Redis Client Management
-Handles caching, streams, and session management
+Redis Service
+Cache ve session yönetimi için Redis servisi
 """
 
-import json
-from typing import Any, Dict, List, Optional
-
-import redis
 import structlog
+import json
+import redis
+from typing import Dict, List, Optional, Any, Union
+from datetime import datetime, timedelta
 from app.core.config import settings
 
 logger = structlog.get_logger()
 
 
 class RedisService:
-    """Singleton service for Redis operations"""
-
-    _instance = None
-    _client = None
-    _initialized = False
-
-    def __new__(cls):
-        """Singleton pattern implementation"""
-        if cls._instance is None:
-            cls._instance = super(RedisService, cls).__new__(cls)
-        return cls._instance
-
+    """Redis cache ve session servisi"""
+    
     def __init__(self):
-        """Initialize Redis connection (only once)"""
-        if self._initialized:
-            return
-
+        self.client = None
+        self.initialized = False
+        
+    async def initialize(self):
+        """Redis servisini başlat"""
         try:
-            # Create Redis client with connection pooling
-            self._client = redis.Redis(
-                host=settings.REDIS_HOST,
-                port=settings.REDIS_PORT,
-                db=settings.REDIS_DB,
-                password=settings.REDIS_PASSWORD,
+            # Redis client'ı oluştur
+            self.client = redis.Redis.from_url(
+                settings.redis_url or "redis://localhost:6379/0",
                 decode_responses=True,
                 socket_connect_timeout=5,
                 socket_timeout=5,
-                retry_on_timeout=True,
-                health_check_interval=30,
+                retry_on_timeout=True
             )
-
-            # Test connection
-            self._client.ping()
-            logger.info(
-                "redis_connection_established",
-                host=settings.REDIS_HOST,
-                port=settings.REDIS_PORT,
-            )
+            
+            # Bağlantıyı test et
+            self.client.ping()
+            
+            self.initialized = True
+            logger.info("redis_service_initialized")
+            
         except Exception as e:
-            logger.error("redis_connection_failed", error=str(e))
-            self._client = None
-
-        self._initialized = True
-
-    @property
-    def client(self) -> Optional[redis.Redis]:
-        """Get the Redis client instance"""
-        return self._client
-
-    def is_available(self) -> bool:
-        """Check if Redis is available"""
-        if not self._client:
-            return False
+            logger.error("redis_service_initialization_error", error=str(e))
+            raise
+    
+    async def set_cache(self, key: str, value: Any, ttl: int = 3600) -> bool:
+        """Cache'e değer kaydet"""
         try:
-            self._client.ping()
-            return True
-        except:
-            return False
-
-    def close(self):
-        """Close Redis connection"""
-        if self._client:
-            self._client.close()
-            self._client = None
-            logger.info("redis_connection_closed")
-
-    # Cache Operations
-    def cache_set(self, key: str, value: Any, ttl: int = 3600) -> bool:
-        """Set cache value with TTL"""
-        if not self._client:
-            logger.warning("redis_not_available", operation="cache_set")
-            return False
-
-        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            # JSON'a çevir
             if isinstance(value, (dict, list)):
-                value = json.dumps(value)
-            self._client.setex(key, ttl, value)
-            return True
+                serialized_value = json.dumps(value)
+            else:
+                serialized_value = str(value)
+            
+            result = self.client.setex(key, ttl, serialized_value)
+            logger.debug("cache_set", key=key, ttl=ttl)
+            return result
+            
         except Exception as e:
-            logger.error("cache_set_error", key=key, error=str(e))
+            logger.error("set_cache_error", error=str(e), key=key)
             return False
-
-    def cache_get(self, key: str) -> Optional[Any]:
-        """Get cache value"""
-        if not self._client:
-            logger.warning("redis_not_available", operation="cache_get")
-            return None
-
+    
+    async def get_cache(self, key: str) -> Optional[Any]:
+        """Cache'den değer al"""
         try:
-            value = self._client.get(key)
+            if not self.initialized:
+                await self.initialize()
+            
+            value = self.client.get(key)
+            
             if value is None:
                 return None
-
-            # Try to parse as JSON
+            
+            # JSON'dan çevir
             try:
-                # Ensure value is a string for json.loads
-                str_value = str(value) if value is not None else None
-                if str_value:
-                    return json.loads(str_value)
-                return value
+                return json.loads(value)
             except json.JSONDecodeError:
                 return value
+                
         except Exception as e:
-            logger.error("cache_get_error", key=key, error=str(e))
+            logger.error("get_cache_error", error=str(e), key=key)
             return None
-
-    def cache_delete(self, key: str) -> bool:
-        """Delete cache key"""
-        if not self._client:
-            logger.warning("redis_not_available", operation="cache_delete")
+    
+    async def delete_cache(self, key: str) -> bool:
+        """Cache'den değer sil"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            result = self.client.delete(key)
+            logger.debug("cache_deleted", key=key)
+            return result > 0
+            
+        except Exception as e:
+            logger.error("delete_cache_error", error=str(e), key=key)
             return False
-
+    
+    async def set_session(self, session_id: str, user_data: Dict[str, Any], ttl: int = 86400) -> bool:
+        """Session kaydet"""
         try:
-            self._client.delete(key)
-            return True
-        except Exception as e:
-            logger.error("cache_delete_error", key=key, error=str(e))
-            return False
-
-    def cache_exists(self, key: str) -> bool:
-        """Check if cache key exists"""
-        if not self._client:
-            return False
-
-        try:
-            return bool(self._client.exists(key))
-        except Exception as e:
-            logger.error("cache_exists_error", key=key, error=str(e))
-            return False
-
-    # Stream Operations
-    def stream_add(self, stream_name: str, data: Dict[str, Any]) -> Optional[str]:
-        """Add message to Redis stream"""
-        if not self._client:
-            logger.warning("redis_not_available", operation="stream_add")
-            return None
-
-        try:
-            # Convert complex objects to JSON strings
-            stream_data = {}
-            for k, v in data.items():
-                if isinstance(v, (dict, list)):
-                    stream_data[k] = json.dumps(v)
-                else:
-                    stream_data[k] = str(v)
-
-            message_id = self._client.xadd(stream_name, stream_data)
-            logger.debug(
-                "stream_message_added", stream=stream_name, message_id=message_id
-            )
-            return str(message_id) if message_id else None
-        except Exception as e:
-            logger.error("stream_add_error", stream=stream_name, error=str(e))
-            return None
-
-    def stream_read(
-        self, stream_name: str, count: int = 10, block: int = 1000
-    ) -> List[Dict]:
-        """Read messages from Redis stream"""
-        if not self._client:
-            logger.warning("redis_not_available", operation="stream_read")
-            return []
-
-        try:
-            messages = self._client.xread({stream_name: "$"}, count=count, block=block)
-            result = []
-
-            # Ensure messages is iterable and handle different response types
-            if not messages or not hasattr(messages, "__iter__"):
-                return result
-
-            for stream, msgs in messages:  # type: ignore
-                for msg_id, fields in msgs:
-                    # Parse JSON fields back to objects
-                    parsed_fields = {}
-                    for k, v in fields.items():
-                        try:
-                            parsed_fields[k] = json.loads(v)
-                        except json.JSONDecodeError:
-                            parsed_fields[k] = v
-
-                    result.append(
-                        {"id": msg_id, "stream": stream, "data": parsed_fields}
-                    )
-
-            return result
-        except Exception as e:
-            logger.error("stream_read_error", stream=stream_name, error=str(e))
-            return []
-
-    def stream_length(self, stream_name: str) -> int:
-        """Get stream length"""
-        if not self._client:
-            return 0
-
-        try:
-            length = self._client.xlen(stream_name)
-            # Handle different response types
-            if hasattr(length, "__int__"):
-                return int(length)  # type: ignore
-            elif isinstance(length, (str, bytes)):
-                return int(length)  # type: ignore
-            elif length is not None:
-                return length  # type: ignore
-            else:
-                return 0
-        except Exception as e:
-            logger.error("stream_length_error", stream=stream_name, error=str(e))
-            return 0
-
-    # Session Operations (for user sessions)
-    def session_set(
-        self, session_id: str, data: Dict[str, Any], ttl: int = 86400
-    ) -> bool:
-        """Set session data"""
-        return self.cache_set(f"session:{session_id}", data, ttl)
-
-    def session_get(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get session data"""
-        return self.cache_get(f"session:{session_id}")
-
-    def session_delete(self, session_id: str) -> bool:
-        """Delete session"""
-        return self.cache_delete(f"session:{session_id}")
-
-    # Health Check
-    def health_check(self) -> Dict[str, Any]:
-        """Comprehensive Redis health check"""
-        if not self._client:
-            return {"status": "unhealthy", "error": "Redis client not initialized"}
-
-        try:
-            # Basic ping
-            ping_result = self._client.ping()
-
-            # Memory info
-            memory_info = self._client.info("memory")
-            if not isinstance(memory_info, dict):
-                memory_info = {}
-
-            # Connection info
-            client_info = self._client.info("clients")
-            if not isinstance(client_info, dict):
-                client_info = {}
-
-            return {
-                "status": "healthy",
-                "ping": ping_result,
-                "memory_used": memory_info.get("used_memory_human", "unknown"),
-                "connected_clients": client_info.get("connected_clients", 0),
-                "max_memory": memory_info.get("maxmemory_human", "unlimited"),
+            if not self.initialized:
+                await self.initialize()
+            
+            session_data = {
+                "user_data": user_data,
+                "created_at": datetime.now().isoformat(),
+                "last_activity": datetime.now().isoformat()
             }
+            
+            key = f"session:{session_id}"
+            result = await self.set_cache(key, session_data, ttl)
+            
+            logger.info("session_set", session_id=session_id, ttl=ttl)
+            return result
+            
         except Exception as e:
-            return {"status": "unhealthy", "error": str(e)}
+            logger.error("set_session_error", error=str(e), session_id=session_id)
+            return False
+    
+    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Session getir"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            key = f"session:{session_id}"
+            session_data = await self.get_cache(key)
+            
+            if session_data:
+                # Last activity'yi güncelle
+                session_data["last_activity"] = datetime.now().isoformat()
+                await self.set_cache(key, session_data, 86400)  # 24 saat
+            
+            return session_data
+            
+        except Exception as e:
+            logger.error("get_session_error", error=str(e), session_id=session_id)
+            return None
+    
+    async def delete_session(self, session_id: str) -> bool:
+        """Session sil"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            key = f"session:{session_id}"
+            result = await self.delete_cache(key)
+            
+            logger.info("session_deleted", session_id=session_id)
+            return result
+            
+        except Exception as e:
+            logger.error("delete_session_error", error=str(e), session_id=session_id)
+            return False
+    
+    async def set_rate_limit(self, key: str, limit: int, window: int) -> bool:
+        """Rate limit ayarla"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            current_count = self.client.get(key)
+            if current_count is None:
+                self.client.setex(key, window, 1)
+                return True
+            else:
+                count = int(current_count)
+                if count < limit:
+                    self.client.incr(key)
+                    return True
+                else:
+                    return False
+                    
+        except Exception as e:
+            logger.error("set_rate_limit_error", error=str(e), key=key)
+            return False
+    
+    async def get_rate_limit(self, key: str) -> Dict[str, Any]:
+        """Rate limit bilgisi getir"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            current_count = self.client.get(key)
+            ttl = self.client.ttl(key)
+            
+            return {
+                "current_count": int(current_count) if current_count else 0,
+                "remaining_ttl": ttl if ttl > 0 else 0
+            }
+            
+        except Exception as e:
+            logger.error("get_rate_limit_error", error=str(e), key=key)
+            return {"current_count": 0, "remaining_ttl": 0}
+    
+    async def set_user_activity(self, user_id: int, activity_data: Dict[str, Any]) -> bool:
+        """Kullanıcı aktivitesi kaydet"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            key = f"user_activity:{user_id}"
+            timestamp = datetime.now().isoformat()
+            
+            # Mevcut aktiviteleri al
+            activities = await self.get_cache(key) or []
+            activities.append({
+                "timestamp": timestamp,
+                "data": activity_data
+            })
+            
+            # Son 100 aktiviteyi tut
+            if len(activities) > 100:
+                activities = activities[-100:]
+            
+            result = await self.set_cache(key, activities, 86400)  # 24 saat
+            
+            logger.debug("user_activity_set", user_id=user_id)
+            return result
+            
+        except Exception as e:
+            logger.error("set_user_activity_error", error=str(e), user_id=user_id)
+            return False
+    
+    async def get_user_activities(self, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        """Kullanıcı aktivitelerini getir"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            key = f"user_activity:{user_id}"
+            activities = await self.get_cache(key) or []
+            
+            # Son aktiviteleri döndür
+            return activities[-limit:]
+            
+        except Exception as e:
+            logger.error("get_user_activities_error", error=str(e), user_id=user_id)
+            return []
+    
+    async def set_embedding_cache(self, text: str, embedding: List[float], ttl: int = 3600) -> bool:
+        """Embedding cache'e kaydet"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            # Text hash'ini oluştur
+            import hashlib
+            text_hash = hashlib.md5(text.encode()).hexdigest()
+            key = f"embedding:{text_hash}"
+            
+            result = await self.set_cache(key, embedding, ttl)
+            
+            logger.debug("embedding_cache_set", text_hash=text_hash)
+            return result
+            
+        except Exception as e:
+            logger.error("set_embedding_cache_error", error=str(e))
+            return False
+    
+    async def get_embedding_cache(self, text: str) -> Optional[List[float]]:
+        """Embedding cache'den getir"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            # Text hash'ini oluştur
+            import hashlib
+            text_hash = hashlib.md5(text.encode()).hexdigest()
+            key = f"embedding:{text_hash}"
+            
+            embedding = await self.get_cache(key)
+            
+            if embedding:
+                logger.debug("embedding_cache_hit", text_hash=text_hash)
+            else:
+                logger.debug("embedding_cache_miss", text_hash=text_hash)
+            
+            return embedding
+            
+        except Exception as e:
+            logger.error("get_embedding_cache_error", error=str(e))
+            return None
+    
+    async def get_redis_stats(self) -> Dict[str, Any]:
+        """Redis istatistiklerini getir"""
+        try:
+            if not self.initialized:
+                await self.initialize()
+            
+            info = self.client.info()
+            
+            return {
+                "connected_clients": info.get("connected_clients", 0),
+                "used_memory_human": info.get("used_memory_human", "0B"),
+                "total_commands_processed": info.get("total_commands_processed", 0),
+                "keyspace_hits": info.get("keyspace_hits", 0),
+                "keyspace_misses": info.get("keyspace_misses", 0),
+                "hit_rate": info.get("keyspace_hits", 0) / max(info.get("keyspace_misses", 1), 1),
+                "initialized": self.initialized
+            }
+            
+        except Exception as e:
+            logger.error("get_redis_stats_error", error=str(e))
+            return {
+                "connected_clients": 0,
+                "used_memory_human": "0B",
+                "total_commands_processed": 0,
+                "keyspace_hits": 0,
+                "keyspace_misses": 0,
+                "hit_rate": 0,
+                "initialized": self.initialized
+            }
+    
+    async def is_healthy(self) -> bool:
+        """Redis sağlık kontrolü"""
+        try:
+            if not self.initialized or not self.client:
+                return False
+            
+            self.client.ping()
+            return True
+            
+        except Exception as e:
+            logger.error("redis_health_check_error", error=str(e))
+            return False
+    
+    async def cleanup(self):
+        """Redis servisini temizle"""
+        try:
+            if self.client:
+                self.client.close()
+                self.initialized = False
+            
+            logger.info("redis_service_cleanup_completed")
+            
+        except Exception as e:
+            logger.error("redis_cleanup_error", error=str(e))
 
 
-# Global Redis service instance
-redis_service = RedisService()
+# Global instance
+redis_service = RedisService() 

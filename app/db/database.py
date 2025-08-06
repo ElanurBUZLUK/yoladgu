@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import sessionmaker
+
+# Import Base from models to avoid circular imports
+from app.db.models import Base
 
 # Synchronous engine (for backward compatibility)
 # Remove echo=True for production - security risk!
@@ -56,10 +59,6 @@ def init_async_db():
         AsyncSessionLocal = async_sessionmaker(
             async_engine, class_=AsyncSession, expire_on_commit=False
         )
-
-
-class Base(DeclarativeBase):
-    pass
 
 
 # Synchronous database session (for backward compatibility)
