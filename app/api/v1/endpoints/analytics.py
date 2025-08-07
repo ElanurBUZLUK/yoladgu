@@ -1,469 +1,349 @@
 """
 Analytics Endpoints
-Analitik endpoint'leri
+Öğrenci ve sistem analitikleri için endpoint'ler
 """
 
 import structlog
-import time
-from typing import List, Optional
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.schemas.analytics import (
-    AnalyticsRequest, AnalyticsResponse, UserAnalytics, QuestionAnalytics,
-    SubjectAnalytics, SystemAnalytics, DashboardData, ReportRequest, ReportResponse
-)
+from app.core.security import get_current_user
+from app.crud.user import get_user_profile
 
 logger = structlog.get_logger()
 router = APIRouter()
 
 
-@router.post("/analytics/metrics", response_model=AnalyticsResponse)
-async def get_analytics_metrics(
-    request: AnalyticsRequest,
+@router.get("/student-analytics")
+def get_student_analytics(
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
-    """Analitik metrikleri al"""
+) -> Dict[str, Any]:
+    """
+    Get student analytics for dashboard
+    Öğrenci dashboard'u için analitik veriler
+    """
     try:
-        start_time = time.time()
+        # Get user profile for real data
+        profile = get_user_profile(db, current_user.id)
         
-        # Bu endpoint için gerçek analitik hesaplama mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        data_points = []
+        if profile:
+            # Real data from profile
+            total_questions = profile.total_questions_answered
+            correct_answers = profile.total_correct_answers
+            accuracy = (correct_answers / total_questions * 100) if total_questions > 0 else 0
+            avg_response_time = profile.average_response_time or 0
+        else:
+            # Mock data if no profile exists
+            total_questions = 156
+            correct_answers = 120
+            accuracy = 76.9
+            avg_response_time = 45
         
-        # Örnek veri noktaları oluştur
-        for i in range(10):
-            data_points.append({
-                "timestamp": f"2024-01-{i+1:02d}T10:00:00Z",
-                "value": 100 + i * 10,
-                "label": f"Gün {i+1}",
-                "count": 100 + i * 10,
-                "percentage": (100 + i * 10) / 200 * 100,
-                "change": i * 5,
-                "trend": "up" if i > 5 else "down"
+        return {
+            "total_sessions": 24,
+            "average_accuracy": round(accuracy, 1),
+            "total_study_time": 1440,  # minutes (mock)
+            "improvement_rate": 12.3,
+            "streak_days": 7,
+            "favorite_subject": "Matematik",
+            "total_questions": total_questions,
+            "correct_answers": correct_answers,
+            "average_response_time": avg_response_time
+        }
+        
+    except Exception as e:
+        logger.error("get_student_analytics_error", 
+                    user_id=current_user.id, 
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get student analytics"
+        )
+
+
+@router.get("/performance-stats")
+def get_performance_stats(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get performance statistics
+    Performans istatistikleri
+    """
+    try:
+        # Get user profile for real data
+        profile = get_user_profile(db, current_user.id)
+        
+        if profile:
+            total_questions = profile.total_questions_answered
+            correct_answers = profile.total_correct_answers
+            accuracy = (correct_answers / total_questions * 100) if total_questions > 0 else 0
+        else:
+            # Mock data if no profile exists
+            total_questions = 156
+            correct_answers = 120
+            accuracy = 76.9
+        
+        return {
+            "total_questions": total_questions,
+            "correct_answers": correct_answers,
+            "accuracy_percentage": round(accuracy, 1),
+            "average_time": 45,  # seconds per question (mock)
+            "streak_days": 7,
+            "best_subject": "Matematik",
+            "weakest_subject": "Fizik",
+            "total_points": total_questions * 10,  # Mock points
+            "level": profile.level if profile else 1
+        }
+        
+    except Exception as e:
+        logger.error("get_performance_stats_error", 
+                    user_id=current_user.id, 
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get performance stats"
+        )
+
+
+@router.get("/learning-progress")
+def get_learning_progress(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get learning progress over time
+    Zaman içindeki öğrenme ilerlemesi
+    """
+    try:
+        # Mock progress data for last 30 days
+        progress_data = []
+        base_questions = 100
+        
+        for i in range(30):
+            date = datetime.now() - timedelta(days=29-i)
+            questions_solved = base_questions + (i * 2) + (i % 3)  # Varying pattern
+            accuracy = 70 + (i % 20)  # Varying accuracy
+            
+            progress_data.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "questions_solved": questions_solved,
+                "accuracy": accuracy,
+                "study_time": 60 + (i % 30)  # minutes
             })
         
-        summary = {
-            "total_value": 1450,
-            "average_value": 145.0,
-            "min_value": 100,
-            "max_value": 190,
-            "trend": "up"
+        return {
+            "progress_data": progress_data,
+            "total_days": 30,
+            "average_questions_per_day": 5.2,
+            "improvement_trend": "up",
+            "best_day": "2024-01-20",
+            "worst_day": "2024-01-05"
         }
         
-        processing_time = time.time() - start_time
-        
-        response = AnalyticsResponse(
-            metric_type=request.metric_type,
-            time_range=request.time_range,
-            data_points=data_points,
-            summary=summary,
-            total_value=1450,
-            average_value=145.0,
-            min_value=100,
-            max_value=190,
-            trend="up",
-            processing_time=processing_time,
-            data_points_count=len(data_points)
+    except Exception as e:
+        logger.error("get_learning_progress_error", 
+                    user_id=current_user.id, 
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get learning progress"
         )
-        
-        logger.info("analytics_metrics_retrieved", 
-                   metric_type=request.metric_type.value,
-                   time_range=request.time_range.value,
-                   processing_time=processing_time)
-        
-        return response
-        
-    except Exception as e:
-        logger.error("analytics_metrics_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Analytics failed: {str(e)}")
 
 
-@router.get("/analytics/user/{user_id}", response_model=UserAnalytics)
-async def get_user_analytics(
-    user_id: int,
+@router.get("/subject-performance")
+def get_subject_performance(
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
-    """Kullanıcı analitikleri"""
+) -> Dict[str, Any]:
+    """
+    Get performance by subject
+    Derse göre performans
+    """
     try:
-        # Bu endpoint için gerçek kullanıcı analitikleri hesaplama mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        analytics = {
-            "user_id": user_id,
-            "total_questions_answered": 250,
-            "total_correct_answers": 200,
-            "accuracy": 0.8,
-            "average_response_time": 45.2,
-            "total_points": 2500,
-            "total_achievements": 15,
-            "total_badges": 8,
-            "questions_today": 10,
-            "questions_this_week": 50,
-            "questions_this_month": 200,
-            "current_streak": 5,
-            "longest_streak": 12,
-            "improvement_rate": 0.15,
-            "subject_performance": {
-                "matematik": 0.85,
-                "fizik": 0.78,
-                "kimya": 0.72,
-                "biyoloji": 0.68
+        # Mock subject performance data
+        subjects = [
+            {
+                "name": "Matematik",
+                "questions_answered": 45,
+                "correct_answers": 38,
+                "accuracy": 84.4,
+                "average_time": 42,
+                "difficulty_level": 3
             },
-            "difficulty_performance": {
-                "kolay": 0.9,
-                "orta": 0.8,
-                "zor": 0.65
+            {
+                "name": "Fizik",
+                "questions_answered": 32,
+                "correct_answers": 24,
+                "accuracy": 75.0,
+                "average_time": 55,
+                "difficulty_level": 4
+            },
+            {
+                "name": "Kimya",
+                "questions_answered": 28,
+                "correct_answers": 22,
+                "accuracy": 78.6,
+                "average_time": 48,
+                "difficulty_level": 3
+            },
+            {
+                "name": "Biyoloji",
+                "questions_answered": 35,
+                "correct_answers": 30,
+                "accuracy": 85.7,
+                "average_time": 38,
+                "difficulty_level": 2
             }
+        ]
+        
+        return {
+            "subjects": subjects,
+            "total_subjects": len(subjects),
+            "best_subject": "Biyoloji",
+            "weakest_subject": "Fizik",
+            "overall_average": 80.9
         }
         
-        logger.info("user_analytics_retrieved", user_id=user_id)
-        
-        return UserAnalytics(**analytics)
-        
     except Exception as e:
-        logger.error("user_analytics_error", user_id=user_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"User analytics failed: {str(e)}")
+        logger.error("get_subject_performance_error", 
+                    user_id=current_user.id, 
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get subject performance"
+        )
 
 
-@router.get("/analytics/question/{question_id}", response_model=QuestionAnalytics)
-async def get_question_analytics(
-    question_id: int,
+@router.get("/study-habits")
+def get_study_habits(
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
-    """Soru analitikleri"""
+) -> Dict[str, Any]:
+    """
+    Get study habits analysis
+    Çalışma alışkanlıkları analizi
+    """
     try:
-        # Bu endpoint için gerçek soru analitikleri hesaplama mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        analytics = {
-            "question_id": question_id,
-            "total_attempts": 150,
-            "correct_attempts": 120,
-            "accuracy": 0.8,
-            "average_response_time": 45.5,
-            "average_score": 0.85,
-            "difficulty_level": 3,
-            "success_rate_by_difficulty": {
-                "kolay": 0.9,
-                "orta": 0.8,
-                "zor": 0.7
-            },
-            "fastest_response": 15.2,
-            "slowest_response": 120.5,
-            "recent_accuracy": 0.85,
-            "trend": "improving"
+        # Mock study habits data
+        return {
+            "preferred_study_time": "19:00-21:00",
+            "average_session_duration": 45,  # minutes
+            "most_active_day": "Çarşamba",
+            "least_active_day": "Pazar",
+            "consecutive_days": 7,
+            "longest_streak": 14,
+            "total_study_time_week": 420,  # minutes
+            "questions_per_session": 8.5,
+            "break_frequency": "Every 30 minutes",
+            "focus_score": 85  # percentage
         }
         
-        logger.info("question_analytics_retrieved", question_id=question_id)
-        
-        return QuestionAnalytics(**analytics)
-        
     except Exception as e:
-        logger.error("question_analytics_error", question_id=question_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Question analytics failed: {str(e)}")
+        logger.error("get_study_habits_error", 
+                    user_id=current_user.id, 
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get study habits"
+        )
 
 
-@router.get("/analytics/subject/{subject_id}", response_model=SubjectAnalytics)
-async def get_subject_analytics(
-    subject_id: int,
+@router.get("/recommendations")
+def get_recommendations(
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
-    """Konu analitikleri"""
+) -> Dict[str, Any]:
+    """
+    Get personalized recommendations
+    Kişiselleştirilmiş öneriler
+    """
     try:
-        # Bu endpoint için gerçek konu analitikleri hesaplama mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        analytics = {
-            "subject_id": subject_id,
-            "subject_name": "Matematik",
-            "total_questions": 500,
-            "total_attempts": 2500,
-            "total_correct_answers": 2000,
-            "accuracy": 0.8,
-            "average_response_time": 42.3,
-            "difficulty_breakdown": {
-                "kolay": 200,
-                "orta": 250,
-                "zor": 50
-            },
-            "difficulty_accuracy": {
-                "kolay": 0.9,
-                "orta": 0.8,
-                "zor": 0.6
-            },
-            "active_users": 150,
-            "average_questions_per_user": 16.7,
-            "weekly_trend": [
-                {"timestamp": "2024-01-01T10:00:00Z", "value": 100, "label": "Hafta 1"},
-                {"timestamp": "2024-01-08T10:00:00Z", "value": 120, "label": "Hafta 2"},
-                {"timestamp": "2024-01-15T10:00:00Z", "value": 110, "label": "Hafta 3"}
+        # Mock recommendations based on performance
+        return {
+            "focus_areas": [
+                {
+                    "subject": "Fizik",
+                    "topic": "Mekanik",
+                    "reason": "Düşük performans",
+                    "priority": "high"
+                },
+                {
+                    "subject": "Matematik", 
+                    "topic": "Trigonometri",
+                    "reason": "Eksik konular",
+                    "priority": "medium"
+                }
             ],
-            "monthly_trend": [
-                {"timestamp": "2024-01-01T10:00:00Z", "value": 400, "label": "Ocak"},
-                {"timestamp": "2024-02-01T10:00:00Z", "value": 450, "label": "Şubat"},
-                {"timestamp": "2024-03-01T10:00:00Z", "value": 420, "label": "Mart"}
+            "study_tips": [
+                "Fizik konularında daha fazla pratik yapın",
+                "Matematikte trigonometri konusuna odaklanın",
+                "Her gün en az 30 dakika çalışın"
+            ],
+            "next_topics": [
+                "Fizik - Elektrik",
+                "Matematik - İntegral",
+                "Kimya - Organik Kimya"
             ]
         }
         
-        logger.info("subject_analytics_retrieved", subject_id=subject_id)
-        
-        return SubjectAnalytics(**analytics)
-        
     except Exception as e:
-        logger.error("subject_analytics_error", subject_id=subject_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Subject analytics failed: {str(e)}")
+        logger.error("get_recommendations_error", 
+                    user_id=current_user.id, 
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get recommendations"
+        )
 
 
-@router.get("/analytics/system", response_model=SystemAnalytics)
-async def get_system_analytics(
+@router.get("/achievements")
+def get_achievements(
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
-):
-    """Sistem analitikleri"""
+) -> Dict[str, Any]:
+    """
+    Get user achievements
+    Kullanıcı başarıları
+    """
     try:
-        # Bu endpoint için gerçek sistem analitikleri hesaplama mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        analytics = {
-            "total_users": 1000,
-            "active_users_today": 150,
-            "active_users_this_week": 500,
-            "active_users_this_month": 800,
-            "total_questions": 5000,
-            "total_attempts": 25000,
-            "total_correct_answers": 20000,
-            "system_accuracy": 0.8,
-            "average_response_time": 45.2,
-            "system_uptime": 99.5,
-            "error_rate": 0.1,
-            "daily_active_users": [
-                {"timestamp": "2024-01-01T10:00:00Z", "value": 150, "label": "Gün 1"},
-                {"timestamp": "2024-01-02T10:00:00Z", "value": 160, "label": "Gün 2"},
-                {"timestamp": "2024-01-03T10:00:00Z", "value": 145, "label": "Gün 3"}
+        # Mock achievements data
+        return {
+            "total_achievements": 8,
+            "recent_achievements": [
+                {
+                    "name": "7 Günlük Streak",
+                    "description": "7 gün üst üste çalıştın",
+                    "earned_date": "2024-01-15",
+                    "icon": "🔥"
+                },
+                {
+                    "name": "Matematik Ustası",
+                    "description": "Matematikte 50 soru çözdün",
+                    "earned_date": "2024-01-12",
+                    "icon": "📐"
+                }
             ],
-            "weekly_engagement": [
-                {"timestamp": "2024-01-01T10:00:00Z", "value": 500, "label": "Hafta 1"},
-                {"timestamp": "2024-01-08T10:00:00Z", "value": 520, "label": "Hafta 2"},
-                {"timestamp": "2024-01-15T10:00:00Z", "value": 480, "label": "Hafta 3"}
-            ],
-            "monthly_retention": [
-                {"timestamp": "2024-01-01T10:00:00Z", "value": 80, "label": "Ocak"},
-                {"timestamp": "2024-02-01T10:00:00Z", "value": 85, "label": "Şubat"},
-                {"timestamp": "2024-03-01T10:00:00Z", "value": 82, "label": "Mart"}
+            "upcoming_achievements": [
+                {
+                    "name": "10 Günlük Streak",
+                    "description": "10 gün üst üste çalış",
+                    "progress": 7,
+                    "target": 10,
+                    "icon": "🏆"
+                }
             ]
         }
         
-        logger.info("system_analytics_retrieved")
-        
-        return SystemAnalytics(**analytics)
-        
     except Exception as e:
-        logger.error("system_analytics_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"System analytics failed: {str(e)}")
-
-
-@router.get("/analytics/dashboard", response_model=DashboardData)
-async def get_dashboard_data(
-    user_id: Optional[int] = Query(None, description="Kullanıcı ID'si"),
-    db: Session = Depends(get_db)
-):
-    """Dashboard verisi"""
-    try:
-        # Bu endpoint için gerçek dashboard verisi hesaplama mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        
-        # Kullanıcı analitikleri
-        user_analytics = {
-            "user_id": user_id or 1,
-            "total_questions_answered": 250,
-            "total_correct_answers": 200,
-            "accuracy": 0.8,
-            "average_response_time": 45.2,
-            "total_points": 2500,
-            "total_achievements": 15,
-            "total_badges": 8,
-            "questions_today": 10,
-            "questions_this_week": 50,
-            "questions_this_month": 200,
-            "current_streak": 5,
-            "longest_streak": 12,
-            "improvement_rate": 0.15,
-            "subject_performance": {
-                "matematik": 0.85,
-                "fizik": 0.78,
-                "kimya": 0.72,
-                "biyoloji": 0.68
-            },
-            "difficulty_performance": {
-                "kolay": 0.9,
-                "orta": 0.8,
-                "zor": 0.65
-            }
-        }
-        
-        # Sistem analitikleri
-        system_analytics = {
-            "total_users": 1000,
-            "active_users_today": 150,
-            "active_users_this_week": 500,
-            "active_users_this_month": 800,
-            "total_questions": 5000,
-            "total_attempts": 25000,
-            "total_correct_answers": 20000,
-            "system_accuracy": 0.8,
-            "average_response_time": 45.2,
-            "system_uptime": 99.5,
-            "error_rate": 0.1,
-            "daily_active_users": [],
-            "weekly_engagement": [],
-            "monthly_retention": []
-        }
-        
-        # Son aktiviteler
-        recent_activity = [
-            {"type": "question_answered", "user": "Ahmet", "action": "Soru çözdü", "time": "2 dakika önce"},
-            {"type": "achievement_earned", "user": "Fatma", "action": "Başarı kazandı", "time": "5 dakika önce"},
-            {"type": "badge_earned", "user": "Mehmet", "action": "Rozet kazandı", "time": "10 dakika önce"}
-        ]
-        
-        # En iyi performans gösterenler
-        top_performers = [
-            {"rank": 1, "username": "Ahmet", "points": 5000, "accuracy": 0.95},
-            {"rank": 2, "username": "Fatma", "points": 4800, "accuracy": 0.92},
-            {"rank": 3, "username": "Mehmet", "points": 4600, "accuracy": 0.90}
-        ]
-        
-        # Trend konular
-        trending_subjects = [
-            {"name": "Matematik", "engagement": 85, "growth": 15},
-            {"name": "Fizik", "engagement": 72, "growth": 8},
-            {"name": "Kimya", "engagement": 68, "growth": 12}
-        ]
-        
-        # Grafik verileri
-        accuracy_trend = [
-            {"timestamp": "2024-01-01T10:00:00Z", "value": 0.75, "label": "Gün 1"},
-            {"timestamp": "2024-01-02T10:00:00Z", "value": 0.78, "label": "Gün 2"},
-            {"timestamp": "2024-01-03T10:00:00Z", "value": 0.80, "label": "Gün 3"}
-        ]
-        
-        response_time_trend = [
-            {"timestamp": "2024-01-01T10:00:00Z", "value": 50.0, "label": "Gün 1"},
-            {"timestamp": "2024-01-02T10:00:00Z", "value": 48.0, "label": "Gün 2"},
-            {"timestamp": "2024-01-03T10:00:00Z", "value": 45.0, "label": "Gün 3"}
-        ]
-        
-        points_earned_trend = [
-            {"timestamp": "2024-01-01T10:00:00Z", "value": 100, "label": "Gün 1"},
-            {"timestamp": "2024-01-02T10:00:00Z", "value": 120, "label": "Gün 2"},
-            {"timestamp": "2024-01-03T10:00:00Z", "value": 110, "label": "Gün 3"}
-        ]
-        
-        # Özet
-        summary = {
-            "total_questions_today": 150,
-            "total_points_earned_today": 1500,
-            "average_accuracy_today": 0.82,
-            "active_users_today": 150
-        }
-        
-        dashboard_data = DashboardData(
-            user_analytics=user_analytics,
-            system_analytics=system_analytics,
-            recent_activity=recent_activity,
-            top_performers=top_performers,
-            trending_subjects=trending_subjects,
-            accuracy_trend=accuracy_trend,
-            response_time_trend=response_time_trend,
-            points_earned_trend=points_earned_trend,
-            summary=summary
+        logger.error("get_achievements_error", 
+                    user_id=current_user.id, 
+                    error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get achievements"
         )
-        
-        logger.info("dashboard_data_retrieved", user_id=user_id)
-        
-        return dashboard_data
-        
-    except Exception as e:
-        logger.error("dashboard_data_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Dashboard data failed: {str(e)}")
-
-
-@router.post("/analytics/report", response_model=ReportResponse)
-async def generate_report(
-    request: ReportRequest,
-    db: Session = Depends(get_db)
-):
-    """Rapor oluştur"""
-    try:
-        start_time = time.time()
-        
-        # Bu endpoint için gerçek rapor oluşturma mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        
-        report_data = {
-            "report_type": request.report_type,
-            "time_range": request.time_range.value,
-            "data": {
-                "total_questions": 5000,
-                "total_attempts": 25000,
-                "total_correct_answers": 20000,
-                "accuracy": 0.8,
-                "average_response_time": 45.2
-            },
-            "summary": {
-                "key_insights": [
-                    "Kullanıcı katılımı %15 arttı",
-                    "Ortalama doğruluk oranı %80",
-                    "En popüler konu: Matematik"
-                ],
-                "recommendations": [
-                    "Kimya konularında daha fazla içerik ekle",
-                    "Zorluk seviyesi dağılımını optimize et"
-                ]
-            },
-            "generated_at": "2024-01-01T10:00:00Z",
-            "processing_time": time.time() - start_time,
-            "format": request.format
-        }
-        
-        logger.info("report_generated", 
-                   report_type=request.report_type,
-                   time_range=request.time_range.value,
-                   format=request.format)
-        
-        return ReportResponse(**report_data)
-        
-    except Exception as e:
-        logger.error("report_generation_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
-
-
-@router.get("/analytics/export")
-async def export_analytics_data(
-    data_type: str = Query(..., description="Veri tipi: users, questions, subjects, system"),
-    format: str = Query(default="csv", description="Format: csv, json, excel"),
-    time_range: str = Query(default="month", description="Zaman aralığı"),
-    db: Session = Depends(get_db)
-):
-    """Analitik veri dışa aktarma"""
-    try:
-        # Bu endpoint için gerçek veri dışa aktarma mantığı eklenebilir
-        # Şimdilik örnek veri döndürüyoruz
-        
-        export_data = {
-            "data_type": data_type,
-            "format": format,
-            "time_range": time_range,
-            "file_url": f"/exports/{data_type}_{time_range}.{format}",
-            "file_size": "2.5 MB",
-            "record_count": 1000,
-            "exported_at": "2024-01-01T10:00:00Z"
-        }
-        
-        logger.info("analytics_data_exported", 
-                   data_type=data_type,
-                   format=format,
-                   time_range=time_range)
-        
-        return export_data
-        
-    except Exception as e:
-        logger.error("analytics_export_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Data export failed: {str(e)}")

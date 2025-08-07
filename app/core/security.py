@@ -20,7 +20,7 @@ def create_access_token(
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(
         to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM
@@ -97,25 +97,25 @@ def get_current_user(
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
         )
-        email: str = payload.get("sub", "")
+        username: str = payload.get("sub", "")
         user_id: int = payload.get("user_id", 0)
 
-        if email is None:
+        if username is None:
             raise credentials_exception
 
     except JWTError:
         raise credentials_exception
 
     # Query real user from database
-    from app.crud.user import get_user, get_user_by_email
+    from app.crud.user import get_user, get_user_by_username
 
-    # Try to get user by ID first (more efficient), fallback to email
+    # Try to get user by ID first (more efficient), fallback to username
     user = None
     if user_id:
         user = get_user(db, user_id=user_id)
 
-    if not user and email:
-        user = get_user_by_email(db, email=email)
+    if not user and username:
+        user = get_user_by_username(db, username=username)
 
     if user is None:
         raise HTTPException(

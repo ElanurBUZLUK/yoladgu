@@ -4,10 +4,317 @@ import structlog
 from app.core.config import settings
 from app.db.models import Question, QuestionSkill, StudentResponse
 from app.schemas.question import QuestionCreate, QuestionUpdate
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
+
+# Async CRUD Functions (from async_question.py)
+async def get_question_async(db: AsyncSession, question_id: int) -> Optional[Question]:
+    """Async soru getirme"""
+    try:
+        result = await db.execute(
+            select(Question)
+            .filter(Question.id == question_id, Question.is_active.is_(True))
+        )
+        return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error("async_get_question_error", question_id=question_id, error=str(e))
+        return None
+
+
+async def get_questions_async(
+    db: AsyncSession,
+    skip: int = 0,
+    limit: int = 100,
+    subject_id: Optional[int] = None,
+    topic_id: Optional[int] = None,
+    difficulty_level: Optional[int] = None,
+    question_type: Optional[str] = None,
+) -> List[Question]:
+    """Async soru listesi getirme"""
+    try:
+        query = select(Question).filter(Question.is_active.is_(True))
+
+        if subject_id:
+            query = query.filter(Question.subject_id == subject_id)
+        if topic_id:
+            query = query.filter(Question.topic_id == topic_id)
+        if difficulty_level:
+            query = query.filter(Question.difficulty_level == difficulty_level)
+        if question_type:
+            query = query.filter(Question.question_type == question_type)
+
+        result = await db.execute(query.offset(skip).limit(limit))
+        return result.scalars().all()
+    except Exception as e:
+        logger.error("async_get_questions_error", error=str(e))
+        return []
+
+
+async def get_random_question_async(
+    db: AsyncSession,
+    subject_id: Optional[int] = None,
+    topic_id: Optional[int] = None,
+    difficulty_level: Optional[int] = None,
+    question_type: Optional[str] = None,
+) -> Optional[Question]:
+    """Async rastgele soru getirme"""
+    try:
+        query = select(Question).filter(Question.is_active.is_(True))
+
+        if subject_id:
+            query = query.filter(Question.subject_id == subject_id)
+        if topic_id:
+            query = query.filter(Question.topic_id == topic_id)
+        if difficulty_level:
+            query = query.filter(Question.difficulty_level == difficulty_level)
+        if question_type:
+            query = query.filter(Question.question_type == question_type)
+
+        result = await db.execute(query.order_by(func.random()).limit(1))
+        return result.scalar_one_or_none()
+    except Exception as e:
+        logger.error("async_get_random_question_error", error=str(e))
+        return None
+
+
+async def get_questions_by_skills_async(
+    db: AsyncSession, skill_ids: List[int], limit: int = 100
+) -> List[Question]:
+    """Async skill bazlı soru getirme"""
+    try:
+        result = await db.execute(
+            select(Question)
+            .join(QuestionSkill)
+            .filter(
+                and_(Question.is_active.is_(True), QuestionSkill.skill_id.in_(skill_ids))
+            )
+            .limit(limit)
+        )
+        return result.scalars().all()
+    except Exception as e:
+        logger.error("async_get_questions_by_skills_error", error=str(e))
+        return []
+
+
+async def get_questions_without_embeddings_async(
+    db: AsyncSession, limit: int = 100
+) -> List[Question]:
+    """Async embedding olmayan soruları getir"""
+    try:
+        result = await db.execute(
+            select(Question)
+            .filter(
+                and_(
+                    Question.is_active.is_(True),
+                    or_(Question.embedding_vector.is_(None), Question.embedding_vector == "")
+                )
+            )
+            .limit(limit)
+        )
+        return result.scalars().all()
+    except Exception as e:
+        logger.error("async_get_questions_without_embeddings_error", error=str(e))
+        return []
+
+
+async def create_question_async(
+    db: AsyncSession, question_in: QuestionCreate, user_id: int
+) -> Optional[Question]:
+    """Async soru oluşturma"""
+    try:
+        db_question = Question(
+            title=question_in.title,
+            content=question_in.content,
+            question_type=question_in.question_type,
+            difficulty_level=question_in.difficulty_level,
+            subject_id=question_in.subject_id,
+            topic_id=question_in.topic_id,
+            created_by=user_id,
+            is_active=True
+        )
+        
+        db.add(db_question)
+        await db.commit()
+        await db.refresh(db_question)
+        
+        logger.info("async_question_created", question_id=db_question.id)
+        return db_question
+    except Exception as e:
+        await db.rollback()
+        logger.error("async_create_question_error", error=str(e))
+        return None
+
+
+async def update_question_async(
+    db: AsyncSession, question_id: int, question_in: QuestionUpdate
+) -> Optional[Question]:
+    """Async soru güncelleme"""
+    try:
+        result = await db.execute(
+            select(Question).filter(Question.id == question_id)
+        )
+        db_question = result.scalar_one_or_none()
+        
+        if not db_question:
+            return None
+        
+        # Update fields
+        for field, value in question_in.dict(exclude_unset=True).items():
+            setattr(db_question, field, value)
+        
+        await db.commit()
+        await db.refresh(db_question)
+        
+        logger.info("async_question_updated", question_id=question_id)
+        return db_question
+    except Exception as e:
+        await db.rollback()
+        logger.error("async_update_question_error", question_id=question_id, error=str(e))
+        return None
+
+
+async def delete_question_async(db: AsyncSession, question_id: int) -> bool:
+    """Async soru silme"""
+    try:
+        result = await db.execute(
+            select(Question).filter(Question.id == question_id)
+        )
+        db_question = result.scalar_one_or_none()
+        
+        if not db_question:
+            return False
+        
+        await db.delete(db_question)
+        await db.commit()
+        
+        logger.info("async_question_deleted", question_id=question_id)
+        return True
+    except Exception as e:
+        await db.rollback()
+        logger.error("async_delete_question_error", question_id=question_id, error=str(e))
+        return False
+
+
+async def search_questions_async(
+    db: AsyncSession, search_term: str, limit: int = 20
+) -> List[Question]:
+    """Async soru arama"""
+    try:
+        result = await db.execute(
+            select(Question)
+            .filter(
+                and_(
+                    Question.is_active.is_(True),
+                    or_(
+                        Question.title.ilike(f"%{search_term}%"),
+                        Question.content.ilike(f"%{search_term}%")
+                    )
+                )
+            )
+            .limit(limit)
+        )
+        return result.scalars().all()
+    except Exception as e:
+        logger.error("async_search_questions_error", error=str(e))
+        return []
+
+
+async def get_questions_by_difficulty_range_async(
+    db: AsyncSession, min_difficulty: int, max_difficulty: int, limit: int = 100
+) -> List[Question]:
+    """Async zorluk aralığına göre soru getirme"""
+    try:
+        result = await db.execute(
+            select(Question)
+            .filter(
+                and_(
+                    Question.is_active.is_(True),
+                    Question.difficulty_level.between(min_difficulty, max_difficulty)
+                )
+            )
+            .limit(limit)
+        )
+        return result.scalars().all()
+    except Exception as e:
+        logger.error("async_get_questions_by_difficulty_range_error", error=str(e))
+        return []
+
+
+async def get_popular_questions_async(db: AsyncSession, limit: int = 20) -> List[Question]:
+    """Async popüler soruları getirme"""
+    try:
+        result = await db.execute(
+            select(Question)
+            .filter(Question.is_active.is_(True))
+            .order_by(Question.view_count.desc())
+            .limit(limit)
+        )
+        return result.scalars().all()
+    except Exception as e:
+        logger.error("async_get_popular_questions_error", error=str(e))
+        return []
+
+
+async def update_question_embedding_async(
+    db: AsyncSession, question_id: int, embedding: List[float]
+) -> bool:
+    """Async soru embedding güncelleme"""
+    try:
+        result = await db.execute(
+            select(Question).filter(Question.id == question_id)
+        )
+        db_question = result.scalar_one_or_none()
+        
+        if not db_question:
+            return False
+        
+        db_question.embedding_vector = embedding
+        await db.commit()
+        
+        logger.info("async_question_embedding_updated", question_id=question_id)
+        return True
+    except Exception as e:
+        await db.rollback()
+        logger.error("async_update_question_embedding_error", question_id=question_id, error=str(e))
+        return False
+
+
+async def get_question_statistics_async(db: AsyncSession) -> Dict[str, Any]:
+    """Async soru istatistikleri"""
+    try:
+        # Total questions
+        total_result = await db.execute(
+            select(func.count(Question.id)).filter(Question.is_active.is_(True))
+        )
+        total_questions = total_result.scalar()
+        
+        # Questions by difficulty
+        difficulty_result = await db.execute(
+            select(Question.difficulty_level, func.count(Question.id))
+            .filter(Question.is_active.is_(True))
+            .group_by(Question.difficulty_level)
+        )
+        difficulty_stats = dict(difficulty_result.all())
+        
+        # Questions by subject
+        subject_result = await db.execute(
+            select(Question.subject_id, func.count(Question.id))
+            .filter(Question.is_active.is_(True))
+            .group_by(Question.subject_id)
+        )
+        subject_stats = dict(subject_result.all())
+        
+        return {
+            "total_questions": total_questions,
+            "difficulty_distribution": difficulty_stats,
+            "subject_distribution": subject_stats
+        }
+    except Exception as e:
+        logger.error("async_get_question_statistics_error", error=str(e))
+        return {}
 
 
 def _get_neo4j_driver():
@@ -574,3 +881,68 @@ def get_recommended_questions(
             .limit(limit)
             .all()
         )
+
+
+def get_random_question_for_frontend(db: Session) -> Optional[Question]:
+    """Frontend için rastgele soru getir"""
+    try:
+        # Get random question
+        question = db.query(Question).filter(Question.is_active == True).order_by(func.random()).first()
+        
+        if question:
+            logger.info("random_question_retrieved", question_id=question.id)
+            return question
+        else:
+            logger.warning("no_questions_available")
+            return None
+            
+    except Exception as e:
+        logger.error("get_random_question_error", error=str(e))
+        return None
+
+
+def submit_answer_for_frontend(db: Session, question_id: int, user_id: int, answer_data: dict) -> dict:
+    """Frontend'ten gelen cevabı işle"""
+    try:
+        # Get question
+        question = db.query(Question).filter(Question.id == question_id).first()
+        if not question:
+            raise ValueError("Question not found")
+        
+        # Check if answer is correct
+        is_correct = answer_data.get("answer") == question.correct_answer
+        
+        # Create student response
+        student_response = StudentResponse(
+            student_id=user_id,
+            question_id=question_id,
+            answer=answer_data.get("answer"),
+            is_correct=is_correct,
+            response_time=answer_data.get("response_time"),
+            confidence_level=answer_data.get("confidence_level")
+        )
+        
+        db.add(student_response)
+        db.commit()
+        db.refresh(student_response)
+        
+        logger.info("answer_submitted", 
+                   question_id=question_id,
+                   user_id=user_id,
+                   is_correct=is_correct)
+        
+        return {
+            "is_correct": is_correct,
+            "correct_answer": question.correct_answer,
+            "explanation": question.explanation,
+            "points_earned": 10 if is_correct else 0,
+            "message": "Doğru!" if is_correct else "Yanlış!"
+        }
+        
+    except Exception as e:
+        db.rollback()
+        logger.error("submit_answer_error", 
+                    question_id=question_id,
+                    user_id=user_id,
+                    error=str(e))
+        raise

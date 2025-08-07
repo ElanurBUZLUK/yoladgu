@@ -1,321 +1,126 @@
-import structlog
-from app.api.v1.endpoints import (
-    ai,
-    analytics,
-    auth,
-    embeddings,
-    llm_assistant,
-    performance_monitor,
-    plan_items,
-    questions,
-    quiz_sessions,
-    recommendations,
-    scheduler,
-    solutions,
-    streams,
-    study_plans,
-    subjects,
-    system_health,
-    topics,
-    users,
-    # New modular routers
-    ai_services,
-    vector_services,
-    recommendation_services,
-    health,
-    admin,
-    gamification,
-    # Async endpoints
-    async_questions,
-    # New endpoints
-    search,
-    evaluation,
-)
-from app.core.config import settings
-from app.core.rate_limiter import get_rate_limiter
-from app.services.scheduler_service import offline_scheduler
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-# from prometheus_client import Counter, Gauge  # Commented out to avoid conflicts
-from prometheus_fastapi_instrumentator import Instrumentator
+"""
+Main Application Entry Point
+Ana uygulama giriş noktası
+"""
 
-# Structured logging setup
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer(),
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
+
+import structlog
+from app.core.config import settings
+from app.api.v1.endpoints import (
+    auth, 
+    users, 
+    analytics, 
+    questions, 
+    quiz_sessions, 
+    students, 
+    vectors, 
+    faiss, 
+    recommendations, 
+    skill_graph
 )
+from app.core.dependencies import init_vector_index
 
 logger = structlog.get_logger()
+
+# ============================================================================
+# APPLICATION SETUP
+# ============================================================================
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    description="Yoladgu - AI-Powered Learning Platform",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-# Rate limiter instance - will be initialized during startup
-rate_limiter = None
+# ============================================================================
+# MIDDLEWARE
+# ============================================================================
 
-Instrumentator().instrument(app).expose(app)
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+# Gzip middleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Rate limiting middleware
-@app.middleware("http")
-async def rate_limit_middleware(request, call_next):
-    """Rate limiting ve cache middleware"""
-    global rate_limiter
+# ============================================================================
+# ROUTES
+# ============================================================================
 
-    # Initialize rate limiter if not already done
-    if rate_limiter is None:
-        rate_limiter = await get_rate_limiter()
-
-    # 1. Cache check (sadece GET ve cacheable POST'lar için)
-    cached_response = await rate_limiter.get_cached_response(request)
-    if cached_response:
-        return cached_response
-
-    # 2. Rate limit check
-    rate_limit_response = await rate_limiter.check_rate_limit(request)
-    if rate_limit_response:
-        return rate_limit_response
-
-    # 3. Process request
-    response = await call_next(request)
-
-    # 4. Cache response (if applicable)
-    await rate_limiter.cache_response(request, response)
-
-    # 5. Add rate limit headers
-    response.headers["X-RateLimit-Applied"] = "true"
-
-    return response
-
-
-# Custom metrics for Yoladgu (commented out to avoid conflicts with Prometheus Instrumentator)
-# yoladgu_custom_requests_total = Counter(
-#     "yoladgu_custom_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
-# )
-
-# yoladgu_custom_health_checks = Counter(
-#     "yoladgu_custom_health_checks_total", "Total health checks performed", ["service"]
-# )
-
-# yoladgu_custom_service_health = Gauge(
-#     "yoladgu_custom_service_health_status",
-#     "Service health status (1=healthy, 0=unhealthy)",
-#     ["service"],
-# )
-
-# IMPORTANT: Middleware are applied in reverse order of registration
-# Last registered = First to process requests
-
-# CORS Middleware (should be last registered, first to process)
-if settings.BACKEND_CORS_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    # Geliştirme ortamı için localhost:4200'e izin ver
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://localhost:4200"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-# Include routers
+# Core API routes
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(users.router, prefix=settings.API_V1_STR)
+app.include_router(students.router, prefix=settings.API_V1_STR)
+
+# Content routes
 app.include_router(questions.router, prefix=settings.API_V1_STR)
-app.include_router(solutions.router, prefix=settings.API_V1_STR)
-app.include_router(study_plans.router, prefix=settings.API_V1_STR)
-app.include_router(topics.router, prefix=settings.API_V1_STR)
-app.include_router(subjects.router, prefix=settings.API_V1_STR)
-app.include_router(plan_items.router, prefix=settings.API_V1_STR)
 app.include_router(quiz_sessions.router, prefix=settings.API_V1_STR)
+
+# Analytics routes
 app.include_router(analytics.router, prefix=settings.API_V1_STR)
 
-# New modular service routers
-app.include_router(ai_services.router, prefix=settings.API_V1_STR)
-app.include_router(vector_services.router, prefix=settings.API_V1_STR)
-app.include_router(recommendation_services.router, prefix=settings.API_V1_STR)
-app.include_router(health.router, prefix=settings.API_V1_STR)
-app.include_router(admin.router, prefix=settings.API_V1_STR)
-app.include_router(gamification.router, prefix=settings.API_V1_STR)
+# ML/AI routes
+app.include_router(recommendations.router, prefix=settings.API_V1_STR)
+app.include_router(vectors.router, prefix=settings.API_V1_STR)
+app.include_router(faiss.router, prefix=settings.API_V1_STR)
+app.include_router(skill_graph.router, prefix=settings.API_V1_STR)
 
-# Async endpoints (high performance)
-app.include_router(async_questions.router, prefix=f"{settings.API_V1_STR}/async", tags=["async"])
+# ============================================================================
+# HEALTH CHECK
+# ============================================================================
 
-# New endpoints
-app.include_router(search.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
-app.include_router(evaluation.router, prefix=f"{settings.API_V1_STR}/evaluation", tags=["evaluation"])
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION
+    }
 
-# Documentation router
-from app.api.v1.endpoints import docs
-app.include_router(docs.router, prefix=settings.API_V1_STR)
+# ============================================================================
+# ERROR HANDLING
+# ============================================================================
 
-# Legacy routers (for backward compatibility)
-app.include_router(ai.router, prefix=settings.API_V1_STR)
-app.include_router(
-    embeddings.router, prefix=f"{settings.API_V1_STR}/embeddings", tags=["embeddings"]
-)
-app.include_router(
-    scheduler.router, prefix=f"{settings.API_V1_STR}/scheduler", tags=["scheduler"]
-)
-app.include_router(
-    streams.router, prefix=settings.API_V1_STR + "/streams", tags=["streams"]
-)
-app.include_router(
-    recommendations.router, prefix=settings.API_V1_STR, tags=["recommendations"]
-)
-app.include_router(
-    llm_assistant.router, prefix=settings.API_V1_STR, tags=["llm-assistant"]
-)
-app.include_router(
-    system_health.router, prefix=settings.API_V1_STR, tags=["system-health"]
-)
-app.include_router(
-    performance_monitor.router,
-    prefix=f"{settings.API_V1_STR}/performance",
-    tags=["performance"],
-)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler"""
+    logger.error("unhandled_exception", 
+                path=request.url.path,
+                method=request.method,
+                error=str(exc))
+    
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
 
-# FastAPI lifecycle events for stream consumer
-import asyncio
+# ============================================================================
+# STARTUP & SHUTDOWN
+# ============================================================================
 
-# FastAPI lifecycle events for stream consumer
-
-# Note: To use lifespan, initialize FastAPI with lifespan parameter:
-# app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, lifespan=lifespan)
-# For now, we'll use the deprecated but simpler @app.on_event approach
-
-
-# Startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
-    """Application startup tasks - optimized order for data flow"""
-    try:
-        logger.info("application_startup_started")
-
-        # Step 1: Initialize database connections first
-        from app.db.database import init_async_db
-
-        init_async_db()
-        logger.info("Database connections initialized")
-
-        # Step 2: Initialize core infrastructure services (Redis, Neo4j)
-        from app.services.neo4j_service import neo4j_service
-        from app.services.redis_service import redis_service
-
-        # Initialize Redis service (needed for rate limiting, caching)
-        _ = redis_service  # This triggers __init__ if not already initialized
-        logger.info("Redis service initialized")
-
-        # Initialize Neo4j service (graph database)
-        _ = neo4j_service  # This triggers __init__ if not already initialized
-        logger.info("Neo4j service initialized")
-
-        # Step 3: Initialize ML/AI services that depend on core services
-        await offline_scheduler.initialize()
-        logger.info("Offline scheduler initialized")
-
-        # Step 4: Initialize HTTP clients for external services
-        from app.services.question_ingestion_service import (
-            get_question_ingestion_service,
-        )
-
-        await get_question_ingestion_service()  # Initialize async client
-        logger.info("Question ingestion service initialized")
-
-        # Step 5: Start background consumers/workers (last)
-        from app.services.enhanced_stream_consumer import stream_consumer_manager
-
-        if stream_consumer_manager and not stream_consumer_manager.running:
-            # Start consumer in background task
-            asyncio.create_task(stream_consumer_manager.start_consumer())
-            logger.info("Stream consumer started successfully")
-        else:
-            logger.info("Stream consumer already running or disabled")
-
-        logger.info("application_startup_completed")
-
-    except Exception as e:
-        logger.error("application_startup_error", error=str(e), exc_info=True)
-        raise
-
+    """Application startup event"""
+    logger.info("application_started", 
+                project_name=settings.PROJECT_NAME,
+                version=settings.VERSION)
+    
+    # FAISS index'ini başlat
+    init_vector_index()
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Application shutdown tasks - reverse order of startup"""
-    try:
-        logger.info("application_shutdown_started")
-
-        # Step 1: Stop background workers first
-        from app.services.enhanced_stream_consumer import stream_consumer_manager
-
-        if stream_consumer_manager and stream_consumer_manager.running:
-            await stream_consumer_manager._cleanup_consumer()
-            logger.info("Stream consumer stopped successfully")
-
-        # Step 2: Shutdown ML/AI services
-        await offline_scheduler.shutdown()
-        logger.info("Offline scheduler shutdown")
-
-        # Step 3: Close HTTP clients
-        from app.services.question_ingestion_service import (
-            close_question_ingestion_service,
-        )
-
-        await close_question_ingestion_service()
-        logger.info("Question ingestion service closed")
-
-        # Step 4: Close infrastructure services (reverse order)
-        from app.services.neo4j_service import neo4j_service
-        from app.services.redis_service import redis_service
-
-        # Close Neo4j driver
-        neo4j_service.close()
-        logger.info("Neo4j service closed")
-
-        # Close Redis client (last infrastructure service)
-        redis_service.close()
-        logger.info("Redis service closed")
-
-        # Step 5: Close database connections (last)
-        global async_engine
-        from app.db.database import async_engine
-
-        if async_engine:
-            await async_engine.dispose()
-            logger.info("Database connections closed")
-
-        logger.info("application_shutdown_completed")
-
-    except Exception as e:
-        logger.error("application_shutdown_error", error=str(e), exc_info=True)
-
-
-# Health endpoints are now handled by the unified health router at /health/
-# Legacy health endpoints removed - use /health/ instead
-
-# Metrics endpoint is now handled by instrumentator
-
-# Legacy readiness and liveness endpoints removed - use /health/ready and /health/live instead
+    """Application shutdown event"""
+    logger.info("application_shutdown")

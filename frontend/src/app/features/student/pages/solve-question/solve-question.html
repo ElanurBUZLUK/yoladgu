@@ -6,7 +6,7 @@
                 <div class="subject-icon">📐</div>
                 <div class="quiz-details">
                     <h2>{{ currentQuestion?.subject || 'Matematik' }} - {{ currentQuestion?.topic || 'Trigonometri' }}</h2>
-                    <p>AI Önerisi: {{ aiRecommendation }} • Zorluk: {{ getDifficultyText(currentQuestion?.difficulty_level) }}</p>
+                    <p>AI Önerisi: {{ aiRecommendation }}</p>
                 </div>
             </div>
             <div style="display: flex; gap: 10px;">
@@ -17,38 +17,33 @@
         
         <!-- Progress Section -->
         <div class="progress-section">
-            <div class="progress-card">
-                <div class="progress-number">{{ currentQuestionIndex + 1 }}</div>
-                <div class="progress-label">/ {{ totalQuestions }} Soru</div>
-            </div>
-            <div class="progress-card">
-                <div class="progress-number">{{ accuracyPercentage }}%</div>
-                <div class="progress-label">Doğru Oranı</div>
-            </div>
-            <div class="progress-card">
-                <div class="progress-number">{{ correctAnswers }}</div>
-                <div class="progress-label">Doğru</div>
-            </div>
-            <div class="progress-card">
-                <div class="progress-number">{{ wrongAnswers }}</div>
-                <div class="progress-label">Yanlış</div>
-            </div>
+            <app-progress-bar 
+                [current]="currentQuestionIndex + 1"
+                [total]="totalQuestions"
+                [label]="'Soru İlerlemesi'"
+                [correctAnswers]="correctAnswers"
+                [wrongAnswers]="wrongAnswers"
+                [accuracy]="accuracyPercentage"
+                [showDetails]="true">
+            </app-progress-bar>
         </div>
         
         <!-- Timer -->
         <div class="timer-section">
-            <div class="timer" [class.pulse]="isTimerPulsing">
-                ⏱️ Harcanan Süre: <span id="timer">{{ formatTime(elapsedTime) }}</span>
-            </div>
+            <app-timer 
+                [label]="'Harcanan Süre'"
+                (timeUpdate)="elapsedTime = $event">
+            </app-timer>
         </div>
         
         <!-- Question Card -->
         <div class="question-card" *ngIf="currentQuestion">
             <div class="question-header">
                 <div class="question-number">Soru {{ currentQuestionIndex + 1 }}</div>
-                <div class="difficulty-badge" [ngClass]="getDifficultyClass(currentQuestion.difficulty_level)">
-                    {{ getDifficultyText(currentQuestion.difficulty_level) }}
-                </div>
+                <app-difficulty-indicator 
+                    [difficultyLevel]="currentQuestion.difficulty_level"
+                    [showDetails]="true">
+                </app-difficulty-indicator>
             </div>
             
             <div class="question-text" [innerHTML]="currentQuestion.content"></div>
@@ -102,16 +97,15 @@
                         (click)="showExplanationSection()" 
                         [style.display]="showExplanation ? 'none' : 'block'"
                     >
-                        📖 Açıklama
+                        ✅ Açıklama
                     </button>
-                </div>
-                <div style="display: flex; gap: 10px;">
                     <button 
-                        class="btn" 
+                        class="btn btn-primary" 
                         (click)="checkAnswer()" 
+                        [disabled]="!selectedOption || isLoading"
                         [style.display]="showResult ? 'none' : 'block'"
                     >
-                        ✓ Cevabı Kontrol Et
+                        {{ isLoading ? 'Kontrol Ediliyor...' : 'Cevabı Kontrol Et' }}
                     </button>
                     <button 
                         class="btn btn-success" 
@@ -125,18 +119,41 @@
         </div>
         
         <!-- Loading State -->
-        <div class="question-card" *ngIf="!currentQuestion && !isLoading">
-            <div style="text-align: center; color: #94a3b8; padding: 40px;">
-                <h3>Soru bulunamadı</h3>
-                <p>Lütfen tekrar deneyin.</p>
-            </div>
+        <div class="loading-state" *ngIf="isLoading">
+            <div class="spinner"></div>
+            <p>Soru yükleniyor...</p>
         </div>
         
-        <!-- Loading Spinner -->
-        <div class="question-card" *ngIf="isLoading">
-            <div style="text-align: center; color: #60a5fa; padding: 40px;">
-                <div class="loading-spinner"></div>
-                <p>Soru yükleniyor...</p>
+        <!-- Quiz Complete Modal -->
+        <div class="modal-overlay" *ngIf="showQuizComplete">
+            <div class="modal-content">
+                <h3>🎉 Quiz Tamamlandı!</h3>
+                <div class="quiz-results">
+                    <div class="result-item">
+                        <span class="result-label">Toplam Soru:</span>
+                        <span class="result-value">{{ totalQuestions }}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Doğru Cevap:</span>
+                        <span class="result-value correct">{{ correctAnswers }}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Yanlış Cevap:</span>
+                        <span class="result-value wrong">{{ wrongAnswers }}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Başarı Oranı:</span>
+                        <span class="result-value">{{ accuracyPercentage }}%</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">Toplam Süre:</span>
+                        <span class="result-value">{{ formatTime(elapsedTime) }}</span>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn" (click)="goBack()">Ana Sayfa</button>
+                    <button class="btn btn-primary" (click)="restartQuiz()">Tekrar Başla</button>
+                </div>
             </div>
         </div>
     </div>

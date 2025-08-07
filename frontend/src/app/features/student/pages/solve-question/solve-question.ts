@@ -2,9 +2,12 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, ActivatedRoute } from '@angular/router';
 import { interval, Subscription } from 'rxjs';
-import { QuestionService } from '../features/student/services/question.service';
-import { StudentService } from '../features/student/services/student.service';
-import { ErrorHandlerService } from '../core/services/error-handler.service';
+import { QuestionService } from '../../services/question.service';
+import { StudentService } from '../../services/student.service';
+import { ErrorHandlerService } from '../../../core/services/error-handler.service';
+import { TimerComponent } from '../../../shared/components/timer/timer.component';
+import { ProgressBarComponent } from '../../../shared/components/progress-bar/progress-bar.component';
+import { DifficultyIndicatorComponent } from '../../../shared/components/difficulty-indicator/difficulty-indicator.component';
 
 interface Question {
   id: number;
@@ -26,7 +29,12 @@ interface Question {
 @Component({
   selector: 'app-solve-question',
   standalone: true,
-  imports: [CommonModule],
+  imports: [
+    CommonModule, 
+    TimerComponent, 
+    ProgressBarComponent, 
+    DifficultyIndicatorComponent
+  ],
   templateUrl: './solve-question.html',
   styleUrl: './solve-question.scss'
 })

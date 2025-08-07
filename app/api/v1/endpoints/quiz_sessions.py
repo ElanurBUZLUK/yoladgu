@@ -1,4 +1,5 @@
 from typing import Any
+from datetime import datetime
 
 from app.crud.quiz_session import (
     create_quiz_session,
@@ -10,9 +11,11 @@ from app.crud.quiz_session import (
 from app.crud.user import get_current_user
 from app.db.database import get_db
 from app.db.models import User as UserModel
-from app.schemas.quiz_session import QuizSession, QuizSessionCreate, QuizSessionList
+from app.schemas.quiz_session import QuizSession, QuizSessionCreate, QuizSessionList, StudentResponse, StudentResponseCreate
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from app.core.dependencies import get_skill_graph_service
+from app.services.skill_graph_service import SkillGraphService
 
 router = APIRouter(prefix="/quiz-sessions", tags=["quiz-sessions"])
 
@@ -94,3 +97,50 @@ def get_quiz_session(
         )
 
     return quiz_session
+
+
+@router.post(
+    "/{session_id}/responses",
+    response_model=StudentResponse,
+    summary="Öğrencinin bir soruya verdiği yanıtı kaydeder"
+)
+def submit_response(
+    session_id: int,
+    in_resp: StudentResponseCreate,
+    db: Session = Depends(get_db),
+    skill_svc: SkillGraphService = Depends(get_skill_graph_service),
+):
+    """
+    Öğrencinin bir soruya verdiği yanıtı kaydeder ve skill graph cache'ini temizler
+    """
+    try:
+        # 1) DB'ye kaydet (bu kısım crud fonksiyonu ile yapılacak)
+        # resp = crud.student_response.create(db, obj_in=in_resp)
+        
+        # Şimdilik basit bir response döndürüyoruz
+        # Gerçek implementasyonda crud fonksiyonu kullanılacak
+        resp = StudentResponse(
+            id=1,
+            question_id=in_resp.question_id,
+            user_id=in_resp.user_id,
+            topic_id=in_resp.topic_id,
+            answer_text=in_resp.answer_text,
+            is_correct=in_resp.is_correct,
+            time_taken_seconds=in_resp.time_taken_seconds,
+            confidence_level=in_resp.confidence_level,
+            quiz_session_id=session_id,
+            created_at=datetime.now(),
+            updated_at=None
+        )
+        
+        # 2) SkillGraphService'in cache'ini temizle
+        #    invalidate student+topic bazında, böylece weak-skills yeniden hesaplanır
+        skill_svc.invalidate(student_id=in_resp.user_id, topic_id=in_resp.topic_id)
+        
+        return resp
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit response: {str(e)}",
+        )

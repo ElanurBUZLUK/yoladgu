@@ -1,67 +1,7 @@
-from . import (
-    ai,
-    analytics,
-    auth,
-    embeddings,
-    llm_assistant,
-    performance_monitor,
-    plan_items,
-    questions,
-    quiz_sessions,
-    recommendations,
-    scheduler,
-    solutions,
-    streams,
-    study_plans,
-    subjects,
-    system_health,
-    topics,
-    users,
-    # New modular routers
-    ai_services,
-    vector_services,
-    recommendation_services,
-    health,
-    admin,
-    gamification,
-    docs,
-    # Async endpoints
-    async_questions,
-    # New endpoints
-    search,
-    evaluation,
-)
+from . import recommendation, skill_graph, vector_search
 
 __all__ = [
-    "auth",
-    "analytics",
-    "ai",
-    "embeddings",
-    "llm_assistant",
-    "performance_monitor",
-    "plan_items",
-    "questions",
-    "quiz_sessions",
-    "recommendations",
-    "scheduler",
-    "solutions",
-    "streams",
-    "study_plans",
-    "subjects",
-    "system_health",
-    "topics",
-    "users",
-    # New modular routers
-    "ai_services",
-    "vector_services",
-    "recommendation_services",
-    "health",
-    "admin",
-    "gamification",
-    "docs",
-    # Async endpoints
-    "async_questions",
-    # New endpoints
-    "search",
-    "evaluation",
+    "recommendation",
+    "skill_graph", 
+    "vector_search"
 ]

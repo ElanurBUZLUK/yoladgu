@@ -1,6 +1,6 @@
 from typing import Optional
 
-from app.core.config import settings
+from app.core.config import settings, is_development
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -22,13 +22,16 @@ if settings.DATABASE_URL is None:
 
 sync_engine = create_engine(
     settings.DATABASE_URL,
-    echo=settings.is_development,  # Only echo in development
+    echo=is_development(),  # Only echo in development
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
     pool_recycle=3600,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+# Export engine for instrumentation
+engine = sync_engine
 
 # Async engine (recommended for FastAPI) - initialized lazily
 async_engine: Optional[AsyncEngine] = None
@@ -50,7 +53,7 @@ def init_async_db():
         )
         async_engine = create_async_engine(
             async_database_url,
-            echo=settings.is_development,  # Only echo in development
+            echo=is_development(),  # Only echo in development
             pool_size=settings.ASYNCPG_MIN_SIZE,
             max_overflow=settings.ASYNCPG_MAX_SIZE - settings.ASYNCPG_MIN_SIZE,
             pool_pre_ping=True,

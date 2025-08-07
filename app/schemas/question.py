@@ -71,33 +71,21 @@ class QuestionUpdate(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 class QuestionResponse(BaseModel):
+    """Frontend'e gönderilen soru"""
     id: int
-    title: str
     content: str
-    question_type: QuestionType
-    difficulty: DifficultyLevel
-    subject: str
-    topic: str
-    subtopic: Optional[str] = None
-    options: List[str] = []
+    options: List[str]
+    correct_answer: str
+    difficulty_level: int
+    subject_id: int
+    subject: Optional[str] = None
+    topic: Optional[str] = None
+    hint: Optional[str] = None
     explanation: Optional[str] = None
-    tags: List[str] = []
-    image_url: Optional[str] = None
-    audio_url: Optional[str] = None
-    video_url: Optional[str] = None
-    points: int
-    time_limit: Optional[int] = None
-    hints: List[str] = []
-    status: QuestionStatus
+    question_type: str
+    tags: Optional[List[str]] = None
     created_by: int
-    created_at: datetime
-    updated_at: datetime
-    view_count: int = 0
-    answer_count: int = 0
-    correct_answer_count: int = 0
-    average_score: float = 0.0
-    average_time: float = 0.0
-    embedding_vector: Optional[List[float]] = None
+    is_active: bool
 
 class QuestionAnswer(BaseModel):
     question_id: int
@@ -181,3 +169,37 @@ class QuestionAnalytics(BaseModel):
     average_time_by_difficulty: Dict[str, float]
     popular_wrong_answers: List[Dict[str, Any]]
     user_performance_distribution: Dict[str, int]
+
+
+class AnswerSubmission(BaseModel):
+    answer: str = Field(..., description="Öğrencinin cevabı")
+    response_time: Optional[float] = Field(None, description="Cevap süresi (saniye)")
+    confidence_level: Optional[int] = Field(None, ge=1, le=5, description="Güven seviyesi (1-5)")
+    feedback: Optional[str] = Field(None, description="Öğrenci geri bildirimi")
+
+
+class AnswerResponse(BaseModel):
+    question_id: int
+    is_correct: bool
+    correct_answer: str
+    explanation: Optional[str] = None
+    response_time: float
+    response_id: int
+    points_earned: int
+    current_streak: Optional[int] = None
+    message: str
+
+class AnswerSubmit(BaseModel):
+    """Frontend'ten gelen cevap"""
+    answer: str = Field(..., description="Öğrencinin cevabı")
+    response_time: Optional[float] = Field(None, description="Cevap süresi (saniye)")
+    confidence_level: Optional[int] = Field(None, ge=1, le=5, description="Güven seviyesi (1-5)")
+
+class SubmitAnswerResponse(BaseModel):
+    """Cevap sonucu"""
+    is_correct: bool
+    correct_answer: str
+    explanation: Optional[str] = None
+    points_earned: int = 0
+    current_streak: Optional[int] = None
+    message: str
