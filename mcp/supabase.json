@@ -1,0 +1,7 @@
+{
+  "name": "supabase-mcp",
+  "command": "npx",
+  "args": ["@modelcontextprotocol/server-supabase"],
+  "env": { "SUPABASE_ACCESS_TOKEN": "YOUR_TOKEN", "SUPABASE_PROJECT_ID": "YOUR_PROJECT_ID" },
+  "options": { "stdio": "pipe" }
+}

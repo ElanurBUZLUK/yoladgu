@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Paneli</title>
+  <style>
+    body{font-family:system-ui;background:#0f172a;color:#e2e8f0;margin:0;padding:20px}
+    .wrap{max-width:1100px;margin:0 auto}
+    .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:16px 0}
+    button{padding:10px 16px;border-radius:10px;border:1px solid #374151;background:#1f2937;color:#93c5fd;cursor:pointer}
+    pre{white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>🛠️ Admin Paneli</h2>
+    <div class="card">
+      <h3>Index Stats</h3>
+      <button onclick="getStats()">Gör</button>
+      <button onclick="swap()">Swap</button>
+      <pre id="out"></pre>
+    </div>
+  </div>
+  <script>
+    async function getStats(){
+      const r = await fetch('http://localhost:8000/api/v1/index/stats'); 
+      document.getElementById('out').innerText = JSON.stringify(await r.json(), null, 2);
+    }
+    async function swap(){
+      const r = await fetch('http://localhost:8000/api/v1/index/swap', {method:'POST'}); 
+      document.getElementById('out').innerText = JSON.stringify(await r.json(), null, 2);
+    }
+  </script>
+</body>
+</html>

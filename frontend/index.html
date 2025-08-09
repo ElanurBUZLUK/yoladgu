@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LearnAI - Giriş</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body{font-family:Inter, system-ui, -apple-system; background:linear-gradient(135deg,#667eea,#764ba2);min-height:100vh;margin:0;display:grid;place-items:center}
+    .auth{background:rgba(255,255,255,.95);padding:32px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.15);width:360px}
+    .auth h1{margin:0 0 8px;color:#374151}
+    .auth p{margin:0 0 16px;color:#6b7280}
+    label{display:block;color:#374151;margin:12px 0 6px;font-weight:600}
+    input,select{width:100%;padding:12px;border:2px solid #e5e7eb;border-radius:10px}
+    button{width:100%;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-weight:600;margin-top:12px;cursor:pointer}
+    .muted{color:#6b7280;font-size:12px;text-align:center;margin-top:12px;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div class="auth">
+    <h1>🎯 LearnAI</h1>
+    <p>Adaptif Öğrenme Platformu</p>
+
+    <div id="pane-login">
+      <label>E-posta</label><input id="email" type="email" />
+      <label>Şifre</label><input id="password" type="password" />
+      <button onclick="doLogin()">Giriş Yap</button>
+      <div class="muted" onclick="togglePane()">Hesabın yok mu? Kayıt ol</div>
+    </div>
+
+    <div id="pane-register" style="display:none">
+      <label>Ad Soyad</label><input id="rname" type="text" />
+      <label>E-posta</label><input id="remail" type="email" />
+      <label>Şifre</label><input id="rpass" type="password" />
+      <label>Rol</label>
+      <select id="rrole"><option value="student">Öğrenci</option><option value="teacher">Öğretmen</option></select>
+      <button onclick="doRegister()">Kayıt Ol</button>
+      <div class="muted" onclick="togglePane()">Zaten hesabın var mı? Giriş yap</div>
+    </div>
+  </div>
+
+  <script src="./assets/js/api.js"></script>
+  <script>
+    function togglePane(){
+      const a = document.getElementById('pane-login');
+      const b = document.getElementById('pane-register');
+      a.style.display = a.style.display === 'none' ? '' : 'none';
+      b.style.display = b.style.display === 'none' ? '' : 'none';
+    }
+    async function doLogin(){
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      try{
+        const t = await API.login(email,password);
+        localStorage.setItem('auth', JSON.stringify(t));
+        // yönlendirme role yok ama dashboard'a
+        location.href = './dashboard.html';
+      }catch(e){ alert('Giriş başarısız'); }
+    }
+    async function doRegister(){
+      const name = document.getElementById('rname').value;
+      const email = document.getElementById('remail').value;
+      const pass = document.getElementById('rpass').value;
+      const role = document.getElementById('rrole').value;
+      try{
+        const t = await API.register(email, pass, name, role);
+        localStorage.setItem('auth', JSON.stringify(t));
+        location.href = role==='teacher' ? './teacher.html' : './dashboard.html';
+      }catch(e){ alert('Kayıt başarısız'); }
+    }
+  </script>
+</body>
+</html>

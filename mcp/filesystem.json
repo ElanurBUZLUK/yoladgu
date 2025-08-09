@@ -1,0 +1,6 @@
+{
+  "name": "fs-mcp",
+  "command": "npx",
+  "args": ["@modelcontextprotocol/server-filesystem"],
+  "options": { "stdio": "pipe" }
+}

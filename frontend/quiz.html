@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LearnAI - Soru Çöz</title>
+  <style>
+    body{font-family:system-ui;background:#0b1220;color:#e5e7eb;margin:0;padding:20px}
+    .wrap{max-width:900px;margin:0 auto}
+    .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:16px 0}
+    button{padding:10px 16px;border-radius:10px;border:1px solid #374151;background:#1f2937;color:#93c5fd;cursor:pointer}
+    .option{padding:12px;border:1px solid #374151;border-radius:10px;margin:8px 0;cursor:pointer}
+    .option.sel{border-color:#60a5fa;background:#0a1220}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h2>Matematik - Trigonometri</h2>
+      <p>AI öneri ile getirilen sorular arasından çözüyorsun.</p>
+    </div>
+
+    <div class="card" id="question">
+      <div>Bir üçgende α açı… sin α = 3/5, cos α ?</div>
+      <div class="option" onclick="sel(this)">A) 4/5</div>
+      <div class="option" onclick="sel(this)">B) 3/4</div>
+      <div class="option" onclick="sel(this)">C) 4/3</div>
+      <div class="option" onclick="sel(this)">D) 5/4</div>
+      <br/>
+      <button onclick="check()">Cevabı Kontrol Et</button>
+    </div>
+  </div>
+
+  <script>
+    let chosen = null;
+    function sel(el){ document.querySelectorAll('.option').forEach(x=>x.classList.remove('sel')); el.classList.add('sel'); chosen = el.innerText }
+    function check(){ alert(chosen && chosen.startsWith("A") ? "Doğru!" : "Yanlış! Doğru cevap A"); }
+  </script>
+</body>
+</html>

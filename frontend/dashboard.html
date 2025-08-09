@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LearnAI - Dashboard</title>
+  <style>
+    body{font-family:system-ui, -apple-system; background:#0f172a; color:#e2e8f0; margin:0;padding:20px}
+    .wrap{max-width:1100px;margin:0 auto}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+    .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin-bottom:20px}
+    button{padding:10px 16px;border-radius:10px;border:1px solid #374151;background:#1f2937;color:#93c5fd;cursor:pointer}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <h2>👋 Hoş geldin</h2>
+      <div>
+        <button onclick="location.href='./index.html'">Çıkış</button>
+        <button onclick="location.href='./quiz.html'">Soru Çöz</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>📈 İlerleme</h3>
+        <p>Son 1 ay: +15% • Son 1 yıl: +45%</p>
+      </div>
+      <div class="card">
+        <h3>🔎 AI Önerisi</h3>
+        <div id="rec"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./assets/js/api.js"></script>
+  <script>
+    async function loadRec(){
+      const r = await API.vectorSearch("trigonometri temel", 5);
+      document.getElementById('rec').innerText = "Önerilen soru ID'leri: " + r.results.map(x=>x.id).join(", ");
+    }
+    loadRec();
+  </script>
+</body>
+</html>

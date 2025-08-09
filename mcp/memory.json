@@ -1,0 +1,6 @@
+{
+  "name": "memory-mcp",
+  "command": "npx",
+  "args": ["@modelcontextprotocol/server-memories"],
+  "options": { "stdio": "pipe" }
+}

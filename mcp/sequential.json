@@ -1,0 +1,6 @@
+{
+  "name": "sequential-mcp",
+  "command": "npx",
+  "args": ["@modelcontextprotocol/server-sequential-thinking"],
+  "options": { "stdio": "pipe" }
+}

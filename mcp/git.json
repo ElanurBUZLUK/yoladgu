@@ -1,0 +1,7 @@
+{
+  "name": "git-mcp",
+  "command": "npx",
+  "args": ["@modelcontextprotocol/server-git"],
+  "env": { "GITHUB_TOKEN": "YOUR_GH_TOKEN" },
+  "options": { "stdio": "pipe" }
+}
