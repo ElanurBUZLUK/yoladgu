@@ -16,29 +16,53 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <h2>Matematik - Trigonometri</h2>
-      <p>AI öneri ile getirilen sorular arasından çözüyorsun.</p>
+      <h2>Matematik - Quiz</h2>
+      <p>AI önerisiyle getirilen soruları cevapla.</p>
+      <button id="btnStart" onclick="startQuiz()">Başla</button>
     </div>
 
-    <div class="card" id="question">
-      <div>Bir üçgende α açı… sin α = 3/5, cos α ?</div>
-      <div class="option" onclick="sel(this)">A) 4/5</div>
-      <div class="option" onclick="sel(this)">B) 3/4</div>
-      <div class="option" onclick="sel(this)">C) 4/3</div>
-      <div class="option" onclick="sel(this)">D) 5/4</div>
+    <div class="card" id="question" style="display:none">
+      <div id="qtext"></div>
+      <div id="opts"></div>
       <br/>
-      <button onclick="check()">Cevabı Kontrol Et</button>
+      <button onclick="submitAnswer()">Cevabı Gönder</button>
+      <button onclick="nextQuestion()">Sonraki</button>
+      <button onclick="finishQuiz()">Bitir</button>
     </div>
   </div>
 
   <script>
     if(!API.ensureAuthed()) return;
-    let chosen = null;
-    function sel(el){ document.querySelectorAll('.option').forEach(x=>x.classList.remove('sel')); el.classList.add('sel'); chosen = el.innerText }
-    async function check(){
-      const correct = !!(chosen && chosen.startsWith('A'));
-      await API.questionsSubmit(1, correct);
-      API.uiToast(correct? 'Doğru' : 'Yanlış', correct? 'success':'error');
+    let chosen = null, current = null;
+    function renderQuestion(q){
+      document.getElementById('question').style.display='';
+      document.getElementById('qtext').innerText = q.text;
+      const opts = q.options || [];
+      document.getElementById('opts').innerHTML = opts.map((t,i)=>`<div class="option" data-idx="${i}" onclick="sel(this)">${String.fromCharCode(65+i)}) ${t}</div>`).join("");
+    }
+    function sel(el){ document.querySelectorAll('.option').forEach(x=>x.classList.remove('sel')); el.classList.add('sel'); chosen = parseInt(el.getAttribute('data-idx')); }
+    async function startQuiz(){
+      const r = await fetch(`${API.base}/quiz/start`, {method:'POST', headers:{'Content-Type':'application/json', ...API.authHeaders()}, body: JSON.stringify({})});
+      const data = await r.json();
+      current = { session_id: data.session_id, question_id: data.question.id };
+      renderQuestion(data.question);
+      document.getElementById('btnStart').style.display='none';
+    }
+    async function submitAnswer(){
+      if(chosen===null){ API.uiToast('Bir seçenek seçin','error'); return; }
+      await fetch(`${API.base}/quiz/answer`, {method:'POST', headers:{'Content-Type':'application/json', ...API.authHeaders()}, body: JSON.stringify({session_id: current.session_id, question_id: current.question_id, selected_option: chosen, time_ms: 0, hint_used: false})});
+      API.uiToast('Cevap gönderildi','success');
+    }
+    async function nextQuestion(){
+      const r = await fetch(`${API.base}/quiz/next`, {method:'POST', headers:{'Content-Type':'application/json', ...API.authHeaders()}, body: JSON.stringify({session_id: current.session_id})});
+      const data = await r.json();
+      current.question_id = data.question.id;
+      chosen = null; renderQuestion(data.question);
+    }
+    async function finishQuiz(){
+      const r = await fetch(`${API.base}/quiz/finish`, {method:'POST', headers:{'Content-Type':'application/json', ...API.authHeaders()}, body: JSON.stringify({session_id: current.session_id})});
+      const sum = await r.json();
+      API.uiToast(`Doğru: ${sum.correct}/${sum.total} (acc=${(sum.accuracy*100).toFixed(0)}%)`,'info');
     }
   </script>
 </body>
