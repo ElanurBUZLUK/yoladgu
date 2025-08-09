@@ -1,0 +1,6 @@
+id,topic_id,text,opt_a,opt_b,opt_c,opt_d,correct_index,difficulty_level
+1001,7,"Bir üçgende α açısının sinüsü 3/5 ise, dar açı için cos α kaçtır?","4/5","3/4","4/3","5/4",0,1
+1002,7,"sin^2 α + cos^2 α eşittir?","0","1","2","tan α",1,1
+1003,7,"tan α = 3/4 ise, sin α / cos α oranı nedir?","3/4","4/3","3/5","5/3",0,2
+1004,8,"(x+2)(x-3)=0 denkleminin kökleri toplamı?","-1","1","5","-5",2,1
+1005,8,"f(x)=x^2 fonksiyonunun türevi?","2x","x","x^2","1",0,1
