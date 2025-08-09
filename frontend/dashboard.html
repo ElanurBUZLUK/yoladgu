@@ -37,6 +37,7 @@
 
   <script src="./assets/js/api.js"></script>
   <script>
+    if(!API.ensureAuthed()) return;
     async function loadRec(){
       const r = await API.vectorSearch("trigonometri temel", 5);
       document.getElementById('rec').innerText = "Önerilen soru ID'leri: " + r.results.map(x=>x.id).join(", ");

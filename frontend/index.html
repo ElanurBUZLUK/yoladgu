@@ -54,9 +54,7 @@
       const password = document.getElementById('password').value;
       try{
         const t = await API.login(email,password);
-        localStorage.setItem('auth', JSON.stringify(t));
-        // basit yönlendirme: öğretmen -> teacher paneli, admin -> admin, öğrenci -> dashboard
-        // Not: rol bilgisini almak için ek bir uç gerekebilir; demo olarak admin/teacher sayfalarını kullanıcı seçer.
+        API.setTokens(t);
         location.href = './dashboard.html';
       }catch(e){ alert('Giriş başarısız'); }
     }
@@ -67,7 +65,7 @@
       const role = document.getElementById('rrole').value;
       try{
         const t = await API.register(email, pass, name, role);
-        localStorage.setItem('auth', JSON.stringify(t));
+        API.setTokens(t);
         location.href = role==='teacher' ? './teacher.html' : './dashboard.html';
       }catch(e){ alert('Kayıt başarısız'); }
     }

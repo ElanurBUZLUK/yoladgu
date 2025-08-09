@@ -38,20 +38,20 @@
 
   <script src="./assets/js/api.js"></script>
   <script>
+    if(!API.ensureAuthed()) return;
     async function load(){
-      const req = await API.teacherRequests();
-      document.getElementById('reqs').innerHTML = req.map(r=>`<tr><td>${r.id}</td><td>${r.student_id}</td><td>${r.status}</td><td><button onclick="approve(${r.id}, true)">Onay</button> <button onclick="approve(${r.id}, false)">Reddet</button></td></tr>`).join("");
+      const req = await API.teacherLinksPending();
+      document.getElementById('reqs').innerHTML = req.map(r=>`<tr><td>${r.id}</td><td>${r.student_id}</td><td>${r.status}</td><td><button onclick=\"approve(${r.id})\">Onay</button> <button onclick=\"reject(${r.id})\">Reddet</button></td></tr>`).join("");
       const as = await API.listAssignmentsTeacher();
       document.getElementById('assignments').innerHTML = as.map(a=>`<li>#${a.id} ${a.title}</li>`).join("");
     }
-    async function approve(id, ok){
-      await API.approveRequest(id, ok); load();
-    }
+    async function approve(id){ await API.teacherLinkApprove(id); API.uiToast('Onaylandı','success'); load(); }
+    async function reject(id){ await API.teacherLinkReject(id); API.uiToast('Reddedildi','error'); load(); }
     async function createAssignment(){
       const title = document.getElementById('title').value;
       const description = document.getElementById('desc').value;
       await API.createAssignment({title, description});
-      load();
+      API.uiToast('Ödev oluşturuldu','success'); load();
     }
     load();
   </script>

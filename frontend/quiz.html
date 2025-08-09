@@ -32,9 +32,14 @@
   </div>
 
   <script>
+    if(!API.ensureAuthed()) return;
     let chosen = null;
     function sel(el){ document.querySelectorAll('.option').forEach(x=>x.classList.remove('sel')); el.classList.add('sel'); chosen = el.innerText }
-    function check(){ alert(chosen && chosen.startsWith("A") ? "Doğru!" : "Yanlış! Doğru cevap A"); }
+    async function check(){
+      const correct = !!(chosen && chosen.startsWith('A'));
+      await API.questionsSubmit(1, correct);
+      API.uiToast(correct? 'Doğru' : 'Yanlış', correct? 'success':'error');
+    }
   </script>
 </body>
 </html>
