@@ -93,3 +93,26 @@ class VectorIndexManager:
             self._active = new_active
             self._set_active_to_redis(new_active)
         return {"swapped": True, "active": new_active}
+
+    # Tombstone management
+    def add_tombstone(self, ids: List[int]) -> dict:
+        if not ids:
+            return {"ok": True, "added": 0}
+        pipe = self.r.pipeline()
+        for i in ids:
+            pipe.sadd(self._tombstone_key, int(i))
+        added = pipe.execute()
+        return {"ok": True, "added": sum(1 for x in added if x)}
+
+    def remove_tombstone(self, ids: List[int]) -> dict:
+        if not ids:
+            return {"ok": True, "removed": 0}
+        pipe = self.r.pipeline()
+        for i in ids:
+            pipe.srem(self._tombstone_key, int(i))
+        removed = pipe.execute()
+        return {"ok": True, "removed": sum(1 for x in removed if x)}
+
+    def list_tombstones(self) -> dict:
+        vals = sorted(int(x) for x in self.r.smembers(self._tombstone_key))
+        return {"count": len(vals), "ids": vals}

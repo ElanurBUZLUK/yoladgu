@@ -55,7 +55,8 @@
       try{
         const t = await API.login(email,password);
         localStorage.setItem('auth', JSON.stringify(t));
-        // yönlendirme role yok ama dashboard'a
+        // basit yönlendirme: öğretmen -> teacher paneli, admin -> admin, öğrenci -> dashboard
+        // Not: rol bilgisini almak için ek bir uç gerekebilir; demo olarak admin/teacher sayfalarını kullanıcı seçer.
         location.href = './dashboard.html';
       }catch(e){ alert('Giriş başarısız'); }
     }
