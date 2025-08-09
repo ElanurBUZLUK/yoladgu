@@ -2,5 +2,8 @@
   "name": "fs-mcp",
   "command": "npx",
   "args": ["@modelcontextprotocol/server-filesystem"],
-  "options": { "stdio": "pipe" }
+  "options": { "stdio": "pipe" },
+  "env": {
+    "BASE_DIR": "${MCP_FS_BASE_DIR:-./}"
+  }
 }

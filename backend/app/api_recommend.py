@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import insert
 from app.schemas import BanditRequest, OnlineRequest, EnsembleRequest
-from app.core.deps import get_linucb_service, get_ftrl_service
+from app.core.deps import get_linucb_service, get_ftrl_service, require_roles
 from app.services.bandit.linucb import LinUCBService
 from app.services.online.ftrl import FTRLService
+from app.core.db import get_db
+from app.models import Event, User
 
 router = APIRouter(prefix="/recommend", tags=["recommend"])
 
@@ -29,7 +33,9 @@ def online_update(body: OnlineRequest, label: int, svc: FTRLService = Depends(ge
 @router.post("/ensemble")
 def ensemble(body: EnsembleRequest,
              lin: LinUCBService = Depends(get_linucb_service),
-             ftrl: FTRLService = Depends(get_ftrl_service)):
+             ftrl: FTRLService = Depends(get_ftrl_service),
+             db: AsyncSession = Depends(get_db),
+             user: User = Depends(require_roles("student"))):
     b = lin.predict(body.user_features, body.question_features, body.question_id)
     o = ftrl.predict(body.student_id, body.user_features, body.question_features)
     w_b, w_o = 0.5, 0.5
@@ -37,4 +43,7 @@ def ensemble(body: EnsembleRequest,
         w_b = float(body.weights.get("bandit", w_b))
         w_o = float(body.weights.get("online", w_o))
     final = w_b*b + w_o*o
+    # exposure event
+    await db.execute(insert(Event).values(user_id=user.id, event_type="question_exposure", payload=str({"question_id": body.question_id, "scores": {"bandit": b, "online": o}, "final": final})))
+    await db.commit()
     return {"final_score": final, "individual_scores": {"bandit": b, "online": o}, "weights_used": {"bandit": w_b, "online": w_o}}

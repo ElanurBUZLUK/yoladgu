@@ -6,11 +6,18 @@ from app.core.db import get_db
 from app.models import User, RefreshToken
 from app.schemas import RegisterRequest, LoginRequest, TokenPair, RefreshRequest
 from app.utils.auth import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
+from app.core.rate_limit import SlidingWindowRateLimiter
+import re
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+rl_login = SlidingWindowRateLimiter(max_calls=10, window_seconds=60)
+rl_register = SlidingWindowRateLimiter(max_calls=5, window_seconds=60)
+rl_forgot = SlidingWindowRateLimiter(max_calls=5, window_seconds=60)
 
 @router.post("/register", response_model=TokenPair)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    if not rl_register.allow(f"register:{body.email}"):
+        raise HTTPException(429, "rate limited")
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")
@@ -27,6 +34,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login", response_model=TokenPair)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    if not rl_login.allow(f"login:{body.email}"):
+        raise HTTPException(429, "rate limited")
     res = await db.execute(select(User).where(User.email == body.email))
     u = res.scalar_one_or_none()
     if not u or not verify_password(body.password, u.password_hash):
@@ -60,3 +69,20 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     db.add(RefreshToken(user_id=uid, token=refresh, expires_at=datetime.utcnow() + timedelta(days=7)))
     await db.commit()
     return TokenPair(access_token=access, refresh_token=refresh)
+
+
+@router.post("/forgot")
+async def forgot(email: str, db: AsyncSession = Depends(get_db)):
+    if not rl_forgot.allow(f"forgot:{email}"):
+        raise HTTPException(429, "rate limited")
+    # basit doğrulama
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email or ""):
+        raise HTTPException(400, "invalid email")
+    # not: burada gerçek e-posta gönderimi yerine log/placeholder dönüyoruz
+    res = await db.execute(select(User).where(User.email == email))
+    u = res.scalar_one_or_none()
+    if not u:
+        # kullanıcı yoksa bile başarılı dön (enumaration önleme)
+        return {"ok": True}
+    # TODO: reset token üretimi ve e-posta gönderimi ekleyin
+    return {"ok": True}

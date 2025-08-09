@@ -7,6 +7,13 @@ from app.api_index_admin import router as index_router
 from app.api_recommend import router as recommend_router
 from app.api_teacher import router as teacher_router
 from app.api_student import router as student_router
+from app.api_questions import router as questions_router
+from app.api_admin import router as admin_router
+try:
+    from app.api.v1.endpoints import mcp_bridge
+    _HAS_MCP = True
+except Exception:
+    _HAS_MCP = False
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -24,6 +31,10 @@ app.include_router(index_router, prefix=settings.API_V1_STR)
 app.include_router(recommend_router, prefix=settings.API_V1_STR)
 app.include_router(teacher_router, prefix=settings.API_V1_STR)
 app.include_router(student_router, prefix=settings.API_V1_STR)
+app.include_router(questions_router, prefix=settings.API_V1_STR)
+app.include_router(admin_router, prefix=settings.API_V1_STR)
+if _HAS_MCP:
+    app.include_router(mcp_bridge.router, prefix=settings.API_V1_STR)
 
 @app.get("/health")
 def health():

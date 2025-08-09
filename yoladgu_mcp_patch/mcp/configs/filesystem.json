@@ -1,0 +1,15 @@
+{
+  "name": "filesystem",
+  "description": "Yerel dosya sistemi MCP",
+  "command": "npx",
+  "args": [
+    "@modelcontextprotocol/fs-server"
+  ],
+  "env": {},
+  "settings": {
+    "roots": [
+      "./imports",
+      "./content"
+    ]
+  }
+}

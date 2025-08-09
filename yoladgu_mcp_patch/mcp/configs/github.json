@@ -1,0 +1,11 @@
+{
+  "name": "github",
+  "description": "GitHub MCP",
+  "command": "npx",
+  "args": [
+    "@modelcontextprotocol/github"
+  ],
+  "env": {
+    "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+  }
+}

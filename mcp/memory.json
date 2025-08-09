@@ -2,5 +2,8 @@
   "name": "memory-mcp",
   "command": "npx",
   "args": ["@modelcontextprotocol/server-memories"],
+  "env": {
+    "REDIS_URL": "${REDIS_URL}"
+  },
   "options": { "stdio": "pipe" }
 }
