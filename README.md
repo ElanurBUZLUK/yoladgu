@@ -41,6 +41,12 @@ curl -X POST http://localhost:8001/api/v1/auth/register \
 
 Ardından bu kullanıcı ile login olabilir ve Frontend üzerinde oturum açabilirsiniz.
 
+Not: Geliştirme kolaylığı için `.local` domain’li e-postalar desteklenir. Bu amaçla `app/schemas.py` içinde `RegisterRequest.email` ve `LoginRequest.email` tipleri `EmailStr` yerine `str` olarak tanımlanmıştır. Değişikliği konteynere almak için backend imajını yeniden derleyin:
+
+```bash
+docker compose up -d --build backend
+```
+
 ## Mimari ve Bileşenler
 
 - Backend: FastAPI, SQLAlchemy (async), JWT (access/refresh), RBAC (admin/teacher/student)

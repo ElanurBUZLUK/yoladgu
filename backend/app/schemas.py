@@ -1,8 +1,8 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional, Dict, List
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     full_name: Optional[str] = None
     role: Optional[str] = "student"
@@ -13,7 +13,7 @@ class TokenPair(BaseModel):
     token_type: str = "bearer"
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 class RefreshRequest(BaseModel):
