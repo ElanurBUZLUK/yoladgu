@@ -38,7 +38,10 @@ def ensemble(body: EnsembleRequest,
              user: User = Depends(require_roles("student"))):
     b = lin.predict(body.user_features, body.question_features, body.question_id)
     o = ftrl.predict(body.student_id, body.user_features, body.question_features)
-    w_b, w_o = 0.5, 0.5
+    # extend with CF/retrieval if available later; currently weight by config
+    from app.core.config import settings
+    w_b = float(settings.W_BANDIT)
+    w_o = float(settings.W_ONLINE)
     if body.weights:
         w_b = float(body.weights.get("bandit", w_b))
         w_o = float(body.weights.get("online", w_o))

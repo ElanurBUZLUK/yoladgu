@@ -35,7 +35,7 @@ class FTRLService:
     def update(self, label: int, uf: Dict[str, float], qf: Dict[str, float]):
         x = self._feat(uf, qf)
         p = 1.0 / (1.0 + np.exp(-np.dot(self._weights(), x)))
-        g = (p - label) * x
+        g = (p - float(label)) * x
         for i in range(self.dim):
             sigma = (np.sqrt(self.n[i] + g[i]*g[i]) - np.sqrt(self.n[i])) / self.alpha
             self.z[i] += g[i] - sigma * self._weights()[i]

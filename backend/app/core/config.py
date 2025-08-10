@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_GREEN: str = "questions_green"
     QDRANT_ALIAS_ACTIVE: str = "questions_active"
 
+    # Ensemble weights
+    W_CF: float = 0.25
+    W_BANDIT: float = 0.35
+    W_ONLINE: float = 0.40
+
     model_config = SettingsConfigDict(env_file=os.getenv("ENV_FILE", ".env"), env_file_encoding="utf-8")
 
 settings = Settings()
