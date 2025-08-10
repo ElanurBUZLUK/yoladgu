@@ -19,6 +19,11 @@ try:
     _HAS_QUIZ = True
 except Exception:
     _HAS_QUIZ = False
+try:
+    from app.api.v1.endpoints import ml
+    _HAS_ML = True
+except Exception:
+    _HAS_ML = False
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -42,6 +47,8 @@ if _HAS_MCP:
     app.include_router(mcp_bridge.router, prefix=settings.API_V1_STR)
 if _HAS_QUIZ:
     app.include_router(quiz.router, prefix=settings.API_V1_STR)
+if _HAS_ML:
+    app.include_router(ml.router, prefix=settings.API_V1_STR)
 
 @app.get("/health")
 def health():
