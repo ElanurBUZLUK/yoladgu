@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     VECTOR_GREEN_NAME: str = "green"
     VECTOR_STORE_TOMBSTONE_KEY: str = "vector:tombstones"
     EMBED_DIM: int = 384
+    EMBEDDING_MODEL: str | None = None  # e.g., "sentence-transformers/all-MiniLM-L6-v2"
+    EMBEDDING_PROVIDER: str = "hash"    # "hash" | "sbert"
 
     # HNSW
     HNSW_SPACE: str = "l2"
