@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     W_CF: float = 0.25
     W_BANDIT: float = 0.35
     W_ONLINE: float = 0.40
+    W_RETR: float = 0.0
+    CF_MODEL_PATH: str | None = None
 
     model_config = SettingsConfigDict(env_file=os.getenv("ENV_FILE", ".env"), env_file_encoding="utf-8")
 
