@@ -21,11 +21,11 @@ def get_index_manager() -> VectorIndexManager:
 
 @lru_cache(maxsize=1)
 def get_linucb_service() -> LinUCBService:
-    return LinUCBService(feature_dim=16, alpha=0.2)
+    return LinUCBService(feature_dim=16, alpha=0.2, redis_url=settings.REDIS_URL)
 
 @lru_cache(maxsize=1)
 def get_ftrl_service() -> FTRLService:
-    return FTRLService(dim=32, alpha=0.1, beta=1.0, l1=0.0, l2=1.0)
+    return FTRLService(dim=32, alpha=0.1, beta=1.0, l1=0.0, l2=1.0, redis_url=settings.REDIS_URL)
 
 
 # Authentication & Authorization dependencies

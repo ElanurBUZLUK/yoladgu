@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MIN: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    DATABASE_URL: str = "postgresql+asyncpg://learnai:learnai@localhost:5432/learnai"
-    REDIS_URL: str = "redis://localhost:6379/0"
+    DATABASE_URL: str = "postgresql+asyncpg://learnai:learnai@localhost:55432/learnai"
+    REDIS_URL: str = "redis://localhost:16379/0"
 
     VECTOR_BACKEND: str = "hnsw"  # hnsw | faiss | qdrant
     VECTOR_INDEX_DIR: str = "../data/indices"

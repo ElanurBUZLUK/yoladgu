@@ -32,11 +32,11 @@ def online_update(body: OnlineRequest, label: int, svc: FTRLService = Depends(ge
     return {"ok": True}
 
 @router.post("/ensemble")
-def ensemble(body: EnsembleRequest,
-             lin: LinUCBService = Depends(get_linucb_service),
-             ftrl: FTRLService = Depends(get_ftrl_service),
-             db: AsyncSession = Depends(get_db),
-             user: User = Depends(require_roles("student"))):
+async def ensemble(body: EnsembleRequest,
+                   lin: LinUCBService = Depends(get_linucb_service),
+                   ftrl: FTRLService = Depends(get_ftrl_service),
+                   db: AsyncSession = Depends(get_db),
+                   user: User = Depends(require_roles("student"))):
     b = lin.predict(body.user_features, body.question_features, body.question_id)
     o = ftrl.predict(body.student_id, body.user_features, body.question_features)
     try:
