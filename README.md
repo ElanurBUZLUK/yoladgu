@@ -1,39 +1,121 @@
-# LearnAI Monorepo (Full E2E v2)
+## LearnAI Monorepo (Full E2E v2)
 
-Bu depo; **Backend (FastAPI + Postgres + Redis)**, **Frontend (statik HTML/JS)**, 
-**ML & Öneri Sistemi (LinUCB + FTRL + Vektör Arama HNSW/FAISS/Qdrant seçilebilir)**, 
-**Blue/Green Index Yönetimi**, **Öğretmen-Öğrenci onay akışı**, **RBAC**, **MCP örnek konfigleri** içerir.
+Bu depo; Backend (FastAPI + Postgres + Redis), Frontend (statik HTML/JS), ML & Öneri Sistemi (LinUCB + FTRL + Vektör Arama HNSW/FAISS/Qdrant seçilebilir), Blue/Green Index Yönetimi, Öğretmen-Öğrenci onay akışı, RBAC ve örnek MCP konfigürasyonları içerir.
 
-## Hızlı Başlangıç
+### Hızlı Başlangıç (Docker Compose ile)
+
+Önkoşullar: Docker ve Docker Compose
 
 ```bash
-# 1) Docker ile Postgres + Redis (Qdrant opsiyonel)
-docker compose -f docker/docker-compose.yml up -d
+# 1) Tüm servisleri ayağa kaldır
+docker compose up -d --build
 
-# 2) DB şema
-psql postgresql://learnai:learnai@localhost:5432/learnai -f db/init.sql
+# 2) Veritabanı şemasını yükle (iki seçenek)
+# 2A) Host makinede psql varsa (port haritalaması: 55433)
+psql postgresql://yoladgu:password@localhost:55433/yoladgu -f db/init.sql
 
-# 3) Backend
-cd backend
-cp .env.example .env
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+# 2B) psql yoksa: SQL'i container içine pipe et
+docker compose exec -T postgres psql -U yoladgu -d yoladgu -f /dev/stdin < db/init.sql
 
-# 4) ML/Vector seed + build + swap
-cd ..
-python tools/seed_embeddings.py --n 1000
-python tools/batch_indexer.py
-curl -X POST http://localhost:8000/api/v1/index/swap
+# 3) ML/Vector seed + index build + mavi/yeşil swap
+docker compose exec -T backend python tools/seed_embeddings.py --n 1000
+docker compose exec -T backend python tools/batch_indexer.py
+curl -X POST http://localhost:8001/api/v1/index/swap
+
+# 4) Sağlık kontrolü
+curl http://localhost:8001/health
 
 # 5) Frontend
-# frontend/index.html dosyasını tarayıcıda açın (CORS için backend 8000 portunda)
+# Docker ile geldi: http://localhost:8080
 ```
 
-### Varsayılanlar
-- Vektör backend: **HNSW** (`.env` → `VECTOR_BACKEND=hnsw`)
-- Embed boyutu: 384 (demo hash-embedding)
-- Auth: JWT Access/Refresh
-- RBAC: `admin`, `teacher`, `student` rolleri
+### Demo Kullanıcı Oluşturma (Register ile)
 
-> Not: Bu iskelet "çalışır örnek" mantığıyla hazırlanmıştır. Üretime alırken güvenlik/observability/CI konularını genişletin.
+Ön tanımlı kullanıcı yoktur; demoyu Register ile oluşturun.
+
+```bash
+curl -X POST http://localhost:8001/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"student1@yoladgu.local","password":"pass123","full_name":"Demo Student","role":"student"}'
+```
+
+Ardından bu kullanıcı ile login olabilir ve Frontend üzerinde oturum açabilirsiniz.
+
+## Mimari ve Bileşenler
+
+- Backend: FastAPI, SQLAlchemy (async), JWT (access/refresh), RBAC (admin/teacher/student)
+- Depolama: Postgres (55433→5432), Redis (16380→6379)
+- Vektör Arama: HNSW (varsayılan) veya FAISS/Qdrant
+- Blue/Green Index: `questions_blue` / `questions_green` alias yönetimi
+- Frontend: Basit statik HTML/JS (8080)
+
+### Proje Dizini (Özet)
+
+```
+backend/        # FastAPI uygulaması
+frontend/       # Statik HTML/JS
+db/init.sql     # Veritabanı şeması
+tools/          # Seed ve index araçları
+docker-compose.yml
+docker/         # Alternatif compose örnekleri
+```
+
+## Çalıştırma Ayrıntıları
+
+### API Temeli
+
+- Base URL: `http://localhost:8001/api/v1`
+- Sağlık: `GET /health`
+
+### Auth
+
+- Register: `POST /auth/register`
+- Login: `POST /auth/login`
+- Refresh: `POST /auth/refresh`
+
+Örnek login:
+
+```bash
+curl -X POST http://localhost:8001/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"student1@yoladgu.local","password":"pass123"}'
+```
+
+### Vektör ve Öneri
+
+- Vektör arama: `POST /vectors/search` body: `{ text, k }`
+- Index swap (blue/green): `POST /index/swap`
+
+## Ortam Değişkenleri (Backend `.env`)
+
+Varsayılanlar (Compose ile uyumlu):
+
+```env
+PROJECT_NAME=LearnAI
+API_V1_STR=/api/v1
+ENV=dev
+
+JWT_SECRET=supersecretjwt
+JWT_ALG=HS256
+ACCESS_TOKEN_EXPIRE_MIN=30
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+DATABASE_URL=postgresql+asyncpg://yoladgu:password@postgres:5432/yoladgu
+REDIS_URL=redis://redis:6379/0
+
+VECTOR_BACKEND=hnsw
+VECTOR_INDEX_DIR=../data/indices
+EMBED_DIM=384
+EMBEDDING_PROVIDER=hash
+```
+
+## Sorun Giderme
+
+- InvalidPasswordError (DB bağlantısı): `DATABASE_URL` ile `docker-compose.yml` eşleşmiyorsa backend yeniden yaratın: `docker compose up -d --force-recreate backend`
+- Port karmaşası: Dışarıya açık port 8001’dir (container içi 8000). API çağrılarında `http://localhost:8001` kullanın.
+- CORS: Frontend 8080’da çalışır; backend tüm origin’lere açıktır (geliştirme için).
+
+## Notlar
+
+- Varsayılan vektör backend: HNSW, embed boyutu: 384 (demo hash-embedding)
+- Üretime alırken güvenlik, gözlemlenebilirlik ve CI süreçlerini genişletmeniz önerilir.

@@ -27,11 +27,11 @@
       try{ const t = JSON.parse(localStorage.getItem('auth')); return t?.access_token ? { 'Authorization': `Bearer ${t.access_token}` } : {}; }catch{ return {}; }
     }
     async function getStats(){
-      const r = await fetch('http://localhost:8000/api/v1/index/stats', { headers: { ...authHeaders() } }); 
+      const r = await fetch('http://localhost:8001/api/v1/index/stats', { headers: { ...authHeaders() } }); 
       document.getElementById('out').innerText = JSON.stringify(await r.json(), null, 2);
     }
     async function swap(){
-      const r = await fetch('http://localhost:8000/api/v1/index/swap', {method:'POST', headers: { ...authHeaders() }}); 
+      const r = await fetch('http://localhost:8001/api/v1/index/swap', {method:'POST', headers: { ...authHeaders() }}); 
       document.getElementById('out').innerText = JSON.stringify(await r.json(), null, 2);
     }
   </script>
