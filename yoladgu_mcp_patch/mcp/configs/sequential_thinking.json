@@ -1,9 +1,0 @@
-{
-  "name": "sequential-thinking",
-  "description": "Sequential Thinking MCP",
-  "command": "npx",
-  "args": [
-    "@modelcontextprotocol/sequential-thinking-server"
-  ],
-  "env": {}
-}

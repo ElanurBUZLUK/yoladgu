@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Virtualenvs
+.venv/
+backend/.venv/
+frontend/.venv/
+
+# Env files
+.env
+*.env
+backend/.env
+frontend/.env
+
+# Logs
+*.log
+backend/uvicorn.log
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+
+# Data & artifacts
+data/
+feature_repo/data/
+feature_repo/registry.db
+backend/app/ml/models/*.npz
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+

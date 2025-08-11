@@ -4,6 +4,7 @@ import os
 class Settings(BaseSettings):
     PROJECT_NAME: str = "LearnAI"
     API_V1_STR: str = "/api/v1"
+    ENV: str = "dev"
 
     JWT_SECRET: str = "supersecretjwt"
     JWT_ALG: str = "HS256"
@@ -47,6 +48,24 @@ class Settings(BaseSettings):
     W_ONLINE: float = 0.40
     W_RETR: float = 0.0
     CF_MODEL_PATH: str | None = None
+
+    # Feast (optional)
+    FEAST_ENABLED: bool = False
+    FEAST_REPO_PATH: str | None = None
+    FEAST_REGISTRY_PATH: str | None = None
+    FEAST_ONLINE_REDIS_URL: str | None = None
+
+    # Adaptive rating params
+    RATING_BETA: float = 0.0025
+    K_STUDENT: float = 32.0
+    K_QUESTION: float = 16.0
+    ALPHA_TIME: float = 1.5
+    TOLERANCE: float = 150.0
+    EMA_TREF_ETA: float = 0.05
+    REBUCKET_MIN_ATTEMPTS: int = 30
+    REBUCKET_COOLDOWN_DAYS: int = 14
+    REBUCKET_PCT: str = "25,60,85"
+    EXPLORE_RATIO: float = 0.2
 
     model_config = SettingsConfigDict(env_file=os.getenv("ENV_FILE", ".env"), env_file_encoding="utf-8")
 

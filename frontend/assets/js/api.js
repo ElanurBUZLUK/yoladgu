@@ -103,6 +103,15 @@ const API = {
     const res = await this.fetchWithAuth(`/questions/next`, {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({student_id: sid, question_id, user_features, question_features})});
     return res.json();
   },
+  // Adaptive
+  async adaptiveServe(student_id, k=1){
+    const res = await this.fetchWithAuth(`/adaptive/serve-question`, {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({student_id, k})});
+    return res.json();
+  },
+  async adaptiveSubmit(student_id, question_id, is_correct, time_ms){
+    const res = await this.fetchWithAuth(`/adaptive/submit-answer`, {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({student_id, question_id, is_correct, time_ms})});
+    return res.json();
+  },
   async questionsSubmit(question_id, correct){
     const res = await this.fetchWithAuth(`/questions/submit?question_id=${encodeURIComponent(question_id)}&correct=${correct?1:0}`, {method:"POST"});
     return res.json();

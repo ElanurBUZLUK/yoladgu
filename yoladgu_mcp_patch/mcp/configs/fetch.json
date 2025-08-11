@@ -1,9 +1,0 @@
-{
-  "name": "fetch",
-  "description": "Generic HTTP/Fetch MCP",
-  "command": "npx",
-  "args": [
-    "@modelcontextprotocol/fetch-server"
-  ],
-  "env": {}
-}

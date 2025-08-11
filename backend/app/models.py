@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Integer, String, Boolean, Text, ForeignKey, DateTime, Numeric
+from sqlalchemy import Integer, String, Boolean, Text, ForeignKey, DateTime, Numeric, SmallInteger, Float
 from sqlalchemy.sql import func
 from datetime import datetime
 from app.core.db import Base
@@ -13,6 +13,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String, default="student")
     is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    # Adaptive: skill
+    skill_rating: Mapped[float] = mapped_column(Float, default=0.0)
+    skill_rating_var: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
@@ -56,4 +59,26 @@ class Event(Base):
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     event_type: Mapped[str] = mapped_column(String)
     payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+
+
+class Question(Base):
+    __tablename__ = "questions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    difficulty_rating: Mapped[float] = mapped_column(Float, default=0.0)
+    difficulty_level: Mapped[int] = mapped_column(SmallInteger, default=2)
+    t_ref_ms: Mapped[int] = mapped_column(Integer, default=10000)
+    last_recalibrated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+
+class Attempt(Base):
+    __tablename__ = "attempts"
+    attempt_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"))
+    is_correct: Mapped[bool] = mapped_column(Boolean, default=False)
+    time_ms: Mapped[int] = mapped_column(Integer)
+    reward_time_adj: Mapped[float] = mapped_column(Float)
+    expected: Mapped[float] = mapped_column(Float)
+    delta: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())

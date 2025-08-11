@@ -15,6 +15,16 @@ try:
 except Exception:
     _HAS_MCP = False
 try:
+    from app.api.v1.endpoints import embeddings
+    _HAS_EMBED = True
+except Exception:
+    _HAS_EMBED = False
+try:
+    from app.api.v1.endpoints import adaptive
+    _HAS_ADAPTIVE = True
+except Exception:
+    _HAS_ADAPTIVE = False
+try:
     from app.api.v1.endpoints import quiz
     _HAS_QUIZ = True
 except Exception:
@@ -49,6 +59,10 @@ if _HAS_QUIZ:
     app.include_router(quiz.router, prefix=settings.API_V1_STR)
 if _HAS_ML:
     app.include_router(ml.router, prefix=settings.API_V1_STR)
+if _HAS_ADAPTIVE:
+    app.include_router(adaptive.router, prefix=settings.API_V1_STR)
+if _HAS_EMBED:
+    app.include_router(embeddings.router, prefix=settings.API_V1_STR)
 
 @app.get("/health")
 def health():

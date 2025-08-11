@@ -1,9 +1,0 @@
-{
-  "name": "memories",
-  "description": "Memories MCP (kalıcı bilgi grafiği)",
-  "command": "npx",
-  "args": [
-    "@modelcontextprotocol/memories-server"
-  ],
-  "env": {}
-}
