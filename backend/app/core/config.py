@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     ARCHIVE_LOOKBACK_DAYS: int = 180
     ARCHIVE_BATCH_SIZE: int = 10000
 
+    # MLflow
+    MLFLOW_TRACKING_URI: str | None = None
+    MLFLOW_EXPERIMENT: str | None = "default"
+
+    # Vault
+    VAULT_ADDR: str | None = None
+    VAULT_TOKEN: str | None = None
+
     model_config = SettingsConfigDict(env_file=os.getenv("ENV_FILE", ".env"), env_file_encoding="utf-8")
 
 settings = Settings()

@@ -92,7 +92,8 @@ if _HAS_RETR:
 # Prometheus metrics
 try:
     from prometheus_fastapi_instrumentator import Instrumentator  # type: ignore
-    Instrumentator().instrument(app).expose(app)
+    ins = Instrumentator()
+    ins.instrument(app).expose(app)
 except Exception:
     pass
 

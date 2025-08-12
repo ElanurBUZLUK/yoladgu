@@ -11,6 +11,8 @@ from app.core.db import get_db
 from app.models import Event, User
 from app.services.ensemble_weights import get_ensemble_weights_service
 import json
+import time
+from app.utils.metrics import rec_latency, rec_scores
 
 router = APIRouter(prefix="/recommend", tags=["recommend"])
 
@@ -85,6 +87,7 @@ async def ensemble(body: EnsembleRequest,
                    peer: PeerHardnessService = Depends(get_peer_service),
                    db: AsyncSession = Depends(get_db),
                    user: User = Depends(require_roles("student"))):
+    t0 = time.time()
     b = lin.predict(body.user_features, body.question_features, body.question_id)
     o = ftrl.predict(body.student_id, body.user_features, body.question_features)
     try:
@@ -126,4 +129,14 @@ async def ensemble(body: EnsembleRequest,
     # exposure event
     await db.execute(insert(Event).values(user_id=user.id, event_type="question_exposure", payload=json.dumps({"question_id": body.question_id, "scores": {"bandit": b, "online": o, "peer": p_peer, "cf": cf, "served": s_served}, "final": final, "variant": variant, "weights": weights})))
     await db.commit()
+    # metrics
+    try:
+        rec_scores.labels("bandit").observe(float(b))
+        rec_scores.labels("online").observe(float(o))
+        rec_scores.labels("cf").observe(float(cf))
+        rec_scores.labels("peer").observe(float(p_peer))
+        rec_scores.labels("served").observe(float(s_served))
+        rec_latency.observe(time.time() - t0)
+    except Exception:
+        pass
     return {"final_score": final, "individual_scores": {"cf": cf, "bandit": b, "online": o, "retr": 0.0, "peer": p_peer, "served": s_served}, "weights_used": {"cf": w_cf, "bandit": w_b, "online": w_o, "retr": w_r, "peer": w_p, "served": w_s}, "variant": variant}
