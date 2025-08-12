@@ -1,0 +1,88 @@
+stages:
+  - test
+  - build
+  - deploy
+  - monitor
+
+variables:
+  PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
+
+cache:
+  paths:
+    - .cache/pip
+
+unit-tests:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -r backend/requirements.txt
+    - pip install pytest
+  script:
+    - pytest -q
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      when: on_success
+
+model-training:
+  stage: build
+  image: python:3.11-slim
+  variables:
+    MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+    MLFLOW_EXPERIMENT: ${MLFLOW_EXPERIMENT}
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -r backend/requirements.txt
+    - pip install mlflow
+  script:
+    - python tools/train_cf.py --data examples/interactions.jsonl
+  rules:
+    - changes:
+        - tools/train_cf.py
+        - backend/app/services/cf.py
+        - examples/**
+
+security-scan:
+  stage: test
+  image: anchore/grype:latest
+  script:
+    - grype dir:${CI_PROJECT_DIR} --fail-on medium
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      when: on_success
+
+docker-build-backend:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_DRIVER: overlay2
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE/backend:${CI_COMMIT_SHORT_SHA} backend
+    - echo "Built backend image"
+  rules:
+    - changes:
+        - backend/**
+
+deploy-k8s:
+  stage: deploy
+  image: bitnami/kubectl:1.30
+  script:
+    - kubectl apply -f k8s/kserve-inference.yaml
+    - kubectl apply -f k8s/kserve-shadow-route.yaml
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+
+monitor-metrics:
+  stage: monitor
+  image: curlimages/curl:8.7.1
+  script:
+    - curl -sSf ${BACKEND_BASE_URL:-http://backend:8000}/metrics | head -n 5
+  rules:
+    - if: $CI_COMMIT_BRANCH
+      when: manual
+
+

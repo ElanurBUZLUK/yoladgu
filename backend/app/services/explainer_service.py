@@ -15,19 +15,21 @@ class ExplainerService:
         self.cache_ttl = int(getattr(settings, "EXPLAIN_CACHE_TTL_S", 3600))
         self.r = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
         self._client = None
+        # Fetch secrets from Vault if available
+        from app.utils.vault import get_secret
         if self.provider == "openai":
             from openai import OpenAI
-            self._client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            self._client = OpenAI(api_key=get_secret("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"))
         elif self.provider == "cohere":
             import cohere
-            self._client = cohere.Client(os.getenv("COHERE_API_KEY"))
+            self._client = cohere.Client(get_secret("COHERE_API_KEY") or os.getenv("COHERE_API_KEY"))
         elif self.provider == "anthropic":
             # Minimal Anthropic support (messages API)
             import anthropic
-            self._client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            self._client = anthropic.Anthropic(api_key=get_secret("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_API_KEY"))
         elif self.provider == "hf":
             from huggingface_hub import InferenceClient
-            self._client = InferenceClient(token=os.getenv("HF_API_TOKEN"))
+            self._client = InferenceClient(token=get_secret("HF_API_TOKEN") or os.getenv("HF_API_TOKEN"))
 
     def _cache_key(self, student_id: int, question_id: int, context_docs: List[Dict[str, Any]]) -> str:
         material = json.dumps({

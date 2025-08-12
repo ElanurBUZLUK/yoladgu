@@ -12,9 +12,19 @@ from app.models import User
 from app.utils.auth import decode_token
 from app.services.peer_hardness import PeerHardnessService, PeerStore, PeerParams, CosineWeightedStrategy
 from app.services.peer_hardness_store import RedisPeerStore
+from app.utils.vault import get_secret
 
 @lru_cache(maxsize=1)
 def get_embedding_service() -> EmbeddingService:
+    # Pull provider/model from Vault if present
+    prov = get_secret("EMBEDDING_PROVIDER") or getattr(settings, "EMBEDDING_PROVIDER", None)
+    model = get_secret("EMBEDDING_MODEL") or getattr(settings, "EMBEDDING_MODEL", None)
+    if prov:
+        import os
+        os.environ["EMBEDDING_PROVIDER"] = prov
+    if model:
+        import os
+        os.environ["EMBEDDING_MODEL_ID"] = model
     return EmbeddingService(settings.EMBED_DIM)
 
 @lru_cache(maxsize=1)
