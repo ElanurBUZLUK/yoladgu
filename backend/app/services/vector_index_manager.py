@@ -20,6 +20,9 @@ class VectorIndexManager:
         self._lock = threading.RLock()
         self._active = self._get_active_from_redis()
         self._backends: Dict[str, Optional[object]] = {"blue": None, "green": None}
+        # Sharded pgvector backends
+        self._pg_shards: int = int(getattr(settings, "VECTOR_SHARDS", 1) or 1)
+        self._pg_backends_shards: Optional[Dict[int, object]] = None
         self._tombstone_key = settings.VECTOR_STORE_TOMBSTONE_KEY
         for name in ("blue","green"):
             self._try_load_slot(name)
@@ -40,6 +43,7 @@ class VectorIndexManager:
         if settings.VECTOR_BACKEND == "pgvector":
             if PgVectorBackend is None:
                 raise RuntimeError("pgvector backend selected but module not available")
+            # For sharded mode, we instantiate per-shard elsewhere
             return PgVectorBackend(dim=dim)
         # default
         return HNSWBackend(dim, settings.HNSW_SPACE, settings.HNSW_M, settings.HNSW_EF_CONSTRUCT, settings.HNSW_EF_SEARCH)
@@ -91,11 +95,38 @@ class VectorIndexManager:
         return settings.VECTOR_GREEN_NAME if self.active_slot() == settings.VECTOR_BLUE_NAME else settings.VECTOR_BLUE_NAME
 
     def search(self, query: np.ndarray, k: int = 10) -> Tuple[List[int], List[float]]:
-        with self._lock:
-            be = self._backends.get(self._active)
-        if be is None:
-            return [], []
-        ids, dists = be.search(query, k + 50)
+        # Sharded pgvector scatter-gather path
+        if settings.VECTOR_BACKEND == "pgvector" and self._pg_shards > 1:
+            with self._lock:
+                if self._pg_backends_shards is None:
+                    # lazy init shard backends
+                    self._pg_backends_shards = {}
+                    for i in range(self._pg_shards):
+                        self._pg_backends_shards[i] = PgVectorBackend(dim=settings.EMBED_DIM, table_name=f"embeddings_{i}")  # type: ignore[arg-type]
+            all_pairs: List[Tuple[int, float]] = []
+            for i, be_shard in self._pg_backends_shards.items():  # type: ignore[union-attr]
+                try:
+                    s_ids, s_d = be_shard.search(query, k)
+                    all_pairs.extend(list(zip(s_ids, s_d)))
+                except Exception:
+                    continue
+            if not all_pairs:
+                return [], []
+            # Deduplicate by id keeping best (lowest distance)
+            best: Dict[int, float] = {}
+            for i, d in all_pairs:
+                di = float(d)
+                if i not in best or di < best[i]:
+                    best[i] = di
+            merged = sorted(best.items(), key=lambda x: x[1])[:k]
+            ids = [i for i, _ in merged]
+            dists = [d for _, d in merged]
+        else:
+            with self._lock:
+                be = self._backends.get(self._active)
+            if be is None:
+                return [], []
+            ids, dists = be.search(query, k + 50)
         deleted = {int(x) for x in self.r.smembers(self._tombstone_key)}
         filtered = [(i,d) for i,d in zip(ids,dists) if i != -1 and i not in deleted][:k]
         if not filtered: return [], []
@@ -117,19 +148,34 @@ class VectorIndexManager:
         }
 
     def build_on_inactive(self, embeddings: np.ndarray, ids: Optional[np.ndarray]) -> dict:
+        # Sharded pgvector build: route by id % shards
+        if settings.VECTOR_BACKEND == "pgvector" and self._pg_shards > 1 and ids is not None:
+            if embeddings.shape[1] != settings.EMBED_DIM:
+                raise ValueError(f"embedding dim mismatch: got {embeddings.shape[1]}, expected {settings.EMBED_DIM}")
+            # Prepare per-shard batches
+            shard_to_idx: Dict[int, List[int]] = {i: [] for i in range(self._pg_shards)}
+            for idx, qid in enumerate(ids.tolist()):
+                shard_to_idx[int(qid) % self._pg_shards].append(idx)
+            # Build per shard
+            for shard, idxs in shard_to_idx.items():
+                if not idxs:
+                    continue
+                be = PgVectorBackend(dim=settings.EMBED_DIM, table_name=f"embeddings_{shard}")  # type: ignore[arg-type]
+                X = embeddings[idxs, :]
+                I = ids[idxs]
+                be.build(X, I)
+            return {"built_shards": self._pg_shards}
+        # Default single-backend path
         slot = self.inactive_slot()
-        # Dim guard
         if embeddings.shape[1] != settings.EMBED_DIM:
             raise ValueError(f"embedding dim mismatch: got {embeddings.shape[1]}, expected {settings.EMBED_DIM}")
         be = self._make_backend(slot)
         be.build(embeddings, ids)
         path = self._slot_path(slot)
-        # For file-based backends, persist to disk. For qdrant, this is a no-op
         try:
             be.save(path)
         except Exception:
             pass
-        # Persist simple metadata for compatibility checks
         try:
             import json, time
             meta = {

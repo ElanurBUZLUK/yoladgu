@@ -127,6 +127,16 @@ create table if not exists embeddings (
 );
 create index if not exists idx_embeddings_cosine on embeddings using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 
+-- Optional sharded tables for pgvector
+do $$
+declare i int := 0;
+begin
+  while i < 8 loop
+    execute format('create table if not exists embeddings_%s (id int primary key, embedding vector(384) not null, content jsonb);', i);
+    i := i + 1;
+  end loop;
+end$$;
+
 -- Dynamic policy variants for next-question policy
 create table if not exists policy_variants (
   id serial primary key,
