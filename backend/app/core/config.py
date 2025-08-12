@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     SERVING_PROVIDER: str = "none"  # none | ts | triton
     TS_URL: str | None = None        # e.g., http://localhost:8080
     TS_MODEL_NAME: str | None = None # e.g., rec
+    # KServe
+    KS_URL: str | None = None        # e.g., http://kserve.default.svc.cluster.local
+    KS_MODEL_NAME: str | None = None # e.g., rec
+    KS_INFER_PATH: str = "/v2/models/{model}/infer"
 
     # Vector sharding
     VECTOR_SHARDS: int = 1
@@ -127,6 +131,7 @@ class Settings(BaseSettings):
     # Vault
     VAULT_ADDR: str | None = None
     VAULT_TOKEN: str | None = None
+    VAULT_KV_PATH: str | None = None  # e.g., kv/data/app
 
     model_config = SettingsConfigDict(env_file=os.getenv("ENV_FILE", ".env"), env_file_encoding="utf-8")
 

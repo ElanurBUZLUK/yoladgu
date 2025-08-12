@@ -98,10 +98,18 @@ async def ensemble(body: EnsembleRequest,
     s_served = 0.0
     try:
         from app.core.config import settings
-        if getattr(settings, "SERVING_PROVIDER", "none") == "ts":
+        prov = getattr(settings, "SERVING_PROVIDER", "none")
+        if prov == "ts":
             from app.services.online.ts_client import TorchServeClient
-            ts = TorchServeClient()
-            s_served = float(ts.predict({
+            s_served = float(TorchServeClient().predict({
+                "student_id": body.student_id,
+                "question_id": body.question_id,
+                "user_features": body.user_features,
+                "question_features": body.question_features,
+            }))
+        elif prov == "kserve":
+            from app.services.online.ts_client import KServeClient
+            s_served = float(KServeClient().predict({
                 "student_id": body.student_id,
                 "question_id": body.question_id,
                 "user_features": body.user_features,

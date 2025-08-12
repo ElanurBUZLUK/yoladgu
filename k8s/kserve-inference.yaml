@@ -1,0 +1,18 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: rec-model
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: pytorch
+      storageUri: s3://YOUR_BUCKET/model-store/rec/
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 1
+          memory: 2Gi
+
