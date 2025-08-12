@@ -256,3 +256,15 @@ async def policy_assign(body: PolicyAssignRequest, db: AsyncSession = Depends(ge
     )
     await db.commit()
     return {"ok": True, "assigned": len(body.user_ids), "cohort": body.variant_name}
+
+
+# --- Archival job ---
+@router.post("/jobs/archive")
+async def jobs_archive(lookback_days: int | None = None, tables: str = "events,attempts", batch_size: int | None = None, user=Depends(require_roles("admin"))):
+    cmd = ["python", "tools/archive_to_s3.py", "--tables", tables]
+    if lookback_days is not None:
+        cmd += ["--lookback_days", str(int(lookback_days))]
+    if batch_size is not None:
+        cmd += ["--batch_size", str(int(batch_size))]
+    code, out = _run_cmd(cmd)
+    return {"ok": code == 0, "code": code, "output": out}

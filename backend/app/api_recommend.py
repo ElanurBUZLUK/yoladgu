@@ -91,6 +91,21 @@ async def ensemble(body: EnsembleRequest,
         cf = get_cf_model().score(body.student_id, body.question_id)
     except Exception:
         cf = 0.0
+    # optional served model score
+    s_served = 0.0
+    try:
+        from app.core.config import settings
+        if getattr(settings, "SERVING_PROVIDER", "none") == "ts":
+            from app.services.online.ts_client import TorchServeClient
+            ts = TorchServeClient()
+            s_served = float(ts.predict({
+                "student_id": body.student_id,
+                "question_id": body.question_id,
+                "user_features": body.user_features,
+                "question_features": body.question_features,
+            }))
+    except Exception:
+        s_served = 0.0
     # Determine weights: request override > user-assigned variant > defaults
     svc_w = get_ensemble_weights_service()
     variant, weights = await svc_w.get_effective_weights(db, user.id, override=body.weights)
@@ -99,6 +114,7 @@ async def ensemble(body: EnsembleRequest,
     w_o = float(weights.get("online", 0.0))
     w_r = float(weights.get("retr", 0.0))
     w_p = float(weights.get("peer", 0.0))
+    w_s = float(weights.get("served", 0.0))
 
     # optional peer score
     try:
@@ -106,8 +122,8 @@ async def ensemble(body: EnsembleRequest,
     except Exception:
         p_peer = 0.0
 
-    final = w_cf*cf + w_b*b + w_o*o + w_r*0.0 + w_p*p_peer
+    final = w_cf*cf + w_b*b + w_o*o + w_r*0.0 + w_p*p_peer + w_s*s_served
     # exposure event
-    await db.execute(insert(Event).values(user_id=user.id, event_type="question_exposure", payload=json.dumps({"question_id": body.question_id, "scores": {"bandit": b, "online": o, "peer": p_peer, "cf": cf}, "final": final, "variant": variant, "weights": weights})))
+    await db.execute(insert(Event).values(user_id=user.id, event_type="question_exposure", payload=json.dumps({"question_id": body.question_id, "scores": {"bandit": b, "online": o, "peer": p_peer, "cf": cf, "served": s_served}, "final": final, "variant": variant, "weights": weights})))
     await db.commit()
-    return {"final_score": final, "individual_scores": {"cf": cf, "bandit": b, "online": o, "retr": 0.0, "peer": p_peer}, "weights_used": {"cf": w_cf, "bandit": w_b, "online": w_o, "retr": w_r, "peer": w_p}, "variant": variant}
+    return {"final_score": final, "individual_scores": {"cf": cf, "bandit": b, "online": o, "retr": 0.0, "peer": p_peer, "served": s_served}, "weights_used": {"cf": w_cf, "bandit": w_b, "online": w_o, "retr": w_r, "peer": w_p, "served": w_s}, "variant": variant}

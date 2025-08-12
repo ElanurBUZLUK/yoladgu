@@ -106,6 +106,20 @@ class Settings(BaseSettings):
     KNOWLEDGE_GRAPH_ENABLED: bool = False
     SEMANTIC_CACHE_TTL_S: int = 900
 
+    # Model serving (TorchServe/Triton)
+    SERVING_PROVIDER: str = "none"  # none | ts | triton
+    TS_URL: str | None = None        # e.g., http://localhost:8080
+    TS_MODEL_NAME: str | None = None # e.g., rec
+
+    # Vector sharding
+    VECTOR_SHARDS: int = 1
+
+    # Archival (S3)
+    S3_BUCKET: str | None = None
+    AWS_REGION: str | None = None
+    ARCHIVE_LOOKBACK_DAYS: int = 180
+    ARCHIVE_BATCH_SIZE: int = 10000
+
     model_config = SettingsConfigDict(env_file=os.getenv("ENV_FILE", ".env"), env_file_encoding="utf-8")
 
 settings = Settings()
