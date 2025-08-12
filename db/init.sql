@@ -142,3 +142,15 @@ create index if not exists idx_policy_variants_active on policy_variants(is_acti
 
 -- Optional: cohort column to segment users for policy assignment
 alter table users add column if not exists experiment_cohort text;
+
+-- Password reset tokens
+create table if not exists password_resets (
+  id bigserial primary key,
+  user_id int not null references users(id) on delete cascade,
+  token text not null,
+  expires_at timestamp without time zone not null,
+  used boolean not null default false,
+  created_at timestamp without time zone default now()
+);
+create index if not exists idx_password_resets_user on password_resets(user_id);
+create index if not exists idx_password_resets_token on password_resets(token);

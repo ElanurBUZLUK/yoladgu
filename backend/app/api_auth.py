@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update, insert
 from datetime import datetime, timedelta
 from app.core.db import get_db
 from app.models import User, RefreshToken
@@ -56,17 +56,16 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
         uid = int(payload["sub"])
     except Exception:
         raise HTTPException(401, "Invalid refresh token")
-    # token exists?
+    # token exists and not expired?
     res = await db.execute(select(RefreshToken).where(RefreshToken.token == body.refresh_token))
     t = res.scalar_one_or_none()
-    if not t:
-        raise HTTPException(401, "Refresh token not found")
-    # issue new
+    if not t or t.expires_at < datetime.utcnow():
+        raise HTTPException(401, "Refresh token invalid or expired")
+    # issue new and rotate (prevent reuse): delete old, insert new
     access = create_access_token(str(uid))
     refresh = create_refresh_token(str(uid))
-    # rotate
     await db.execute(delete(RefreshToken).where(RefreshToken.id == t.id))
-    db.add(RefreshToken(user_id=uid, token=refresh, expires_at=datetime.utcnow() + timedelta(days=7)))
+    await db.execute(insert(RefreshToken).values(user_id=uid, token=refresh, expires_at=datetime.utcnow() + timedelta(days=7)))
     await db.commit()
     return TokenPair(access_token=access, refresh_token=refresh)
 
@@ -84,5 +83,35 @@ async def forgot(email: str, db: AsyncSession = Depends(get_db)):
     if not u:
         # kullanıcı yoksa bile başarılı dön (enumaration önleme)
         return {"ok": True}
-    # TODO: reset token üretimi ve e-posta gönderimi ekleyin
+    # create reset token
+    import secrets
+    token = secrets.token_urlsafe(32)
+    from sqlalchemy import insert as _insert
+    await db.execute(
+        _insert(__import__("app.models", fromlist=["password_resets"]).password_resets).values(  # type: ignore
+            user_id=u.id,
+            token=token,
+            expires_at=datetime.utcnow() + timedelta(hours=2),
+        )
+    )
+    await db.commit()
+    # Here, send email with token link e.g., https://app/reset?token=...
+    return {"ok": True}
+
+
+@router.post("/reset")
+async def reset_password(token: str, new_password: str, db: AsyncSession = Depends(get_db)):
+    # validate token
+    from sqlalchemy import text as _text
+    q = await db.execute(_text("SELECT id, user_id, expires_at, used FROM password_resets WHERE token = :t"), {"t": token})
+    row = q.first()
+    if not row:
+        raise HTTPException(400, "invalid token")
+    rid, uid, exp, used = int(row[0]), int(row[1]), row[2], bool(row[3])
+    if used or exp < datetime.utcnow():
+        raise HTTPException(400, "expired or used token")
+    # update password and mark token used
+    await db.execute(update(User).where(User.id == uid).set({User.password_hash: hash_password(new_password)}))
+    await db.execute(_text("UPDATE password_resets SET used = true WHERE id = :rid"), {"rid": rid})
+    await db.commit()
     return {"ok": True}

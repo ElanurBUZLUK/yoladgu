@@ -64,8 +64,11 @@ class AdvancedRAGService:
 
         keyword_backend = getattr(settings, "HYBRID_KEYWORD_BACKEND", "none").lower()
         keyword_ids: List[int] = []
-        if keyword_backend != "none":
+        if keyword_backend == "postgres":
             keyword_ids = self.keyword_search(text, k=max(5, k * 2))
+        elif keyword_backend == "elastic":
+            # Placeholder: integrate with Elasticsearch via official client
+            keyword_ids = []
 
         all_ids = list({int(i) for i in (list(vector_ids) + list(keyword_ids))})
         results: List[Dict[str, Any]] = []

@@ -13,7 +13,7 @@ def verify_password(p: str, hashed: str) -> bool:
 
 def create_access_token(sub: str) -> str:
     expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MIN)
-    to_encode = {"sub": sub, "exp": expire}
+    to_encode = {"sub": sub, "exp": expire, "type": "access"}
     return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
 def create_refresh_token(sub: str) -> str:

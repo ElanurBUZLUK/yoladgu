@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.deps import require_roles
 from app.core.db import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.dependencies import get_event_logger
+from app.core.dependencies import get_event_logger, get_current_user
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
 
