@@ -21,6 +21,13 @@ class ExplainerService:
         elif self.provider == "cohere":
             import cohere
             self._client = cohere.Client(os.getenv("COHERE_API_KEY"))
+        elif self.provider == "anthropic":
+            # Minimal Anthropic support (messages API)
+            import anthropic
+            self._client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        elif self.provider == "hf":
+            from huggingface_hub import InferenceClient
+            self._client = InferenceClient(token=os.getenv("HF_API_TOKEN"))
 
     def _cache_key(self, student_id: int, question_id: int, context_docs: List[Dict[str, Any]]) -> str:
         material = json.dumps({
@@ -70,6 +77,13 @@ class ExplainerService:
             prompt = self._prompt(question_text, docs_text)
             resp = self._client.generate(prompt=prompt, model=self.model_id, temperature=self.temp, max_tokens=self.max_tokens)
             content = resp.generations[0].text
+        elif self.provider == "anthropic" and self._client is not None:
+            prompt = self._prompt(question_text, docs_text)
+            msg = self._client.messages.create(model=self.model_id, max_tokens=self.max_tokens, temperature=self.temp, messages=[{"role": "user", "content": prompt}])
+            content = msg.content[0].text if getattr(msg, "content", None) else ""
+        elif self.provider == "hf" and self._client is not None:
+            prompt = self._prompt(question_text, docs_text)
+            content = self._client.text_generation(prompt, model=self.model_id, temperature=self.temp, max_new_tokens=self.max_tokens)
         else:
             # No provider: simple fallback explanation
             content = "Benzer kavramlara odaklan: temel tanımı tekrar et, örnek çözüm üzerinde adım adım ilerle ve hata yaptığın adımı tespit et."

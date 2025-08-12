@@ -1,8 +1,15 @@
 import json, time, uuid, redis
 from typing import Dict, Any, List, Optional
+from enum import Enum
 from app.core.config import settings
 
 DEFAULT_TTL_SEC = 6 * 60 * 60
+
+
+class SessionState(str, Enum):
+    CREATED = "CREATED"
+    ACTIVE = "ACTIVE"
+    FINISHED = "FINISHED"
 
 
 class QuizSessionService:
@@ -21,6 +28,7 @@ class QuizSessionService:
             "asked_ids": [],
             "current_qid": None,
             "history": [],
+            "state": SessionState.CREATED.value,
         }
         self.r.set(self._key(sid), json.dumps(payload), ex=DEFAULT_TTL_SEC)
         return sid
@@ -33,6 +41,11 @@ class QuizSessionService:
         s = self.get(sid)
         if not s:
             return
+        # transition to ACTIVE on first question
+        if s.get("state") == SessionState.CREATED.value:
+            s["state"] = SessionState.ACTIVE.value
+        if s.get("state") != SessionState.ACTIVE.value:
+            return
         s["current_qid"] = qid
         if qid not in s["asked_ids"]:
             s["asked_ids"].append(qid)
@@ -42,12 +55,15 @@ class QuizSessionService:
         s = self.get(sid)
         if not s:
             return
+        if s.get("state") != SessionState.ACTIVE.value:
+            return
         s["history"].append(entry)
         self.r.set(self._key(sid), json.dumps(s), ex=DEFAULT_TTL_SEC)
 
     def finish(self, sid: str) -> Dict[str, Any]:
         s = self.get(sid) or {}
         s["end_ts"] = int(time.time() * 1000)
+        s["state"] = SessionState.FINISHED.value
         self.r.set(self._key(sid), json.dumps(s), ex=DEFAULT_TTL_SEC)
         return s
 
