@@ -18,6 +18,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://learnai:learnai@postgres:5432/learnai
       REDIS_URL: redis://redis:6379/0
+      SERVING_PROVIDER: ts
+      TS_URL: http://torchserve:8080
+      TS_MODEL_NAME: rec
       VECTOR_BACKEND: qdrant
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION_BLUE: questions_blue
@@ -39,6 +42,37 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
 
+  torchserve:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.torchserve
+    environment:
+      - TS_CONFIG=/home/model-server/config/config.properties
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - ts_model_store:/home/model-server/model-store
+      - ts_logs:/home/model-server/logs
+
 volumes:
   pg_data:
   qdrant_storage:
+
+  ts_model_store:
+
+  ts_logs:
+
+  ts_config:
+
+  ts_plugins:
+
+  ts_temp:
+
+  ts_snapshots:
+
+  torchserve_cache:
+
+  torchserve_tmp:
+
+  jna_tmp:
