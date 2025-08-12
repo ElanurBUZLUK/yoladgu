@@ -42,10 +42,11 @@ class SemanticCache:
 
 class AdvancedRAGService:
     def __init__(self, enable_hybrid_search: bool = True, enable_reranking: bool = False):
-        self.idx = VectorIndexManager(settings.REDIS_URL)
-        self.embed = get_embedding_provider()
-        self.qsvc = QuestionsService(settings.REDIS_URL)
-        self.cache = SemanticCache(redis_url=settings.REDIS_URL)
+        # Composition of smaller responsibilities for SOLID SRP
+        self.idx = VectorIndexManager(settings.REDIS_URL)        # retrieval backend
+        self.embed = get_embedding_provider()                    # embedding generator
+        self.qsvc = QuestionsService(settings.REDIS_URL)         # metadata provider
+        self.cache = SemanticCache(redis_url=settings.REDIS_URL) # caching layer
         self.enable_hybrid_search = bool(enable_hybrid_search)
         self.enable_reranking = bool(enable_reranking and getattr(settings, "RERANK_ENABLED", False))
         self._reranker = Reranker() if self.enable_reranking else None

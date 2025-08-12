@@ -40,10 +40,33 @@ class PeerStore:
         return []
 
 
+class SimilarityStrategy:
+    def score(self, a: Dict[int, float], b: Dict[int, float]) -> float:
+        return jaccard_weighted(a, b)
+
+
+class JaccardWeightedStrategy(SimilarityStrategy):
+    def score(self, a: Dict[int, float], b: Dict[int, float]) -> float:
+        return jaccard_weighted(a, b)
+
+
+class CosineWeightedStrategy(SimilarityStrategy):
+    def score(self, a: Dict[int, float], b: Dict[int, float]) -> float:
+        import math
+        keys = set(a.keys()) | set(b.keys())
+        num = sum((a.get(k, 0.0) * b.get(k, 0.0)) for k in keys)
+        na = math.sqrt(sum((a.get(k, 0.0) ** 2) for k in keys))
+        nb = math.sqrt(sum((b.get(k, 0.0) ** 2) for k in keys))
+        if na == 0.0 or nb == 0.0:
+            return 0.0
+        return float(num / (na * nb))
+
+
 class PeerHardnessService:
-    def __init__(self, store: PeerStore, params: PeerParams | None = None):
+    def __init__(self, store: PeerStore, params: PeerParams | None = None, strategy: SimilarityStrategy | None = None):
         self.store = store
         self.params = params or PeerParams()
+        self.strategy = strategy or JaccardWeightedStrategy()
 
     def peer_candidates(self, student_id: int) -> List[int]:
         target_wrong = self.store.wrong_set(student_id)
@@ -51,7 +74,7 @@ class PeerHardnessService:
         for u in self.store.sim_index_neighbors(student_id):
             if u == student_id:
                 continue
-            w = jaccard_weighted(target_wrong, self.store.wrong_set(u))
+            w = self.strategy.score(target_wrong, self.store.wrong_set(u))
             if w > 0.0:
                 sims.append((u, w))
         sims.sort(key=lambda x: x[1], reverse=True)
@@ -78,7 +101,7 @@ class PeerHardnessService:
         for u in self.store.sim_index_neighbors(student_id):
             if u == student_id:
                 continue
-            w = jaccard_weighted(target_wrong, self.store.wrong_set(u))
+            w = self.strategy.score(target_wrong, self.store.wrong_set(u))
             if w > 0.0:
                 sims.append((u, w))
         sims.sort(key=lambda x: x[1], reverse=True)

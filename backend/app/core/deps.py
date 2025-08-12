@@ -10,7 +10,7 @@ from app.services.online.ftrl import FTRLService
 from app.core.db import get_db
 from app.models import User
 from app.utils.auth import decode_token
-from app.services.peer_hardness import PeerHardnessService, PeerStore, PeerParams
+from app.services.peer_hardness import PeerHardnessService, PeerStore, PeerParams, CosineWeightedStrategy
 from app.services.peer_hardness_store import RedisPeerStore
 
 @lru_cache(maxsize=1)
@@ -65,6 +65,7 @@ def get_peer_service() -> PeerHardnessService:
     global _peer_store_singleton
     if _peer_store_singleton is None:
         _peer_store_singleton = _InMemoryPeerStore()
+    # Example: swap strategy via setting in future
     return PeerHardnessService(store=_peer_store_singleton, params=PeerParams())
 
 
