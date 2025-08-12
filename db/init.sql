@@ -100,3 +100,45 @@ create table if not exists attempts (
 );
 create index if not exists idx_attempts_student on attempts(student_id);
 create index if not exists idx_attempts_question on attempts(question_id);
+
+-- Dynamic ensemble weights (variants)
+create table if not exists ensemble_weights (
+  variant text primary key,
+  weights jsonb not null,
+  is_active boolean not null default false,
+  created_at timestamp without time zone default now(),
+  updated_at timestamp without time zone default now()
+);
+
+-- Sticky A/B assignments
+create table if not exists ab_assignments (
+  user_id int primary key references users(id) on delete cascade,
+  variant text not null references ensemble_weights(variant) on delete cascade,
+  assigned_at timestamp without time zone default now()
+);
+create index if not exists idx_ab_variant on ab_assignments(variant);
+
+-- pgvector storage for RAG (optional)
+create extension if not exists vector;
+create table if not exists embeddings (
+  id int primary key,
+  embedding vector(384) not null,
+  content jsonb
+);
+create index if not exists idx_embeddings_cosine on embeddings using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+
+-- Dynamic policy variants for next-question policy
+create table if not exists policy_variants (
+  id serial primary key,
+  name varchar(100) unique not null,
+  description text,
+  parameters jsonb not null,
+  assignment_rule jsonb,
+  is_active boolean not null default true,
+  created_at timestamp without time zone default now(),
+  updated_at timestamp without time zone default now()
+);
+create index if not exists idx_policy_variants_active on policy_variants(is_active);
+
+-- Optional: cohort column to segment users for policy assignment
+alter table users add column if not exists experiment_cohort text;

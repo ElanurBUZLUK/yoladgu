@@ -92,6 +92,51 @@ curl -X POST http://localhost:8001/api/v1/auth/login \
 - Vektör arama: `POST /vectors/search` body: `{ text, k }`
 - Index swap (blue/green): `POST /index/swap`
 
+### Embedding Sağlayıcıları (OpenAI/Cohere veya Lokal SBERT)
+
+- Dış API (önerilir):
+  - `.env`:
+    - `EMBEDDING_PROVIDER=openai` ve `OPENAI_API_KEY=...` (veya `EMBEDDING_PROVIDER=cohere` ve `COHERE_API_KEY=...`)
+    - `EMBEDDING_MODEL_ID` varsayılanı: `text-embedding-3-small`
+- Lokal SBERT:
+  - `backend/requirements.txt` içinde `sentence-transformers` ve `torch` kurulu olmalı (eklendi).
+  - `.env`:
+    - `EMBEDDING_PROVIDER=sbert`
+    - `EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2`
+    - `EMBED_DIM` model ile uyumlu olmalı (MiniLM-L6-v2 için `384`).
+  - `EMBEDDING_FALLBACK_MODE=sbert` kullanıyorsanız, SBERT bağımlılıkları gereklidir.
+
+### CF (Collaborative Filtering) Etkinleştirme
+
+1) Etkileşim datası hazırlayın (`jsonl` satırları: `{user_id, question_id, label}`)
+2) Modeli eğitin:
+```bash
+docker compose exec -T backend python tools/train_cf.py --data /path/to/interactions.jsonl --k 16 --it 10
+```
+3) `.env` içine `CF_MODEL_PATH=backend/app/ml/models/cf.npz` ekleyin (varsayılan path budur).
+4) `/recommend/ensemble` çağrıları CF skorunu da kullanır (model yoksa 0’a fallback eder).
+
+### Üretim: Vektör İndeks Akışı ve Hata Senaryoları
+
+Önerilen akış:
+```bash
+# 1) Embedding’leri üretin (dış API veya lokal SBERT)
+docker compose exec -T backend python tools/seed_embeddings.py --n 1000
+
+# 2) İnaktif slota indeks oluşturun
+docker compose exec -T backend python tools/batch_indexer.py
+
+# 3) İndeksi swap edin (blue/green)
+curl -X POST http://localhost:8001/api/v1/index/swap
+
+# 4) Sağlık ve istatistik
+curl http://localhost:8001/api/v1/index/stats
+```
+Hata senaryoları:
+- `swap failed: inactive slot not built`: İnaktif slota indeks inşa edilmeden swap istendi; önce batch_indexer çalıştırın.
+- `embedding dim mismatch`: Indeks dosyasının meta’sı ile `EMBED_DIM` uyumsuz; doğru boyutla yeniden inşa edin.
+- Redis bağlantı hatası: `REDIS_URL` kontrol edin; yeniden deneyin.
+
 ## Ortam Değişkenleri (Backend `.env`)
 
 Varsayılanlar (Compose ile uyumlu):
@@ -124,4 +169,5 @@ EMBEDDING_PROVIDER=hash
 ## Notlar
 
 - Varsayılan vektör backend: HNSW, embed boyutu: 384 (demo hash-embedding)
-- Üretime alırken güvenlik, gözlemlenebilirlik ve CI süreçlerini genişletmeniz önerilir.
+- Qdrant: Konfig ve client mevcut; ancak backend implementasyonu yoktur. Şu an yalnızca HNSW/FAISS desteklenir. Qdrant desteği eklemek isterseniz `app/services/index_backends/` altına yeni backend ekleyin ve `VectorIndexManager` içinde anahtarlayın.
+- Gözlemlenebilirlik: `GET /api/v1/admin/metrics/events/by_type` ve `.../by_type_24h` ile event sayımları; model/embedding aktif yapılandırması ve indeks slotu için `GET /api/v1/index/stats` kullanılabilir. Prometheus entegrasyonu eklenmesi önerilir.

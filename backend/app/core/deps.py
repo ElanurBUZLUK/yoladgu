@@ -10,6 +10,8 @@ from app.services.online.ftrl import FTRLService
 from app.core.db import get_db
 from app.models import User
 from app.utils.auth import decode_token
+from app.services.peer_hardness import PeerHardnessService, PeerStore, PeerParams
+from app.services.peer_hardness_store import RedisPeerStore
 
 @lru_cache(maxsize=1)
 def get_embedding_service() -> EmbeddingService:
@@ -26,6 +28,44 @@ def get_linucb_service() -> LinUCBService:
 @lru_cache(maxsize=1)
 def get_ftrl_service() -> FTRLService:
     return FTRLService(dim=32, alpha=0.1, beta=1.0, l1=0.0, l2=1.0, redis_url=settings.REDIS_URL)
+
+
+class _InMemoryPeerStore(PeerStore):
+    # Placeholder minimal store; replace with Redis/PG-backed implementation
+    def __init__(self):
+        self._wrong: dict[int, dict[int, float]] = {}
+        self._right: dict[int, dict[int, float]] = {}
+
+    def wrong_set(self, student_id: int) -> dict[int, float]:
+        return self._wrong.get(student_id, {})
+
+    def right_set(self, student_id: int) -> dict[int, float]:
+        return self._right.get(student_id, {})
+
+    def has_attempt(self, student_id: int, question_id: int) -> bool:
+        return question_id in self._wrong.get(student_id, {}) or question_id in self._right.get(student_id, {})
+
+    def sim_index_neighbors(self, student_id: int):
+        # naive: everyone else
+        for sid in set(self._wrong.keys()) | set(self._right.keys()):
+            if sid != student_id:
+                yield sid
+
+
+_peer_store_singleton: _InMemoryPeerStore | None = None
+
+
+@lru_cache(maxsize=1)
+def get_peer_service() -> PeerHardnessService:
+    backend = getattr(settings, "PEER_STORE_BACKEND", "memory")
+    if backend == "redis":
+        store = RedisPeerStore(settings.REDIS_URL, prefix=getattr(settings, "PEER_STORE_PREFIX", "peer"))
+        return PeerHardnessService(store=store, params=PeerParams())
+    # default to in-memory
+    global _peer_store_singleton
+    if _peer_store_singleton is None:
+        _peer_store_singleton = _InMemoryPeerStore()
+    return PeerHardnessService(store=_peer_store_singleton, params=PeerParams())
 
 
 # Authentication & Authorization dependencies

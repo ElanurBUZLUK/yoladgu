@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     DATABASE_URL: str = "postgresql+asyncpg://learnai:learnai@localhost:55432/learnai"
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_RECYCLE_S: int = 1800
     REDIS_URL: str = "redis://localhost:16379/0"
 
     VECTOR_BACKEND: str = "hnsw"  # hnsw | faiss | qdrant
@@ -23,6 +26,13 @@ class Settings(BaseSettings):
     EMBED_DIM: int = 384
     EMBEDDING_MODEL: str | None = None  # e.g., "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_PROVIDER: str = "hash"    # "hash" | "sbert"
+    # CORS
+    CORS_ALLOW_ORIGINS: str | None = None  # comma-separated origins, e.g., "https://app.example.com,https://admin.example.com"
+    # Feature/Peer backends
+    FEATURE_STORE_BACKEND: str = "db"     # "db" only for now
+    FEATURE_WINDOW_DAYS: int = 30
+    PEER_STORE_BACKEND: str = "memory"    # "memory" | "redis"
+    PEER_STORE_PREFIX: str = "peer"
 
     # HNSW
     HNSW_SPACE: str = "l2"
@@ -47,7 +57,16 @@ class Settings(BaseSettings):
     W_BANDIT: float = 0.35
     W_ONLINE: float = 0.40
     W_RETR: float = 0.0
+    W_PEER: float = 0.0
     CF_MODEL_PATH: str | None = None
+    FEATURE_WINDOW_DAYS: int = 30
+    FEATURE_CACHE_TTL_S: int = 600
+    # LLM for explanations
+    LLM_PROVIDER: str | None = None  # openai|cohere|none
+    LLM_MODEL_ID: str | None = None  # e.g., gpt-4o-mini
+    EXPLAIN_CACHE_TTL_S: int = 3600
+    EXPLAIN_MAX_TOKENS: int = 256
+    EXPLAIN_TEMPERATURE: float = 0.2
 
     # Feast (optional)
     FEAST_ENABLED: bool = False
@@ -66,6 +85,26 @@ class Settings(BaseSettings):
     REBUCKET_COOLDOWN_DAYS: int = 14
     REBUCKET_PCT: str = "25,60,85"
     EXPLORE_RATIO: float = 0.2
+
+    # Peer hardness settings
+    PEER_MIN_NEIGHBORS: int = 5
+    PEER_K_NEIGHBORS: int = 20
+    PEER_LAMBDA_EASY: float = 0.5
+    PEER_HALF_LIFE_DAYS: float = 14.0
+    PEER_LOOKBACK_DAYS: int = 90
+    PEER_GATE_ENABLE: bool = False
+    PEER_GATE_P_MIN: float = 0.6
+    PEER_GATE_P_MAX: float = 0.75
+    PEER_STORE_BACKEND: str = "memory"  # memory | redis | postgres
+    PEER_STORE_PREFIX: str = "peer"
+
+    # RAG / Advanced Retrieval flags
+    RERANK_ENABLED: bool = True
+    RERANK_MODEL_NAME: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RERANK_MODEL: str | None = None
+    HYBRID_KEYWORD_BACKEND: str = "none"  # none | postgres | elastic
+    KNOWLEDGE_GRAPH_ENABLED: bool = False
+    SEMANTIC_CACHE_TTL_S: int = 900
 
     model_config = SettingsConfigDict(env_file=os.getenv("ENV_FILE", ".env"), env_file_encoding="utf-8")
 

@@ -1,11 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import insert
+import json
 from app.core.db import get_db
 from app.core.config import settings
-from app.schemas_adaptive import ServeRequest, ServeResponse, ServeResponseItem, SubmitRequest, SubmitResponse
+from app.schemas_adaptive import (
+    ServeRequest,
+    ServeResponse,
+    ServeResponseItem,
+    SubmitRequest,
+    SubmitResponse,
+)
 from app.services.adaptive.rating_service import RatingService
 from app.services.adaptive.selector_service import SelectorService
 from app.services.adaptive import repo
+from app.models import Event
 
 
 router = APIRouter(prefix="/adaptive", tags=["adaptive"])
@@ -30,6 +39,24 @@ async def submit_answer(payload: SubmitRequest, db: AsyncSession = Depends(get_d
     if not student or not question:
         raise HTTPException(404, "not found")
     new_rs, new_rq = await _RS.update_after_attempt(db, student, question, payload.is_correct, payload.time_ms)
+    # event log
+    await db.execute(
+        insert(Event).values(
+            user_id=student.id,
+            event_type="adaptive_submit",
+            payload=json.dumps(
+                {
+                    "student_id": payload.student_id,
+                    "question_id": payload.question_id,
+                    "is_correct": payload.is_correct,
+                    "time_ms": payload.time_ms,
+                    "new_skill": new_rs,
+                    "new_question_diff": new_rq,
+                }
+            ),
+        )
+    )
+    await db.commit()
     return SubmitResponse(new_skill=new_rs, new_question_diff=new_rq)
 
 

@@ -7,6 +7,8 @@ from app.services.content.questions_service import QuestionsService
 from app.services.policy.next_question_policy import pick_next_question
 from app.core.config import settings
 from app.core.deps import require_roles
+from app.core.db import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_event_logger
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
@@ -18,14 +20,14 @@ def _get_user_id(req: Request) -> int:
 
 
 @router.post("/start", response_model=StartQuizResponse)
-def start_quiz(body: StartQuizRequest, request: Request, user=Depends(require_roles("student"))):
+async def start_quiz(body: StartQuizRequest, request: Request, user=Depends(require_roles("student")), db: AsyncSession = Depends(get_db)):
     user_id = user.id
     topic_id = body.topic_id
     sess = QuizSessionService(settings.REDIS_URL)
     qsvc = QuestionsService(settings.REDIS_URL)
 
     session_id = sess.create(user_id=user_id, topic_id=topic_id)
-    qid = pick_next_question(user_id=user_id, topic_id=topic_id, asked_ids=[])
+    qid = await pick_next_question(user=user, db=db, topic_id=topic_id, asked_ids=[])
     if qid is None:
         raise HTTPException(404, "No candidate question found")
     q = qsvc.get(qid)
@@ -95,7 +97,7 @@ def submit_answer(body: AnswerRequest, request: Request, user=Depends(require_ro
 
 
 @router.post("/next")
-def next_question(body: NextRequest, request: Request, user=Depends(require_roles("student"))):
+async def next_question(body: NextRequest, request: Request, user=Depends(require_roles("student")), db: AsyncSession = Depends(get_db)):
     user_id = user.id
     sess = QuizSessionService(settings.REDIS_URL)
     qsvc = QuestionsService(settings.REDIS_URL)
@@ -105,7 +107,7 @@ def next_question(body: NextRequest, request: Request, user=Depends(require_role
 
     asked = s.get("asked_ids", [])
     topic_id = s.get("topic_id")
-    qid = pick_next_question(user_id=user_id, topic_id=topic_id, asked_ids=asked)
+    qid = await pick_next_question(user=user, db=db, topic_id=topic_id, asked_ids=asked)
     if qid is None:
         raise HTTPException(404, "No more candidates")
     q = qsvc.get(qid)

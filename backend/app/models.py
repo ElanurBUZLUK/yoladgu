@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Integer, String, Boolean, Text, ForeignKey, DateTime, Numeric, SmallInteger, Float
+from sqlalchemy import Integer, String, Boolean, Text, ForeignKey, DateTime, Numeric, SmallInteger, Float, JSON
 from sqlalchemy.sql import func
 from datetime import datetime
 from app.core.db import Base
@@ -82,3 +82,34 @@ class Attempt(Base):
     expected: Mapped[float] = mapped_column(Float)
     delta: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+
+
+# --- Dynamic Ensemble / A-B infra ---
+
+class EnsembleWeights(Base):
+    __tablename__ = "ensemble_weights"
+    variant: Mapped[str] = mapped_column(String, primary_key=True)
+    # JSON column to store weight dictionary, e.g. {"cf":0.25,"bandit":0.35,"online":0.40,"retr":0.0,"peer":0.0}
+    weights: Mapped[dict] = mapped_column(JSON)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+
+
+class ABAssignment(Base):
+    __tablename__ = "ab_assignments"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    variant: Mapped[str] = mapped_column(ForeignKey("ensemble_weights.variant", ondelete="CASCADE"))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+
+
+class PolicyVariant(Base):
+    __tablename__ = "policy_variants"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parameters: Mapped[dict] = mapped_column(JSON)
+    assignment_rule: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())

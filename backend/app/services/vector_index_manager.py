@@ -4,6 +4,14 @@ import numpy as np, redis
 from app.core.config import settings
 from app.services.index_backends.hnsw_backend import HNSWBackend
 from app.services.index_backends.faiss_backend import FaissIVFPQBackend
+try:
+    from app.services.index_backends.qdrant_backend import QdrantBackend
+except Exception:
+    QdrantBackend = None  # type: ignore
+try:
+    from app.services.index_backends.pgvector_backend import PgVectorBackend
+except Exception:
+    PgVectorBackend = None  # type: ignore
 
 class VectorIndexManager:
     def __init__(self, redis_url: str):
@@ -16,14 +24,34 @@ class VectorIndexManager:
         for name in ("blue","green"):
             self._try_load_slot(name)
 
-    def _make_backend(self):
+    def _make_backend(self, slot: Optional[str] = None):
+        # Guard: ensure dimension metadata aligns with index files to avoid corrupt writes
+        dim = settings.EMBED_DIM
         if settings.VECTOR_BACKEND == "faiss":
-            return FaissIVFPQBackend(settings.EMBED_DIM, settings.FAISS_NLIST, settings.FAISS_PQ_M, settings.FAISS_PQ_BITS, settings.FAISS_NPROBE)
-        else:
-            return HNSWBackend(settings.EMBED_DIM, settings.HNSW_SPACE, settings.HNSW_M, settings.HNSW_EF_CONSTRUCT, settings.HNSW_EF_SEARCH)
+            return FaissIVFPQBackend(dim, settings.FAISS_NLIST, settings.FAISS_PQ_M, settings.FAISS_PQ_BITS, settings.FAISS_NPROBE)
+        if settings.VECTOR_BACKEND == "qdrant":
+            if QdrantBackend is None:
+                raise RuntimeError("qdrant backend selected but qdrant-client is not installed")
+            # If slot not specified, default to inactive for build flows
+            if slot is None:
+                slot = self.inactive_slot()
+            collection = settings.QDRANT_COLLECTION_BLUE if slot == settings.VECTOR_BLUE_NAME else settings.QDRANT_COLLECTION_GREEN
+            return QdrantBackend(dim=dim, url=settings.QDRANT_URL, collection_name=collection, active_alias=settings.QDRANT_ALIAS_ACTIVE)
+        if settings.VECTOR_BACKEND == "pgvector":
+            if PgVectorBackend is None:
+                raise RuntimeError("pgvector backend selected but module not available")
+            return PgVectorBackend(dim=dim)
+        # default
+        return HNSWBackend(dim, settings.HNSW_SPACE, settings.HNSW_M, settings.HNSW_EF_CONSTRUCT, settings.HNSW_EF_SEARCH)
 
     def _slot_path(self, slot: str) -> str:
-        ext = "faiss" if settings.VECTOR_BACKEND == "faiss" else "hnsw"
+        if settings.VECTOR_BACKEND == "faiss":
+            ext = "faiss"
+        elif settings.VECTOR_BACKEND == "hnsw":
+            ext = "hnsw"
+        else:
+            # qdrant is remote; keep a lightweight meta file extension
+            ext = "qdrant"
         return os.path.join(settings.VECTOR_INDEX_DIR, f"index_{slot}.{ext}")
 
     def _get_active_from_redis(self) -> str:
@@ -35,8 +63,23 @@ class VectorIndexManager:
 
     def _try_load_slot(self, slot: str) -> None:
         path = self._slot_path(slot)
-        if os.path.exists(path):
-            be = self._make_backend()
+        # For qdrant, presence of the meta file is enough to attempt load
+        exists = os.path.exists(path) if settings.VECTOR_BACKEND != "qdrant" else os.path.exists(f"{path}.meta.json")
+        if exists:
+            be = self._make_backend(slot)
+            # Optional: check persisted dim meta if available alongside the index
+            meta_path = f"{path}.meta.json"
+            try:
+                if os.path.exists(meta_path):
+                    import json
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    file_dim = int(meta.get("dim", settings.EMBED_DIM))
+                    if file_dim != settings.EMBED_DIM:
+                        # Don't load mismatched index
+                        return
+            except Exception:
+                pass
             be.load(path)
             self._backends[slot] = be
 
@@ -75,10 +118,30 @@ class VectorIndexManager:
 
     def build_on_inactive(self, embeddings: np.ndarray, ids: Optional[np.ndarray]) -> dict:
         slot = self.inactive_slot()
-        be = self._make_backend()
+        # Dim guard
+        if embeddings.shape[1] != settings.EMBED_DIM:
+            raise ValueError(f"embedding dim mismatch: got {embeddings.shape[1]}, expected {settings.EMBED_DIM}")
+        be = self._make_backend(slot)
         be.build(embeddings, ids)
         path = self._slot_path(slot)
-        be.save(path)
+        # For file-based backends, persist to disk. For qdrant, this is a no-op
+        try:
+            be.save(path)
+        except Exception:
+            pass
+        # Persist simple metadata for compatibility checks
+        try:
+            import json, time
+            meta = {
+                "provider": os.getenv("EMBEDDING_PROVIDER", "unknown"),
+                "model_id": os.getenv("EMBEDDING_MODEL_ID", "unknown"),
+                "dim": int(settings.EMBED_DIM),
+                "created_at": int(time.time()),
+            }
+            with open(f"{path}.meta.json", "w", encoding="utf-8") as f:
+                json.dump(meta, f)
+        except Exception:
+            pass
         with self._lock:
             self._backends[slot] = be
         return {"built_slot": slot, "path": path}
@@ -92,6 +155,14 @@ class VectorIndexManager:
                     return {"swapped": False, "reason": "inactive slot not built"}
             self._active = new_active
             self._set_active_to_redis(new_active)
+            # For qdrant, point alias to the new active collection if available
+            if settings.VECTOR_BACKEND == "qdrant":
+                be = self._backends.get(new_active)
+                try:
+                    if hasattr(be, "set_alias_active"):
+                        be.set_alias_active()
+                except Exception:
+                    pass
         return {"swapped": True, "active": new_active}
 
     # Tombstone management

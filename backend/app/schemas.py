@@ -53,3 +53,17 @@ class AssignmentCreate(BaseModel):
 class SubmissionCreate(BaseModel):
     assignment_id: int
     content: str
+
+
+# --- Admin: Policy Variants ---
+class PolicyVariantUpsert(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Dict[str, float]
+    assignment_rule: Optional[Dict[str, object]] = None
+    is_active: Optional[bool] = True
+
+
+class PolicyAssignRequest(BaseModel):
+    variant_name: str
+    user_ids: List[int]
