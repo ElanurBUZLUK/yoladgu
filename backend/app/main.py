@@ -21,6 +21,11 @@ try:
 except Exception:
     _HAS_MCP = False
 try:
+    from app.api.v1.endpoints import en as en_qg
+    _HAS_EN_QG = True
+except Exception:
+    _HAS_EN_QG = False
+try:
     from app.api.v1.endpoints import embeddings
     _HAS_EMBED = True
 except Exception:
@@ -88,6 +93,8 @@ if _HAS_EMBED:
     app.include_router(embeddings.router, prefix=settings.API_V1_STR)
 if _HAS_RETR:
     app.include_router(retrieval.router, prefix=settings.API_V1_STR)
+if _HAS_EN_QG and getattr(settings, "EN_QG_ENABLED", False):
+    app.include_router(en_qg.router, prefix=settings.API_V1_STR)
 
 # Prometheus metrics
 try:

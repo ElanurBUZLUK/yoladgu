@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     MCP_ENABLED: bool = False
     MCP_BASE_URL: str | None = None  # e.g., http://mcp.retriever.svc.cluster.local:7800
 
+    # English QG (Question Generation)
+    EN_QG_ENABLED: bool = False
+    EN_QG_NAMESPACES: str = "en_texts,en_vocab,en_grammar"
+    EN_QG_MODE_DEFAULT: str = "mixed"  # vocab|grammar|mixed
+    EN_QG_TEMPERATURE: float = 0.4
+    EN_QG_MAX_TOKENS: int = 256
+
     # Model serving (TorchServe/Triton)
     SERVING_PROVIDER: str = "none"  # none | ts | triton
     TS_URL: str | None = None        # e.g., http://localhost:8080
