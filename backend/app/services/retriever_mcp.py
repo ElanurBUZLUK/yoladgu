@@ -65,13 +65,20 @@ class MCPRetrieverClient(IRetrieverMCP):
             conn = http.client.HTTPConnection(host, port=port, timeout=self.timeout_s)
             payload = json.dumps({"text": text, "language": language})
             headers = {"Content-Type": "application/json"}
-            conn.request("POST", f"{path_base}/mcp/retrieve", body=payload, headers=headers)
+            # Prefer new tool-style endpoint if available
+            conn.request("POST", f"{path_base}/mcp/tool/retrieve_context", body=json.dumps({"args": {"text": text, "language": language}}), headers=headers)
             resp = conn.getresponse()
             if resp.status != 200:
-                return []
+                # Fallback to legacy alias
+                conn = http.client.HTTPConnection(host, port=port, timeout=self.timeout_s)
+                conn.request("POST", f"{path_base}/mcp/retrieve", body=payload, headers=headers)
+                resp = conn.getresponse()
+                if resp.status != 200:
+                    return []
             raw = resp.read()
             data = json.loads(raw.decode("utf-8"))
-            items = data.get("results") or data.get("contexts") or data
+            # tool response: {"result": [...]} ; alias: {"results": [...]}
+            items = data.get("result") or data.get("results") or data.get("contexts") or data
             if isinstance(items, list):
                 return [i for i in items if isinstance(i, dict)]
             return []

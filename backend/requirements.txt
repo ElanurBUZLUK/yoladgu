@@ -32,3 +32,4 @@ google-generativeai>=0.7.2
 # Local SBERT embedding (optional; required if EMBEDDING_PROVIDER=sbert or fallback_mode=sbert)
 sentence-transformers==2.7.0
 torch==2.3.1
+httpx>=0.27.0
