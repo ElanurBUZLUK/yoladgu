@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     KNOWLEDGE_GRAPH_ENABLED: bool = False
     SEMANTIC_CACHE_TTL_S: int = 900
 
+    # MCP integration
+    MCP_ENABLED: bool = False
+    MCP_BASE_URL: str | None = None  # e.g., http://mcp.retriever.svc.cluster.local:7800
+
     # Model serving (TorchServe/Triton)
     SERVING_PROVIDER: str = "none"  # none | ts | triton
     TS_URL: str | None = None        # e.g., http://localhost:8080

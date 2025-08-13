@@ -8,3 +8,7 @@ class IRetrieverService(Protocol):
         ...
 
 
+class IRetrieverMCP(IRetrieverService, Protocol):
+    def retrieve_context(self, text: str, language: str) -> List[Dict[str, Any]]:
+        ...
+

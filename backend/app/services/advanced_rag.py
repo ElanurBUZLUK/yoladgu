@@ -41,7 +41,7 @@ class SemanticCache:
 
 
 class AdvancedRAGService:
-    def __init__(self, enable_hybrid_search: bool = True, enable_reranking: bool = False):
+    def __init__(self, enable_hybrid_search: bool = True, enable_reranking: bool = False, mcp_retriever=None, use_mcp: bool | None = None):
         # Composition of smaller responsibilities for SOLID SRP
         self.idx = VectorIndexManager(settings.REDIS_URL)        # retrieval backend
         self.embed = get_embedding_provider()                    # embedding generator
@@ -50,6 +50,8 @@ class AdvancedRAGService:
         self.enable_hybrid_search = bool(enable_hybrid_search)
         self.enable_reranking = bool(enable_reranking and getattr(settings, "RERANK_ENABLED", False))
         self._reranker = Reranker() if self.enable_reranking else None
+        self.mcp_retriever = mcp_retriever
+        self.use_mcp = bool(use_mcp if use_mcp is not None else getattr(settings, "MCP_ENABLED", False))
 
     # --- Public API ---
     def search(self, text: str, k: int = 5) -> List[Dict[str, Any]]:
@@ -59,6 +61,15 @@ class AdvancedRAGService:
         cached = self.cache.get(text)
         if cached:
             return cached
+
+        # If configured, try MCP retriever first
+        if self.use_mcp and self.mcp_retriever is not None:
+            try:
+                mcp_results = self.mcp_retriever.retrieve_context(text, language="tr")
+            except Exception:
+                mcp_results = []
+        else:
+            mcp_results = []
 
         vec = np.array([self.embed.embed_one(text)], dtype=np.float32)
         vector_ids, _ = self.idx.search(vec[0], k=max(5, k * 3))
@@ -71,7 +82,15 @@ class AdvancedRAGService:
             # Placeholder: integrate with Elasticsearch via official client
             keyword_ids = []
 
-        all_ids = list({int(i) for i in (list(vector_ids) + list(keyword_ids))})
+        # Merge MCP results (if they include ids) with vector/keyword ids
+        mcp_ids: List[int] = []
+        for item in mcp_results:
+            try:
+                if "id" in item and item["id"] is not None:
+                    mcp_ids.append(int(item["id"]))
+            except Exception:
+                continue
+        all_ids = list({int(i) for i in (list(vector_ids) + list(keyword_ids) + list(mcp_ids))})
         results: List[Dict[str, Any]] = []
         for qid in all_ids:
             meta = self.qsvc.get(int(qid)) or {}

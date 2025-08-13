@@ -11,6 +11,7 @@ from app.services.cf import CFModel
 from app.core.config import settings
 from app.services.feature_store import FeatureStore
 from app.services.advanced_rag import AdvancedRAGService
+from app.services.retriever_mcp import MCPRetrieverClient
 
 log = structlog.get_logger()
 
@@ -112,7 +113,8 @@ def get_retriever_service():
     # Provide a concrete retriever implementation (AdvancedRAGService)
     # Defaults: hybrid search enabled; reranking toggled by settings.RERANK_ENABLED
     enable_rerank = bool(getattr(settings, "RERANK_ENABLED", False))
-    return AdvancedRAGService(enable_hybrid_search=True, enable_reranking=enable_rerank)
+    mcp_client = MCPRetrieverClient() if getattr(settings, "MCP_ENABLED", False) else None
+    return AdvancedRAGService(enable_hybrid_search=True, enable_reranking=enable_rerank, mcp_retriever=mcp_client, use_mcp=getattr(settings, "MCP_ENABLED", False))
 
 
 @lru_cache(maxsize=1)
