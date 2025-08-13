@@ -8,6 +8,11 @@ from botocore.config import Config as BotoConfig
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from app.core.deps import require_roles
+import numpy as np
+from app.core.config import settings
+from app.services.vector_index_manager import VectorIndexManager
+from app.services.embedding_api import get_embedding_provider
+from app.services.content.questions_service import QuestionsService
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
@@ -114,4 +119,27 @@ def sql_run(body: SQLRunIn, user=Depends(require_roles("admin"))):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+class RetrieveIn(BaseModel):
+    text: str
+    language: str = Field(default="tr")
+    k: int = Field(default=5, ge=1, le=50)
+
+
+@router.post("/retrieve")
+def mcp_retrieve(body: RetrieveIn):
+    # Minimal MCP-like HTTP endpoint to serve retrieval contexts
+    try:
+        idx = VectorIndexManager(settings.REDIS_URL)
+        embed = get_embedding_provider()
+        qsvc = QuestionsService(settings.REDIS_URL)
+        vec = np.array([embed.embed_one(body.text)], dtype=np.float32)
+        ids, _ = idx.search(vec[0], k=max(5, body.k))
+        results: List[Dict[str, Any]] = []
+        for qid in ids[: body.k]:
+            meta = qsvc.get(int(qid)) or {}
+            results.append({"id": int(qid), "text": meta.get("text", ""), "meta": meta})
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
