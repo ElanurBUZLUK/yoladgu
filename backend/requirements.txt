@@ -27,6 +27,7 @@ cohere>=5.3.4
 tenacity>=8.4.1
 mlflow>=2.14.0
 hvac>=2.3.0
+google-generativeai>=0.7.2
 
 # Local SBERT embedding (optional; required if EMBEDDING_PROVIDER=sbert or fallback_mode=sbert)
 sentence-transformers==2.7.0

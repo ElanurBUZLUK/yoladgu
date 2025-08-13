@@ -62,8 +62,8 @@ class Settings(BaseSettings):
     FEATURE_WINDOW_DAYS: int = 30
     FEATURE_CACHE_TTL_S: int = 600
     # LLM for explanations
-    LLM_PROVIDER: str | None = None  # openai|cohere|none
-    LLM_MODEL_ID: str | None = None  # e.g., gpt-4o-mini
+    LLM_PROVIDER: str | None = None  # openai|cohere|anthropic|hf|google|none
+    LLM_MODEL_ID: str | None = None  # e.g., gpt-4o-mini or gemini-1.5-flash
     EXPLAIN_CACHE_TTL_S: int = 3600
     EXPLAIN_MAX_TOKENS: int = 256
     EXPLAIN_TEMPERATURE: float = 0.2

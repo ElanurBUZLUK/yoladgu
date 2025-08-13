@@ -30,6 +30,16 @@ class ExplainerService:
         elif self.provider == "hf":
             from huggingface_hub import InferenceClient
             self._client = InferenceClient(token=get_secret("HF_API_TOKEN") or os.getenv("HF_API_TOKEN"))
+        elif self.provider == "google":
+            # Google Gemini via google-generativeai
+            try:
+                import google.generativeai as genai  # type: ignore
+                api_key = get_secret("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                if api_key:
+                    genai.configure(api_key=api_key)
+                    self._client = genai.GenerativeModel(self.model_id)
+            except Exception:
+                self._client = None
 
     def _cache_key(self, student_id: int, question_id: int, context_docs: List[Dict[str, Any]]) -> str:
         material = json.dumps({
@@ -86,6 +96,13 @@ class ExplainerService:
         elif self.provider == "hf" and self._client is not None:
             prompt = self._prompt(question_text, docs_text)
             content = self._client.text_generation(prompt, model=self.model_id, temperature=self.temp, max_new_tokens=self.max_tokens)
+        elif self.provider == "google" and self._client is not None:
+            prompt = self._prompt(question_text, docs_text)
+            try:
+                resp = self._client.generate_content(prompt, generation_config={"temperature": self.temp, "max_output_tokens": self.max_tokens})  # type: ignore[attr-defined]
+                content = getattr(resp, "text", None) or getattr(resp, "candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            except Exception:
+                content = ""
         else:
             # No provider: simple fallback explanation
             content = "Benzer kavramlara odaklan: temel tanımı tekrar et, örnek çözüm üzerinde adım adım ilerle ve hata yaptığın adımı tespit et."

@@ -79,9 +79,9 @@ def main():
     out_dir = "backend/app/ml/models"
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "cf.npz")
-        np.savez(out_path, U=U, V=V, user_map=umap, item_map=imap)
-        mlflow.log_artifact(out_path)
-        print(f"Saved CF model to {out_path} (users={len(umap)}, items={len(imap)}, k={args.k})")
+    np.savez(out_path, U=U, V=V, user_map=umap, item_map=imap)
+    mlflow.log_artifact(out_path)
+    print(f"Saved CF model to {out_path} (users={len(umap)}, items={len(imap)}, k={args.k})")
 
 
 if __name__ == "__main__":

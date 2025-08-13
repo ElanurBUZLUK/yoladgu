@@ -10,6 +10,7 @@ from functools import lru_cache
 from app.services.cf import CFModel
 from app.core.config import settings
 from app.services.feature_store import FeatureStore
+from app.services.advanced_rag import AdvancedRAGService
 
 log = structlog.get_logger()
 
@@ -108,8 +109,10 @@ def get_event_logger() -> _EventLogger:
 
 
 def get_retriever_service():
-    # Optional placeholder for a retriever; return None to fallback
-    return None
+    # Provide a concrete retriever implementation (AdvancedRAGService)
+    # Defaults: hybrid search enabled; reranking toggled by settings.RERANK_ENABLED
+    enable_rerank = bool(getattr(settings, "RERANK_ENABLED", False))
+    return AdvancedRAGService(enable_hybrid_search=True, enable_reranking=enable_rerank)
 
 
 @lru_cache(maxsize=1)
