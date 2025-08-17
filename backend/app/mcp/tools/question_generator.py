@@ -43,6 +43,10 @@ class QuestionGeneratorTool(BaseMCPTool):
                 "topic": {
                     "type": "string",
                     "description": "Soru konusu (opsiyonel)"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Soru üretimi için bağlam"
                 }
             },
             "required": ["user_id", "error_patterns", "difficulty_level"]
@@ -57,6 +61,7 @@ class QuestionGeneratorTool(BaseMCPTool):
         question_type = arguments.get("question_type", "multiple_choice")
         focus_areas = arguments.get("focus_areas", [])
         topic = arguments.get("topic", "general")
+        context = arguments.get("context", "")
         
         # Şimdilik mock data döndürüyoruz
         # Gerçek implementasyonda LLM API'si çağrılacak
@@ -75,7 +80,8 @@ class QuestionGeneratorTool(BaseMCPTool):
                 "metadata": {
                     "generated_at": "2024-01-01T00:00:00Z",
                     "user_id": user_id,
-                    "topic": topic
+                    "topic": topic,
+                    "context": context
                 }
             }
         elif question_type == "fill_blank":
@@ -91,7 +97,8 @@ class QuestionGeneratorTool(BaseMCPTool):
                 "metadata": {
                     "generated_at": "2024-01-01T00:00:00Z",
                     "user_id": user_id,
-                    "topic": topic
+                    "topic": topic,
+                    "context": context
                 }
             }
         else:  # open_ended
@@ -107,7 +114,8 @@ class QuestionGeneratorTool(BaseMCPTool):
                 "metadata": {
                     "generated_at": "2024-01-01T00:00:00Z",
                     "user_id": user_id,
-                    "topic": topic
+                    "topic": topic,
+                    "context": context
                 }
             }
         

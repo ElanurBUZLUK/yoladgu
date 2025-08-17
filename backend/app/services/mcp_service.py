@@ -19,7 +19,10 @@ class MCPService:
         user_id: str,
         error_patterns: List[str],
         difficulty_level: int,
-        question_type: str = "multiple_choice"
+        question_type: str = "multiple_choice",
+        context: Optional[str] = None,
+        topic: Optional[str] = None,
+        error_focus: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Kullanıcı için İngilizce soru üret"""
         client = await self._get_client()
@@ -28,7 +31,10 @@ class MCPService:
             user_id=user_id,
             error_patterns=error_patterns,
             difficulty_level=difficulty_level,
-            question_type=question_type
+            question_type=question_type,
+            context=context,
+            topic=topic,
+            focus_areas=error_focus,
         )
         
         if result.get("success"):

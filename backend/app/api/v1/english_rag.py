@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 import logging
 import time
 from datetime import datetime
+import json
 
 from app.core.database import get_async_session
 from app.middleware.auth import get_current_student, get_current_teacher
@@ -314,10 +315,34 @@ async def _generate_draft_question(
     request: RAGQuestionGenerationRequest,
     user: User
 ) -> Dict[str, Any]:
-    """Generate draft question using LLM"""
-    
+    """Generate draft question using MCP with fallback to LLM"""
+
+    format_map = {
+        "mcq": "multiple_choice",
+        "cloze": "fill_blank",
+        "error_correction": "open_ended"
+    }
+
     try:
         # Build generation prompt
+        question_type = format_map.get(request.format, "multiple_choice")
+        mcp_question = await mcp_service.generate_english_question_for_user(
+            user_id=str(user.id),
+            error_patterns=request.error_focus or [],
+            difficulty_level=request.difficulty,
+            question_type=question_type,
+            context=context,
+            topic=request.topic,
+            error_focus=request.error_focus,
+        )
+        return mcp_question
+    except Exception as mcp_error:
+        logger.warning(
+            f"MCP generation failed: {mcp_error}. Falling back to LLM gateway"
+        )
+
+    try:
+        # Build generation prompt for LLM fallback
         prompt = _build_generation_prompt(context, request, user)
         
         # Get question from LLM

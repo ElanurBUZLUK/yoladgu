@@ -42,7 +42,8 @@ class MCPClientService:
         difficulty_level: int,
         question_type: str = "multiple_choice",
         focus_areas: Optional[List[str]] = None,
-        topic: Optional[str] = None
+        topic: Optional[str] = None,
+        context: Optional[str] = None
     ) -> Dict[str, Any]:
         """İngilizce soru üret"""
         if not self.is_connected:
@@ -59,6 +60,8 @@ class MCPClientService:
             arguments["focus_areas"] = focus_areas
         if topic:
             arguments["topic"] = topic
+        if context:
+            arguments["context"] = context
         
         try:
             tool = self.tools["question_generator"]
