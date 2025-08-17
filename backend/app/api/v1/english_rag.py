@@ -17,6 +17,7 @@ from app.services.vector_index_manager import vector_index_manager
 from app.services.context_compression import context_compression_service
 from app.services.critic_revise import critic_revise_service
 from app.services.llm_gateway import llm_gateway
+from app.services.mcp_service import mcp_service
 from app.core.cache import cache_service
 
 logger = logging.getLogger(__name__)
@@ -130,9 +131,28 @@ async def generate_rag_question(
                 db, final_result["final_question"], current_user, request
             )
         
+        # Step 8.5: Deliver question via MCP for enhanced accessibility/presentation
+        delivery_result = None
+        try:
+            delivery_result = await mcp_service.deliver_question_to_student(
+                question_data=final_result["final_question"],
+                user_id=str(current_user.id),
+                learning_style=request.constraints.get("learning_style", "mixed"),
+                delivery_format=request.constraints.get("delivery_format", "web"),
+                accessibility_options=request.constraints.get("accessibility_options"),
+            )
+        except Exception as e:
+            logger.warning(f"MCP delivery failed: {e}")
+
+        question_payload = final_result["final_question"]
+        if delivery_result:
+            question_payload = delivery_result.get("delivered_question", question_payload)
+            question_payload["interactive_elements"] = delivery_result.get("interactive_elements")
+            question_payload["delivery_metadata"] = delivery_result.get("delivery_metadata")
+
         # Step 9: Prepare response
         response = RAGQuestionResponse(
-            question=final_result["final_question"],
+            question=question_payload,
             provenance={
                 "model": "gpt-4o-mini",  # This should come from LLM gateway
                 "provider": "openai",

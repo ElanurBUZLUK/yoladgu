@@ -18,6 +18,7 @@ from app.schemas.answer import (
     FeedbackGeneration, AnswerValidation
 )
 from app.services.llm_gateway import llm_gateway
+from app.services.mcp_service import mcp_service
 from app.core.cache import cache_service
 
 
@@ -431,38 +432,52 @@ class AnswerEvaluationService:
         )
     
     async def _evaluate_with_llm(self, request: AnswerEvaluationRequest, student_answer: str) -> AnswerEvaluation:
-        """Evaluate answer using LLM"""
-        
+        """Evaluate answer using MCP service with fallbacks"""
+
+        evaluation_data = None
         try:
-            llm_result = await llm_gateway.evaluate_student_answer(
+            evaluation_data = await mcp_service.evaluate_student_answer(
                 question_content=request.question_content,
                 correct_answer=request.correct_answer,
                 student_answer=student_answer,
                 subject=request.subject.value,
-                question_type=request.question_type.value
+                question_type=request.question_type.value,
+                difficulty_level=request.difficulty_level or 3,
             )
-            
-            if llm_result.get("success"):
-                evaluation_data = llm_result.get("content", {})
-                
-                return AnswerEvaluation(
-                    is_correct=evaluation_data.get("is_correct", False),
-                    score=evaluation_data.get("score", 0.0),
-                    feedback=evaluation_data.get("feedback", "No feedback available"),
-                    detailed_feedback=evaluation_data.get("detailed_feedback"),
-                    explanation=evaluation_data.get("explanation"),
-                    error_analysis=evaluation_data.get("error_analysis", {}),
-                    recommendations=evaluation_data.get("recommendations", []),
-                    next_difficulty=evaluation_data.get("next_difficulty")
+        except Exception as mcp_error:
+            print(f"MCP evaluation error: {mcp_error}")
+            try:
+                llm_result = await llm_gateway.evaluate_student_answer(
+                    question_content=request.question_content,
+                    correct_answer=request.correct_answer,
+                    student_answer=student_answer,
+                    subject=request.subject.value,
+                    question_type=request.question_type.value,
                 )
-            else:
-                # Fallback to rule-based evaluation
+                
+                if llm_result.get("success"):
+                    evaluation_data = llm_result.get("content", {})
+                else:
+                    return await self._evaluate_with_rules(request, student_answer)
+            except Exception as e:
+                print(f"LLM evaluation error: {e}")
                 return await self._evaluate_with_rules(request, student_answer)
                 
         except Exception as e:
             print(f"LLM evaluation error: {e}")
             # Fallback to rule-based evaluation
             return await self._evaluate_with_rules(request, student_answer)
+
+        return AnswerEvaluation(
+            is_correct=evaluation_data.get("is_correct", False),
+            score=evaluation_data.get("score", 0.0),
+            feedback=evaluation_data.get("feedback", "No feedback available"),
+            detailed_feedback=evaluation_data.get("detailed_feedback"),
+            explanation=evaluation_data.get("explanation"),
+            error_analysis=evaluation_data.get("error_analysis", {}),
+            recommendations=evaluation_data.get("recommendations", []),
+            next_difficulty=evaluation_data.get("next_difficulty"),
+        )
     
     async def _evaluate_with_rules(self, request: AnswerEvaluationRequest, student_answer: str) -> AnswerEvaluation:
         """Evaluate answer using rule-based logic"""
