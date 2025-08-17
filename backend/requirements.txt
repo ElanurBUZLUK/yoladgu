@@ -1,0 +1,36 @@
+# FastAPI ve temel bağımlılıklar
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# Veritabanı
+asyncpg
+databases[postgresql]
+alembic
+sqlalchemy
+psycopg2-binary
+aiosqlite
+
+# Redis cache
+redis
+
+# Authentication
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# Güvenlik
+cryptography
+python-dotenv
+
+# PDF Processing
+PyPDF2
+pdfplumber
+python-magic
+pillow
+
+# Testing
+pytest
+pytest-asyncio
+httpx
