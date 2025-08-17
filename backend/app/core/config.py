@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     fallback_to_templates: bool = True
     max_retry_attempts: int = 3
     
+    # Embedding Configuration
+    embedding_model: str = "text-embedding-3-small"
+    local_embedding_model: Optional[str] = None  # e.g., "bge-small-en"
+    pgvector_dim: int = 1536
+    embedding_cache_ttl: int = 3600  # 1 hour
+    embedding_batch_size: int = 100
+    embedding_rate_limit_delay: float = 0.1  # 100ms
+    
     # CORS
     cors_origins: str = "http://localhost:3000"
     

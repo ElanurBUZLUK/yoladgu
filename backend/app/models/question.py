@@ -24,6 +24,14 @@ class SourceType(str, enum.Enum):
     MANUAL = "manual"
 
 
+class DifficultyLevel(int, enum.Enum):
+    VERY_EASY = 1
+    EASY = 2
+    MEDIUM = 3
+    HARD = 4
+    VERY_HARD = 5
+
+
 class Question(Base):
     __tablename__ = "questions"
 

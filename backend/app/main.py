@@ -70,10 +70,12 @@ async def health_check():
 
 # Import routers
 from app.api.v1 import math, english, users, mcp, dashboard, answers, pdf, scheduler, analytics, sample_data, system_init
+from app.api.v1 import english_rag
 
 # Add routers
 app.include_router(math.router)
 app.include_router(english.router)
+app.include_router(english_rag.router)  # New RAG API
 app.include_router(users.router)
 app.include_router(mcp.router)
 app.include_router(dashboard.router)
