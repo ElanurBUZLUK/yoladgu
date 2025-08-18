@@ -14,6 +14,8 @@ from app.services.math_selector import math_selector
 from app.services.math_profile_manager import math_profile_manager
 from app.services.advanced_math_algorithms import advanced_math_algorithms
 from app.services.math_analytics_service import math_analytics_service
+from app.services.math_quality_assurance import math_quality_assurance
+from app.services.math_performance_monitoring import math_performance_monitoring
 from app.services.mcp_service import mcp_service
 from app.core.cache import cache_service
 
@@ -95,6 +97,17 @@ async def get_next_math_question(
                 db, profile, request.exclude_question_ids
             )
         
+        # Kalite kontrolü
+        recent_questions = []  # TODO: Gerçek implementasyonda son soruları al
+        quality_result = math_quality_assurance.validate_question_quality(
+            selected_question, profile, recent_questions
+        )
+        
+        # Performans izleme
+        await math_performance_monitoring.track_question_selection(
+            str(current_user.id), selected_question, profile, rationale, latency_ms
+        )
+        
         # Soru verilerini hazırla
         question_data = {
             "id": str(selected_question.id),
@@ -175,6 +188,21 @@ async def submit_math_answer(
         # Değerlendirme sonuçlarını al
         is_correct = evaluation_result.get("is_correct", False)
         score = evaluation_result.get("score", 0.0)
+        
+        # Kalite kontrolü
+        answer_quality_result = math_quality_assurance.validate_answer_quality(
+            submission.student_answer, question, submission.time_taken, {}
+        )
+        
+        # Kısmi puan hesaplama
+        partial_credit = math_quality_assurance.calculate_partial_credit(
+            submission.student_answer, question.correct_answer or "", question, submission.time_taken
+        )
+        
+        # Performans izleme
+        await math_performance_monitoring.track_answer_submission(
+            str(current_user.id), question, profile, is_correct, submission.time_taken, partial_credit
+        )
         feedback = evaluation_result.get("feedback", "No feedback available")
         explanation = evaluation_result.get("explanation", "No explanation available")
         
@@ -322,7 +350,11 @@ async def math_rag_health():
             "profile_management",
             "advanced_algorithms",
             "analytics_service",
-            "mcp_integration"
+            "mcp_integration",
+            "quality_assurance",
+            "performance_monitoring",
+            "real_time_alerts",
+            "system_health_monitoring"
         ]
     }
 
@@ -495,4 +527,184 @@ async def get_adaptive_recommendations(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Adaptive recommendations failed: {str(e)}"
+        )
+
+
+@router.get("/monitoring/performance-metrics")
+async def get_performance_metrics(
+    metric_name: Optional[str] = Query(None, description="Specific metric name"),
+    time_window_hours: int = Query(24, description="Time window in hours"),
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Performans metriklerini al"""
+    
+    try:
+        time_window = timedelta(hours=time_window_hours)
+        
+        metrics = math_performance_monitoring.get_performance_metrics(
+            metric_name=metric_name,
+            user_id=str(current_user.id),
+            time_window=time_window
+        )
+        
+        return {
+            "user_id": str(current_user.id),
+            "metrics": metrics,
+            "time_window_hours": time_window_hours,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in performance metrics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Performance metrics failed: {str(e)}"
+        )
+
+
+@router.get("/monitoring/alerts")
+async def get_alerts(
+    level: Optional[str] = Query(None, description="Alert level (info, warning, error, critical)"),
+    time_window_hours: int = Query(24, description="Time window in hours"),
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Uyarıları al"""
+    
+    try:
+        time_window = timedelta(hours=time_window_hours)
+        
+        alerts = math_performance_monitoring.get_alerts(
+            level=level,
+            time_window=time_window
+        )
+        
+        return {
+            "user_id": str(current_user.id),
+            "alerts": alerts,
+            "level_filter": level,
+            "time_window_hours": time_window_hours,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in alerts: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Alerts failed: {str(e)}"
+        )
+
+
+@router.get("/monitoring/system-health")
+async def get_system_health(
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Sistem sağlığını kontrol et"""
+    
+    try:
+        health = math_performance_monitoring.get_system_health()
+        
+        return {
+            "user_id": str(current_user.id),
+            "system_health": health,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in system health: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"System health check failed: {str(e)}"
+        )
+
+
+@router.get("/quality/question-validation")
+async def validate_question_quality(
+    question_id: str = Query(..., description="Question ID to validate"),
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Soru kalitesini doğrula"""
+    
+    try:
+        # Öğrenci profilini al
+        profile = await math_profile_manager.get_or_create_profile(db, current_user)
+        
+        # Soruyu veritabanından al
+        from app.models.question import Question
+        from sqlalchemy import select
+        
+        stmt = select(Question).where(Question.id == question_id)
+        result = await db.execute(stmt)
+        question = result.scalar_one_or_none()
+        
+        if not question:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Question not found"
+            )
+        
+        # Son soruları al (mock data)
+        recent_questions = []
+        
+        # Kalite kontrolü
+        quality_result = math_quality_assurance.validate_question_quality(
+            question, profile, recent_questions
+        )
+        
+        return {
+            "user_id": str(current_user.id),
+            "question_id": question_id,
+            "quality_check": {
+                "passed": quality_result.passed,
+                "score": quality_result.score,
+                "issues": quality_result.issues,
+                "warnings": quality_result.warnings,
+                "recommendations": quality_result.recommendations
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in question quality validation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Question quality validation failed: {str(e)}"
+        )
+
+
+@router.post("/quality/session-validation")
+async def validate_session_quality(
+    session_data: Dict[str, Any],
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Oturum kalitesini doğrula"""
+    
+    try:
+        # Öğrenci profilini al
+        profile = await math_profile_manager.get_or_create_profile(db, current_user)
+        
+        # Oturum kalite kontrolü
+        session_result = math_quality_assurance.validate_user_session(profile, session_data)
+        
+        return {
+            "user_id": str(current_user.id),
+            "session_validation": {
+                "passed": session_result.passed,
+                "score": session_result.score,
+                "issues": session_result.issues,
+                "warnings": session_result.warnings,
+                "recommendations": session_result.recommendations
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in session quality validation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Session quality validation failed: {str(e)}"
         )
