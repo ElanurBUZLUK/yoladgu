@@ -47,6 +47,13 @@ class Question(Base):
     source_type = Column(SQLEnum(SourceType), default=SourceType.MANUAL, nullable=False)
     pdf_source_path = Column(String(500), nullable=True)
     question_metadata = Column(JSONB, nullable=True)
+    
+    # Matematik soru seçim sistemi için ek alanlar
+    estimated_difficulty = Column(Integer, nullable=True, index=True)  # Sürekli ölçek (0.0-5.0)
+    freshness_score = Column(Integer, nullable=True)  # 0-1; yeni/az görülmüş sorulara +
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)  # Son görülme zamanı
+    quality_flags = Column(JSONB, nullable=True)  # {ambiguous: False, reviewed: True}
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     def __repr__(self):

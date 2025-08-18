@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, Integer, DateTime, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import uuid
 import enum
 from app.core.database import Base
@@ -33,6 +34,9 @@ class User(Base):
     is_active = Column(String(10), default="true", nullable=False)  # Boolean as string for compatibility
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Relationships
+    math_profile = relationship("MathProfile", back_populates="user", uselist=False)
 
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username}, role={self.role})>"
