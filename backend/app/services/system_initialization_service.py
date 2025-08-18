@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings, Environment, LLMProvider
-from app.core.database import get_async_session, engine
+from app.core.database import get_async_session, engine, database
 from app.core.cache import cache_service
 from app.services.llm_gateway import LLMGatewayService
 from app.services.mcp_service import MCPService

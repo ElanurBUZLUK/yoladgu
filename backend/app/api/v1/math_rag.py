@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Form
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, desc
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 import logging
@@ -101,10 +102,10 @@ class SolveResponse(BaseModel):
 
 
 class CheckRequest(BaseModel):
-    question: str
-    user_answer: str
-    answer_key: Optional[str] = None  # MCQ anahtarı varsa
-    require_explanation: bool = True
+    question: str = Field(..., description="Question text")
+    user_answer: str = Field(..., description="User's answer")
+    answer_key: Optional[str] = Field(None, description="Correct answer key")
+    require_explanation: bool = Field(True, description="Whether to include explanation")
 
 
 class CheckResponse(BaseModel):

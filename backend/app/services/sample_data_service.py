@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,8 @@ from app.models.pdf_upload import PDFUpload, ProcessingStatus, VirusScanStatus
 from app.core.security import security_service
 from app.repositories.user_repository import user_repository
 from app.repositories.base_repository import BaseRepository
+
+logger = logging.getLogger(__name__)
 
 
 class SampleDataService:
