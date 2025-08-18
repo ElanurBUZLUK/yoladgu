@@ -178,3 +178,9 @@ build/
 
 # Local development
 .local/
+
+# Large files and archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
