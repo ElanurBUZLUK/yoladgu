@@ -7,6 +7,7 @@ import logging
 from app.models.math_profile import MathProfile
 from app.models.user import User
 from app.services.math_selector import math_selector
+from app.services.advanced_math_algorithms import advanced_math_algorithms
 from app.core.cache import cache_service
 
 logger = logging.getLogger(__name__)
@@ -80,12 +81,19 @@ class MathProfileManager:
             delta_used=delta_used
         )
         
-        # SRS queue'yu güncelle
-        await math_selector.update_srs_after_answer(
+        # Gelişmiş SRS algoritması ile queue'yu güncelle
+        srs_result = advanced_math_algorithms.enhanced_srs_algorithm(
             profile=profile,
             question_id=str(profile.id),  # Bu kısım düzeltilmeli
-            is_correct=is_correct
+            is_correct=is_correct,
+            response_time=time_taken,
+            difficulty=question_difficulty
         )
+        
+        # SRS item'ı queue'ya ekle/güncelle
+        question_id = str(profile.id)  # Bu kısım düzeltilmeli
+        profile.srs_queue = [item for item in profile.srs_queue if item.get("question_id") != question_id]
+        profile.srs_queue.append(srs_result["srs_item"])
         
         # Veritabanını güncelle
         await db.commit()

@@ -9,6 +9,7 @@ import logging
 from app.models.question import Question, Subject
 from app.models.math_profile import MathProfile
 from app.core.cache import cache_service
+from app.services.advanced_math_algorithms import advanced_math_algorithms
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +146,15 @@ class MathSelector:
         profile: MathProfile,
         exclude_question_ids: Optional[List[str]] = None
     ) -> Tuple[Question, Dict[str, Any]]:
-        """Normal akış - adaptif + bandit seçimi"""
+        """Normal akış - gelişmiş adaptif + bandit seçimi"""
         
-        # Hedef zorluk aralığı
-        target_low, target_high = profile.get_target_difficulty_range()
+        # Son performans verilerini al
+        recent_performance = self._get_recent_performance_data(profile)
+        
+        # Gelişmiş adaptif zorluk hesaplama
+        target_low, target_high, difficulty_rationale = advanced_math_algorithms.enhanced_adaptive_difficulty(
+            profile, recent_performance
+        )
         
         # Aday soruları filtrele
         candidates = await self._filter_questions(
@@ -164,6 +170,14 @@ class MathSelector:
         if not candidates:
             raise ValueError("No suitable questions found")
         
+        # Context hazırla
+        context = {
+            "needs_recovery": profile.needs_recovery(),
+            "high_performance": profile.ema_accuracy > 0.8,
+            "recent_questions": self._get_recent_questions_context(profile),
+            "performance_metrics": difficulty_rationale["performance_metrics"],
+        }
+        
         # İlk 50 etkileşimde epsilon-greedy
         total_interactions = len(profile.last_k_outcomes or [])
         if total_interactions < 50:
@@ -171,11 +185,12 @@ class MathSelector:
             rationale = {
                 "mode": "normal_epsilon_greedy",
                 "target_range": (target_low, target_high),
+                "difficulty_rationale": difficulty_rationale,
                 "reason": f"Epsilon-greedy selection (interactions={total_interactions})"
             }
         else:
-            # Thompson Sampling ile bandit seçimi
-            delta = self._thompson_arm_selection(profile)
+            # Gelişmiş Thompson Sampling ile bandit seçimi
+            delta, bandit_rationale = advanced_math_algorithms.advanced_thompson_sampling(profile, context)
             adj_low = self.clip(target_low + delta, 0.0, 5.0)
             adj_high = self.clip(target_high + delta, 0.0, 5.0)
             
@@ -187,13 +202,22 @@ class MathSelector:
             if bandit_candidates:
                 candidates = bandit_candidates
             
-            selected_question = self._score_and_pick(candidates, target_low, target_high, profile)
+            # Gelişmiş skorlama algoritması
+            scored_candidates = advanced_math_algorithms.advanced_scoring_algorithm(
+                candidates, (target_low + target_high) / 2, profile, context
+            )
+            
+            selected_question = scored_candidates[0][0] if scored_candidates else candidates[0]
+            scoring_rationale = scored_candidates[0][2] if scored_candidates else {}
+            
             rationale = {
-                "mode": "normal_thompson",
+                "mode": "normal_advanced_thompson",
                 "target_range": (target_low, target_high),
-                "bandit_delta": delta,
+                "difficulty_rationale": difficulty_rationale,
+                "bandit_rationale": bandit_rationale,
+                "scoring_rationale": scoring_rationale,
                 "adjusted_range": (adj_low, adj_high),
-                "reason": f"Thompson sampling with delta={delta}"
+                "reason": f"Advanced Thompson sampling with delta={delta}"
             }
         
         return selected_question, rationale
@@ -336,6 +360,40 @@ class MathSelector:
             "target_difficulty_range": profile.get_target_difficulty_range(),
             "bandit_arms": profile.bandit_arms,
         }
+    
+    def _get_recent_performance_data(self, profile: MathProfile) -> List[Dict[str, Any]]:
+        """Son performans verilerini al"""
+        
+        # Basit implementasyon - gerçekte veritabanından alınabilir
+        outcomes = profile.last_k_outcomes or []
+        performance_data = []
+        
+        for i, is_correct in enumerate(outcomes[-20:]):  # Son 20 sonuç
+            performance_data.append({
+                "is_correct": is_correct,
+                "response_time": 60 + (i * 5),  # Simulated response time
+                "difficulty": profile.global_skill + (i * 0.1),  # Simulated difficulty
+                "timestamp": datetime.utcnow() - timedelta(hours=i)
+            })
+        
+        return performance_data
+    
+    def _get_recent_questions_context(self, profile: MathProfile) -> List[Dict[str, Any]]:
+        """Son soruların context'ini al"""
+        
+        # Basit implementasyon - gerçekte veritabanından alınabilir
+        outcomes = profile.last_k_outcomes or []
+        recent_questions = []
+        
+        for i, is_correct in enumerate(outcomes[-10:]):  # Son 10 soru
+            recent_questions.append({
+                "topic_category": f"topic_{i % 5}",  # Simulated topic
+                "difficulty_level": 2 + (i % 4),  # Simulated difficulty
+                "question_type": "multiple_choice",
+                "is_correct": is_correct
+            })
+        
+        return recent_questions
 
 
 # Global instance
