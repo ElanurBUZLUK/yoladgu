@@ -12,6 +12,8 @@ from app.models.user import User
 from app.models.question import Subject, QuestionType
 from app.services.math_selector import math_selector
 from app.services.math_profile_manager import math_profile_manager
+from app.services.advanced_math_algorithms import advanced_math_algorithms
+from app.services.math_analytics_service import math_analytics_service
 from app.services.mcp_service import mcp_service
 from app.core.cache import cache_service
 
@@ -160,14 +162,14 @@ async def submit_math_answer(
                 detail="Question not found"
             )
         
-        # Cevabı değerlendir (MCP service ile)
-        evaluation_result = await mcp_service.evaluate_student_answer(
+        # Cevabı değerlendir (MCP math evaluator ile)
+        evaluation_result = await mcp_service.evaluate_math_answer(
             question_content=question.content,
             correct_answer=question.correct_answer or "",
             student_answer=submission.student_answer,
-            subject="math",
             question_type=question.question_type.value,
-            difficulty_level=question.difficulty_level
+            difficulty_level=question.difficulty_level,
+            partial_credit=True
         )
         
         # Değerlendirme sonuçlarını al
@@ -317,6 +319,180 @@ async def math_rag_health():
             "thompson_sampling",
             "srs_spaced_repetition",
             "recovery_mode",
-            "profile_management"
+            "profile_management",
+            "advanced_algorithms",
+            "analytics_service",
+            "mcp_integration"
         ]
     }
+
+
+@router.get("/analytics/learning-progress")
+async def get_learning_progress(
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Öğrenme ilerlemesi analizi"""
+    
+    try:
+        # Öğrenci profilini al
+        profile = await math_profile_manager.get_or_create_profile(db, current_user)
+        
+        # Performans geçmişini al (mock data)
+        performance_history = []
+        outcomes = profile.last_k_outcomes or []
+        for i, is_correct in enumerate(outcomes[-20:]):
+            performance_history.append({
+                "accuracy": 1.0 if is_correct else 0.0,
+                "speed": 0.8 - (i * 0.02),
+                "difficulty": profile.global_skill + (i * 0.1),
+                "timestamp": datetime.utcnow() - timedelta(hours=i),
+                "is_correct": is_correct,
+                "response_time": 60 + (i * 5)
+            })
+        
+        # Analitik servisi ile analiz
+        analysis_result = math_analytics_service.analyze_learning_progress(profile, performance_history)
+        
+        return {
+            "user_id": str(current_user.id),
+            "analysis": analysis_result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in learning progress analysis: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Learning progress analysis failed: {str(e)}"
+        )
+
+
+@router.get("/analytics/algorithm-performance")
+async def get_algorithm_performance(
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Algoritma performansı analizi"""
+    
+    try:
+        # Öğrenci profilini al
+        profile = await math_profile_manager.get_or_create_profile(db, current_user)
+        
+        # Seçim geçmişini al (mock data)
+        selection_history = []
+        outcomes = profile.last_k_outcomes or []
+        for i, is_correct in enumerate(outcomes[-10:]):
+            selection_history.append({
+                "mode": "normal_thompson" if i > 5 else "normal_epsilon_greedy",
+                "difficulty_match": 0.7 + (i * 0.02),
+                "selection_accuracy": 0.8 if is_correct else 0.3,
+                "timestamp": datetime.utcnow() - timedelta(hours=i)
+            })
+        
+        # Analitik servisi ile analiz
+        analysis_result = math_analytics_service.analyze_algorithm_performance(profile, selection_history)
+        
+        return {
+            "user_id": str(current_user.id),
+            "analysis": analysis_result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in algorithm performance analysis: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Algorithm performance analysis failed: {str(e)}"
+        )
+
+
+@router.get("/analytics/performance-prediction")
+async def get_performance_prediction(
+    prediction_horizon: int = Query(30, description="Prediction horizon in days"),
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Performans tahmini"""
+    
+    try:
+        # Öğrenci profilini al
+        profile = await math_profile_manager.get_or_create_profile(db, current_user)
+        
+        # Performans geçmişini al (mock data)
+        performance_history = []
+        outcomes = profile.last_k_outcomes or []
+        for i, is_correct in enumerate(outcomes[-20:]):
+            performance_history.append({
+                "accuracy": 1.0 if is_correct else 0.0,
+                "speed": 0.8 - (i * 0.02),
+                "difficulty": profile.global_skill + (i * 0.1),
+                "timestamp": datetime.utcnow() - timedelta(hours=i)
+            })
+        
+        # Analitik servisi ile tahmin
+        prediction_result = math_analytics_service.predict_performance_trajectory(
+            profile, performance_history, prediction_horizon
+        )
+        
+        return {
+            "user_id": str(current_user.id),
+            "prediction": prediction_result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in performance prediction: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Performance prediction failed: {str(e)}"
+        )
+
+
+@router.post("/recommendations/adaptive")
+async def get_adaptive_recommendations(
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Adaptif öneriler"""
+    
+    try:
+        # Öğrenci profilini al
+        profile = await math_profile_manager.get_or_create_profile(db, current_user)
+        
+        # Performans geçmişini al (mock data)
+        performance_history = []
+        outcomes = profile.last_k_outcomes or []
+        for i, is_correct in enumerate(outcomes[-20:]):
+            performance_history.append({
+                "accuracy": 1.0 if is_correct else 0.0,
+                "speed": 0.8 - (i * 0.02),
+                "difficulty": profile.global_skill + (i * 0.1),
+                "timestamp": datetime.utcnow() - timedelta(hours=i)
+            })
+        
+        # Mevcut context
+        current_context = {
+            "learning_session": "active",
+            "time_of_day": datetime.utcnow().hour,
+            "recent_activity": len(outcomes),
+            "current_difficulty": profile.global_skill * profile.difficulty_factor
+        }
+        
+        # Analitik servisi ile öneriler
+        recommendations_result = math_analytics_service.generate_adaptive_recommendations(
+            profile, performance_history, current_context
+        )
+        
+        return {
+            "user_id": str(current_user.id),
+            "recommendations": recommendations_result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in adaptive recommendations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Adaptive recommendations failed: {str(e)}"
+        )

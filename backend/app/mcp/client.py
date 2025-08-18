@@ -15,6 +15,8 @@ class MCPClientService:
         from .tools.pdf_parser import PDFParserTool
         from .tools.pdf_content_reader import PDFContentReaderTool
         from .tools.question_delivery import QuestionDeliveryTool
+        from .tools.math_generator import MathGeneratorTool
+        from .tools.math_evaluator import MathEvaluatorTool
         
         self.tools = {
             "question_generator": QuestionGeneratorTool(),
@@ -22,7 +24,9 @@ class MCPClientService:
             "analytics": AnalyticsTool(),
             "pdf_parser": PDFParserTool(),
             "pdf_content_reader": PDFContentReaderTool(),
-            "question_delivery": QuestionDeliveryTool()
+            "question_delivery": QuestionDeliveryTool(),
+            "math_generator": MathGeneratorTool(),
+            "math_evaluator": MathEvaluatorTool()
         }
     
     async def connect(self, server_command: Optional[List[str]] = None):
@@ -98,6 +102,124 @@ class MCPClientService:
             result = await tool.execute(arguments)
             return result
         except Exception as e:
+            print(f"Error evaluating answer: {e}")
+            raise
+    
+    async def generate_math_question(
+        self, 
+        user_id: str, 
+        difficulty_level: int,
+        topic_category: str,
+        question_type: str = "multiple_choice",
+        context: Optional[str] = None,
+        error_patterns: Optional[List[str]] = None,
+        learning_objectives: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Matematik sorusu üret"""
+        if not self.is_connected:
+            raise RuntimeError("MCP Client not connected")
+        
+        arguments = {
+            "user_id": user_id,
+            "difficulty_level": difficulty_level,
+            "topic_category": topic_category,
+            "question_type": question_type
+        }
+        
+        if context:
+            arguments["context"] = context
+        if error_patterns:
+            arguments["error_patterns"] = error_patterns
+        if learning_objectives:
+            arguments["learning_objectives"] = learning_objectives
+        
+        try:
+            tool = self.tools["math_generator"]
+            result = await tool.execute(arguments)
+            return result
+        except Exception as e:
+            print(f"Error generating math question: {e}")
+            raise
+    
+    async def evaluate_math_answer(
+        self,
+        question_content: str,
+        correct_answer: str,
+        student_answer: str,
+        question_type: str = "multiple_choice",
+        difficulty_level: int = 3,
+        partial_credit: bool = True
+    ) -> Dict[str, Any]:
+        """Matematik cevabını değerlendir"""
+        if not self.is_connected:
+            raise RuntimeError("MCP Client not connected")
+        
+        arguments = {
+            "question_content": question_content,
+            "correct_answer": correct_answer,
+            "student_answer": student_answer,
+            "question_type": question_type,
+            "difficulty_level": difficulty_level,
+            "partial_credit": partial_credit
+        }
+        
+        try:
+            tool = self.tools["math_evaluator"]
+            result = await tool.execute(arguments)
+            return result
+        except Exception as e:
+            print(f"Error evaluating math answer: {e}")
+            raise
+    
+    async def analyze_math_performance(
+        self,
+        user_id: str,
+        recent_attempts: List[Dict[str, Any]],
+        analysis_type: str = "skill_assessment"
+    ) -> Dict[str, Any]:
+        """Matematik performansını analiz et"""
+        if not self.is_connected:
+            raise RuntimeError("MCP Client not connected")
+        
+        arguments = {
+            "user_id": user_id,
+            "recent_attempts": recent_attempts,
+            "analysis_type": analysis_type
+        }
+        
+        try:
+            tool = self.tools["analytics"]
+            result = await tool.execute(arguments)
+            return result
+        except Exception as e:
+            print(f"Error analyzing math performance: {e}")
+            raise
+    
+    async def get_math_recommendations(
+        self,
+        user_id: str,
+        current_skill_level: float,
+        weak_areas: List[str],
+        learning_goals: List[str]
+    ) -> Dict[str, Any]:
+        """Matematik önerileri al"""
+        if not self.is_connected:
+            raise RuntimeError("MCP Client not connected")
+        
+        arguments = {
+            "user_id": user_id,
+            "current_skill_level": current_skill_level,
+            "weak_areas": weak_areas,
+            "learning_goals": learning_goals
+        }
+        
+        try:
+            tool = self.tools["analytics"]
+            result = await tool.execute(arguments)
+            return result
+        except Exception as e:
+            print(f"Error getting math recommendations: {e}")
+            raise
             print(f"Error evaluating answer: {e}")
             raise
     

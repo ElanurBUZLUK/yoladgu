@@ -98,6 +98,116 @@ class MCPService:
         extract_images: bool = True
     ) -> List[Dict[str, Any]]:
         """PDF'den soruları çıkar"""
+        
+        client = await self._get_client()
+        
+        result = await client.extract_questions_from_pdf(
+            pdf_path=pdf_path,
+            subject=subject,
+            expected_difficulty=expected_difficulty,
+            extract_images=extract_images
+        )
+        
+        if result.get("success"):
+            return result["questions"]
+        else:
+            raise Exception(f"PDF extraction failed: {result.get('error', 'Unknown error')}")
+    
+    async def generate_math_question_for_user(
+        self,
+        user_id: str,
+        difficulty_level: int,
+        topic_category: str,
+        question_type: str = "multiple_choice",
+        context: Optional[str] = None,
+        error_patterns: Optional[List[str]] = None,
+        learning_objectives: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Kullanıcı için matematik soru üret"""
+        client = await self._get_client()
+        
+        result = await client.generate_math_question(
+            user_id=user_id,
+            difficulty_level=difficulty_level,
+            topic_category=topic_category,
+            question_type=question_type,
+            context=context,
+            error_patterns=error_patterns or [],
+            learning_objectives=learning_objectives or [],
+        )
+        
+        if result.get("success"):
+            return result["question"]
+        else:
+            raise Exception(f"Math question generation failed: {result.get('error', 'Unknown error')}")
+    
+    async def evaluate_math_answer(
+        self,
+        question_content: str,
+        correct_answer: str,
+        student_answer: str,
+        question_type: str = "multiple_choice",
+        difficulty_level: int = 3,
+        partial_credit: bool = True
+    ) -> Dict[str, Any]:
+        """Matematik cevabını değerlendir"""
+        client = await self._get_client()
+        
+        result = await client.evaluate_math_answer(
+            question_content=question_content,
+            correct_answer=correct_answer,
+            student_answer=student_answer,
+            question_type=question_type,
+            difficulty_level=difficulty_level,
+            partial_credit=partial_credit
+        )
+        
+        if result.get("success"):
+            return result["evaluation"]
+        else:
+            raise Exception(f"Math answer evaluation failed: {result.get('error', 'Unknown error')}")
+    
+    async def analyze_math_performance(
+        self,
+        user_id: str,
+        recent_attempts: List[Dict[str, Any]],
+        analysis_type: str = "skill_assessment"
+    ) -> Dict[str, Any]:
+        """Matematik performansını analiz et"""
+        client = await self._get_client()
+        
+        result = await client.analyze_math_performance(
+            user_id=user_id,
+            recent_attempts=recent_attempts,
+            analysis_type=analysis_type
+        )
+        
+        if result.get("success"):
+            return result["analysis"]
+        else:
+            raise Exception(f"Math performance analysis failed: {result.get('error', 'Unknown error')}")
+    
+    async def get_math_learning_recommendations(
+        self,
+        user_id: str,
+        current_skill_level: float,
+        weak_areas: List[str],
+        learning_goals: List[str]
+    ) -> Dict[str, Any]:
+        """Matematik öğrenme önerileri al"""
+        client = await self._get_client()
+        
+        result = await client.get_math_recommendations(
+            user_id=user_id,
+            current_skill_level=current_skill_level,
+            weak_areas=weak_areas,
+            learning_goals=learning_goals
+        )
+        
+        if result.get("success"):
+            return result["recommendations"]
+        else:
+            raise Exception(f"Math recommendations failed: {result.get('error', 'Unknown error')}")
         client = await self._get_client()
         
         result = await client.parse_pdf_questions(
