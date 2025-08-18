@@ -21,7 +21,7 @@ class DashboardService:
     """Dashboard and subject selection service"""
     
     def __init__(self):
-        pass
+        self.cache_ttl = 1800  # 30 minutes
     
     async def get_subject_selection_data(self, db: AsyncSession, user: User) -> SubjectSelectionResponse:
         """Get data for subject selection screen"""
@@ -88,7 +88,7 @@ class DashboardService:
         # Generate recommendations
         recommendations = await self._generate_recommendations(db, user, subject)
         
-        # Get achievements (placeholder)
+        # Get achievements
         achievements = await self._get_achievements(db, user)
         
         return DashboardData(
@@ -256,15 +256,14 @@ class DashboardService:
         total_time = sum(attempt.time_spent or 0 for attempt in attempts)
         avg_time = total_time / total_attempts if total_attempts > 0 else 0
         
-        # Calculate improvement rate (placeholder - would need historical data)
-        improvement_rate = 0.0  # TODO: Implement based on previous period comparison
+        # Calculate improvement rate based on previous period comparison
+        improvement_rate = await self._calculate_improvement_rate(db, user, subject, period, accuracy_rate)
         
-        # Difficulty distribution
-        difficulty_dist = {}
-        topic_performance = {}
+        # Calculate difficulty distribution
+        difficulty_dist = await self._calculate_difficulty_distribution(attempts)
         
-        # These would be calculated from actual question data
-        # For now, return placeholder data
+        # Calculate topic performance
+        topic_performance = await self._calculate_topic_performance(attempts)
         
         return PerformanceSummary(
             subject=subject,
@@ -323,6 +322,9 @@ class DashboardService:
         total_time = sum(day["time_spent"] for day in daily_stats)
         accuracy_trend = [day["accuracy_rate"] for day in daily_stats]
         
+        # Get achievements unlocked this week
+        achievements_unlocked = await self._get_weekly_achievements(db, user, week_start, week_end)
+        
         return WeeklyProgress(
             week_start=week_start.strftime("%Y-%m-%d"),
             week_end=week_end.strftime("%Y-%m-%d"),
@@ -332,7 +334,7 @@ class DashboardService:
                 "target_accuracy": 80,
                 "target_time": 300  # 5 hours in minutes
             },
-            achievements_unlocked=[],  # Placeholder
+            achievements_unlocked=achievements_unlocked,
             total_time_spent=total_time,
             questions_answered=total_questions,
             accuracy_trend=accuracy_trend
@@ -361,9 +363,8 @@ class DashboardService:
         time_today = sum(a.time_spent or 0 for a in today_attempts)
         time_total = sum(a.time_spent or 0 for a in all_attempts)
         
-        # Calculate streaks (placeholder)
-        current_streak = 0
-        best_streak = 0
+        # Calculate streaks
+        current_streak, best_streak = await self._calculate_streaks(db, user)
         
         return DashboardStats(
             total_questions_answered=total_questions,
@@ -383,8 +384,25 @@ class DashboardService:
         current_level = user.current_math_level if subject == Subject.MATH else user.current_english_level
         
         # Get attempts for this subject
-        # This would join with questions table to filter by subject
-        # For now, return placeholder data
+        result = await db.execute(
+            select(StudentAttempt).join(StudentAttempt.question).where(
+                and_(
+                    StudentAttempt.user_id == user.id,
+                    StudentAttempt.question.has(subject=subject)
+                )
+            )
+        )
+        attempts = result.scalars().all()
+        
+        # Calculate progress metrics
+        total_questions = len(attempts)
+        correct_answers = sum(1 for a in attempts if a.is_correct)
+        accuracy_rate = (correct_answers / total_questions * 100) if total_questions > 0 else 0
+        
+        # Get last activity
+        last_activity = None
+        if attempts:
+            last_activity = max(a.attempt_date for a in attempts)
         
         # Get spaced repetition queue count
         sr_result = await db.execute(
@@ -408,17 +426,23 @@ class DashboardService:
         )
         weak_areas = [row[0] for row in error_result.fetchall()]
         
+        # Calculate strong areas (topics with high accuracy)
+        strong_areas = await self._calculate_strong_areas(attempts)
+        
+        # Calculate progress percentage based on level and performance
+        progress_percentage = min(100.0, (current_level / 5.0) * 100 + (accuracy_rate * 0.2))
+        
         return SubjectProgress(
             subject=subject,
             current_level=current_level,
-            progress_percentage=75.0,  # Placeholder
-            total_questions=0,  # Will be calculated from actual data
-            correct_answers=0,  # Will be calculated from actual data
-            accuracy_rate=0.0,  # Will be calculated from actual data
-            last_activity=None,  # Will be calculated from actual data
+            progress_percentage=progress_percentage,
+            total_questions=total_questions,
+            correct_answers=correct_answers,
+            accuracy_rate=accuracy_rate,
+            last_activity=last_activity.isoformat() if last_activity else None,
             next_review_count=next_review_count,
             weak_areas=weak_areas,
-            strong_areas=[]  # Placeholder
+            strong_areas=strong_areas
         )
     
     async def _get_recent_activity(self, db: AsyncSession, user: User, limit: int = 10) -> List[Dict[str, Any]]:
@@ -507,7 +531,7 @@ class DashboardService:
         return recommendations[:5]  # Limit to 5 recommendations
     
     async def _get_achievements(self, db: AsyncSession, user: User) -> List[Dict[str, Any]]:
-        """Get user achievements (placeholder)"""
+        """Get user achievements"""
         
         achievements = []
         
@@ -516,6 +540,18 @@ class DashboardService:
             select(func.count(StudentAttempt.id)).where(StudentAttempt.user_id == user.id)
         )
         total_attempts = result.scalar() or 0
+        
+        # Get accuracy for achievement calculation
+        correct_result = await db.execute(
+            select(func.count(StudentAttempt.id)).where(
+                and_(
+                    StudentAttempt.user_id == user.id,
+                    StudentAttempt.is_correct == True
+                )
+            )
+        )
+        correct_attempts = correct_result.scalar() or 0
+        accuracy = (correct_attempts / total_attempts * 100) if total_attempts > 0 else 0
         
         # Basic achievements
         if total_attempts >= 10:
@@ -535,6 +571,171 @@ class DashboardService:
                 "icon": "🏆",
                 "unlocked_at": "2024-01-01T00:00:00Z"
             })
+        
+        if accuracy >= 80:
+            achievements.append({
+                "id": "high_accuracy",
+                "title": "High Achiever",
+                "description": "Maintained 80%+ accuracy",
+                "icon": "⭐",
+                "unlocked_at": "2024-01-01T00:00:00Z"
+            })
+        
+        return achievements
+    
+    async def _calculate_streaks(self, db: AsyncSession, user: User) -> tuple[int, int]:
+        """Calculate current and best streaks"""
+        
+        # Get all attempts ordered by date
+        result = await db.execute(
+            select(StudentAttempt).where(
+                StudentAttempt.user_id == user.id
+            ).order_by(StudentAttempt.attempt_date)
+        )
+        attempts = result.scalars().all()
+        
+        if not attempts:
+            return 0, 0
+        
+        current_streak = 0
+        best_streak = 0
+        temp_streak = 0
+        
+        for attempt in attempts:
+            if attempt.is_correct:
+                temp_streak += 1
+                best_streak = max(best_streak, temp_streak)
+            else:
+                temp_streak = 0
+        
+        # Current streak is the last streak
+        current_streak = temp_streak
+        
+        return current_streak, best_streak
+    
+    async def _calculate_improvement_rate(self, db: AsyncSession, user: User, subject: Subject, period: str, current_accuracy: float) -> float:
+        """Calculate improvement rate based on previous period comparison"""
+        
+        # Get previous period data for comparison
+        now = datetime.utcnow()
+        if period == "week":
+            previous_start = now - timedelta(days=14)
+            previous_end = now - timedelta(days=7)
+        elif period == "month":
+            previous_start = now - timedelta(days=60)
+            previous_end = now - timedelta(days=30)
+        else:
+            return 0.0
+        
+        # Get previous period attempts
+        result = await db.execute(
+            select(StudentAttempt).join(StudentAttempt.question).where(
+                and_(
+                    StudentAttempt.user_id == user.id,
+                    StudentAttempt.question.has(subject=subject),
+                    StudentAttempt.attempt_date >= previous_start,
+                    StudentAttempt.attempt_date <= previous_end
+                )
+            )
+        )
+        previous_attempts = result.scalars().all()
+        
+        if not previous_attempts:
+            return 0.0
+        
+        # Calculate previous accuracy
+        previous_correct = sum(1 for a in previous_attempts if a.is_correct)
+        previous_accuracy = (previous_correct / len(previous_attempts)) * 100
+        
+        # Calculate improvement rate
+        improvement_rate = current_accuracy - previous_accuracy
+        
+        return improvement_rate
+    
+    async def _calculate_difficulty_distribution(self, attempts: List[StudentAttempt]) -> Dict[str, int]:
+        """Calculate difficulty distribution from attempts"""
+        
+        distribution = {}
+        for attempt in attempts:
+            if hasattr(attempt, 'question') and attempt.question:
+                difficulty = attempt.question.difficulty_level
+                distribution[str(difficulty)] = distribution.get(str(difficulty), 0) + 1
+        
+        return distribution
+    
+    async def _calculate_topic_performance(self, attempts: List[StudentAttempt]) -> Dict[str, float]:
+        """Calculate topic performance from attempts"""
+        
+        topic_stats = {}
+        for attempt in attempts:
+            if hasattr(attempt, 'question') and attempt.question:
+                topic = attempt.question.topic_category
+                if topic not in topic_stats:
+                    topic_stats[topic] = {"correct": 0, "total": 0}
+                
+                topic_stats[topic]["total"] += 1
+                if attempt.is_correct:
+                    topic_stats[topic]["correct"] += 1
+        
+        # Calculate accuracy for each topic
+        topic_performance = {}
+        for topic, stats in topic_stats.items():
+            accuracy = (stats["correct"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+            topic_performance[topic] = accuracy
+        
+        return topic_performance
+    
+    async def _calculate_strong_areas(self, attempts: List[StudentAttempt]) -> List[str]:
+        """Calculate strong areas (topics with high accuracy)"""
+        
+        topic_stats = {}
+        for attempt in attempts:
+            if hasattr(attempt, 'question') and attempt.question:
+                topic = attempt.question.topic_category
+                if topic not in topic_stats:
+                    topic_stats[topic] = {"correct": 0, "total": 0}
+                
+                topic_stats[topic]["total"] += 1
+                if attempt.is_correct:
+                    topic_stats[topic]["correct"] += 1
+        
+        # Find topics with 80%+ accuracy and at least 3 attempts
+        strong_areas = []
+        for topic, stats in topic_stats.items():
+            if stats["total"] >= 3:
+                accuracy = (stats["correct"] / stats["total"]) * 100
+                if accuracy >= 80:
+                    strong_areas.append(topic)
+        
+        return strong_areas[:5]  # Return top 5 strong areas
+    
+    async def _get_weekly_achievements(self, db: AsyncSession, user: User, week_start: datetime, week_end: datetime) -> List[str]:
+        """Get achievements unlocked in the given week"""
+        
+        # This is a simplified implementation
+        # In a real system, you would track achievement unlock dates
+        
+        achievements = []
+        
+        # Get attempts for this week
+        result = await db.execute(
+            select(StudentAttempt).where(
+                and_(
+                    StudentAttempt.user_id == user.id,
+                    StudentAttempt.attempt_date >= week_start,
+                    StudentAttempt.attempt_date <= week_end
+                )
+            )
+        )
+        week_attempts = result.scalars().all()
+        
+        # Check for weekly achievements
+        if len(week_attempts) >= 20:
+            achievements.append("Weekly Warrior - Completed 20+ questions this week")
+        
+        correct_attempts = sum(1 for a in week_attempts if a.is_correct)
+        if len(week_attempts) >= 10 and (correct_attempts / len(week_attempts)) >= 0.9:
+            achievements.append("Perfect Week - 90%+ accuracy with 10+ questions")
         
         return achievements
 

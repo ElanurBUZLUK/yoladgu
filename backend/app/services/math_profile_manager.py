@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
@@ -6,6 +6,7 @@ import logging
 
 from app.models.math_profile import MathProfile
 from app.models.user import User
+from app.models.student_attempt import StudentAttempt
 from app.services.math_selector import math_selector
 from app.services.advanced_math_algorithms import advanced_math_algorithms
 from app.core.cache import cache_service
@@ -106,7 +107,31 @@ class MathProfileManager:
         logger.info(f"Updated math profile for user {profile.user_id}: correct={is_correct}, skill={profile.global_skill:.2f}")
         
         return profile
-    
+
+    async def get_performance_history(
+        self, 
+        db: AsyncSession, 
+        user_id: str,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Kullanıcının performans geçmişini al"""
+        stmt = select(StudentAttempt).where(StudentAttempt.user_id == user_id).order_by(StudentAttempt.attempt_date.desc()).limit(limit)
+        result = await db.execute(stmt)
+        attempts = result.scalars().all()
+        
+        history = []
+        for attempt in attempts:
+            history.append({
+                "accuracy": 1.0 if attempt.is_correct else 0.0,
+                "speed": 1.0 - min(attempt.time_spent / 120, 1.0), # Normalize speed
+                "difficulty": attempt.question.difficulty_level, # Assuming question is loaded
+                "timestamp": attempt.attempt_date,
+                "is_correct": attempt.is_correct,
+                "response_time": attempt.time_spent,
+                "topic": attempt.question.topic_category # Assuming question is loaded
+            })
+        return history
+
     async def get_profile_statistics(
         self,
         profile: MathProfile

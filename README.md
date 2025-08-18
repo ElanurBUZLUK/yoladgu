@@ -1,265 +1,304 @@
-# 🎓 Adaptive Question System
+# Adaptive Learning Platform
 
-**AI-Powered Adaptive Learning Platform for Mathematics and English**
+Modern, AI-powered adaptive learning platform with personalized question selection and intelligent feedback.
 
-[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-13+-blue.svg)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/Redis-6+-red.svg)](https://redis.io/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+## 🚀 Features
 
-## 📋 Proje Özeti
+- **Adaptive Question Selection**: AI-powered question selection based on student performance
+- **Math & English Support**: Comprehensive coverage of both subjects
+- **Vector Search**: Advanced similarity search using pgvector
+- **Personalization**: Learning style adaptation and personalized recommendations
+- **Analytics**: Detailed performance analytics and insights
+- **MCP Integration**: Model Context Protocol for advanced AI capabilities
+- **Real-time Monitoring**: System health monitoring and performance metrics
 
-Adaptive Question System, öğrencilerin matematik ve İngilizce derslerinde kişiselleştirilmiş öğrenme deneyimi yaşamasını sağlayan AI destekli bir eğitim platformudur. Sistem, öğrenci performansını analiz ederek dinamik seviye ayarlaması yapar ve aralıklı tekrar algoritması ile öğrenmeyi optimize eder.
-
-## ✨ Özellikler
-
-### 🧠 AI Destekli Öğrenme
-- **LLM Entegrasyonu**: OpenAI GPT-4 ve Anthropic Claude ile akıllı soru üretimi
-- **MCP (Model Context Protocol)**: Gelişmiş AI araçları entegrasyonu
-- **PDF İşleme**: PDF'lerden otomatik soru çıkarma
-- **Akıllı Cevap Değerlendirme**: AI destekli cevap analizi
-
-### 📊 Dinamik Seviye Yönetimi
-- **Performance-Based Level Adjustment**: Performansa dayalı seviye ayarlaması
-- **Spaced Repetition**: SM-2 algoritması ile aralıklı tekrar
-- **Error Pattern Analysis**: Hata analizi ve pattern recognition
-- **Personalized Recommendations**: Kişiselleştirilmiş öneriler
-
-### 🎯 Ders Desteği
-- **Matematik**: Çoktan seçmeli ve açık uçlu sorular
-- **İngilizce**: Grammar, vocabulary ve comprehension soruları
-- **PDF Tabanlı Öğrenme**: PDF'lerden soru üretimi
-- **Interactive Learning**: Etkileşimli öğrenme deneyimi
-
-### 📈 Analytics ve Raporlama
-- **Student Performance Analytics**: Öğrenci performans analizi
-- **Progress Tracking**: İlerleme takibi
-- **Similar Student Detection**: Benzer öğrenci tespiti
-- **Trend Analysis**: Trend analizi
-
-## 🏗️ Sistem Mimarisi
+## 🏗️ Architecture
 
 ```
-Adaptive Question System
-├── 🚀 FastAPI Backend
-│   ├── 📊 Database Layer (PostgreSQL)
-│   ├── 💾 Cache Layer (Redis)
-│   ├── 🤖 AI Services (LLM Gateway, MCP)
-│   ├── 📚 Business Logic Services
-│   └── 🔐 Authentication & Security
-├── 📱 Frontend (React/Vue - Planlanan)
-└── 🐳 Docker & Deployment
+backend/
+├── app/
+│   ├── api/v1/           # API endpoints
+│   ├── core/             # Core configuration and utilities
+│   ├── models/           # Database models
+│   ├── services/         # Business logic services
+│   ├── middleware/       # Request/response middleware
+│   └── mcp/             # Model Context Protocol integration
+├── alembic/             # Database migrations
+├── scripts/             # Setup and utility scripts
+└── tests/               # Test files
 ```
 
-## 🛠️ Teknolojiler
+## 📋 Prerequisites
 
-### Backend
-- **FastAPI**: Modern, hızlı web framework
-- **PostgreSQL**: Güçlü ilişkisel veritabanı
-- **Redis**: Yüksek performanslı cache
-- **SQLAlchemy**: ORM ve database management
-- **Alembic**: Database migration
-- **Pydantic**: Data validation ve serialization
-
-### AI & ML
-- **OpenAI GPT-4**: Gelişmiş dil modeli
-- **Anthropic Claude**: Claude AI entegrasyonu
-- **MCP (Model Context Protocol)**: AI araçları protokolü
-- **SM-2 Algorithm**: Spaced repetition algoritması
-
-### DevOps & Tools
-- **Docker**: Containerization
-- **Git**: Version control
-- **Alembic**: Database migrations
-- **Pytest**: Testing framework
-
-## 🚀 Kurulum
-
-### Gereksinimler
-- Python 3.12+
-- PostgreSQL 13+
+- Python 3.8+
+- PostgreSQL 13+ with pgvector extension
 - Redis 6+
-- Git
+- Node.js 16+ (for frontend)
 
-### 1. Repository'yi Klonlayın
+## 🛠️ Installation
+
+### 1. Clone the Repository
+
 ```bash
-git clone https://github.com/ElanurBUZLUK/yoladgu.git
-cd yoladgu
+git clone <repository-url>
+cd yoladgunew
 ```
 
-### 2. Backend Kurulumu
+### 2. Backend Setup
+
 ```bash
 cd backend
 
-# Virtual environment oluşturun
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate  # Windows
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Dependencies yükleyin
+# Install dependencies
 pip install -r requirements.txt
-```
 
-### 3. Environment Konfigürasyonu
-```bash
-# .env dosyası oluşturun
-cp .env.example .env
+# Copy environment file
+cp env.example .env
 
-# .env dosyasını düzenleyin
+# Edit .env file with your configuration
 nano .env
 ```
 
-Gerekli environment değişkenleri:
+### 3. Database Setup
+
+```bash
+# Install pgvector extension using automated script
+chmod +x scripts/install_pgvector.sh
+./scripts/install_pgvector.sh
+
+# Or install manually:
+# Ubuntu/Debian: sudo apt-get install postgresql-13-pgvector
+# CentOS/RHEL: sudo yum install pgvector_13
+# macOS: brew install pgvector
+
+# Or using Docker
+docker run --name postgres-pgvector -e POSTGRES_PASSWORD=password -e POSTGRES_DB=adaptive_learning -p 5432:5432 -d pgvector/pgvector:pg13
+
+# Run database migrations (includes pgvector extension and improved indexes)
+alembic upgrade head
+```
+
+### 4. Redis Setup
+
+```bash
+# Install Redis (Ubuntu/Debian)
+sudo apt-get install redis-server
+
+# Or using Docker
+docker run --name redis -p 6379:6379 -d redis:6-alpine
+```
+
+### 5. System Setup
+
+```bash
+# Run the setup script
+python scripts/setup_system.py
+```
+
+### 6. Start the Application
+
+```bash
+# Development mode
+python run_dev.py
+
+# Or using uvicorn directly
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Create a `.env` file in the backend directory:
+
 ```env
 # Database
-DATABASE_URL=postgresql://username:password@localhost:5432/adaptive_question_system
+DATABASE_URL=postgresql://user:password@localhost:5432/adaptive_learning
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
 
 # Security
-SECRET_KEY=your-secret-key-here
-ENCRYPTION_KEY=your-encryption-key-here
+SECRET_KEY=your-super-secret-key-change-in-production
+JWT_SECRET=your-jwt-secret-change-in-production
 
 # LLM Providers
 OPENAI_API_KEY=your-openai-api-key
 ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Vector Database
+PGVECTOR_ENABLED=true
+VECTOR_SIMILARITY_THRESHOLD=0.7
 ```
 
-### 4. Veritabanı Kurulumu
+### Required Environment Variables
+
+- `DATABASE_URL`: PostgreSQL connection string
+- `REDIS_URL`: Redis connection string
+- `SECRET_KEY`: Application secret key
+- `JWT_SECRET`: JWT signing secret
+
+### Optional Environment Variables
+
+- `OPENAI_API_KEY`: OpenAI API key for LLM features
+- `ANTHROPIC_API_KEY`: Anthropic API key for LLM features
+- `PGVECTOR_ENABLED`: Enable pgvector features (default: true)
+
+## 🧪 Testing
+
+### Run Tests
+
 ```bash
-# Database migration'ları çalıştırın
-alembic upgrade head
+# Run all tests
+pytest
 
-# Sistem başlatma scriptini çalıştırın
-python scripts/init_system.py --sample-data
+# Run specific test file
+pytest tests/test_math_api.py
+
+# Run with coverage
+pytest --cov=app tests/
 ```
 
-### 5. Uygulamayı Başlatın
+### Test API Endpoints
+
 ```bash
-# Development server
-python run_dev.py
+# Test math RAG endpoints
+python x/test_math_api.py
 
-# Veya
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# Test English RAG endpoints
+python x/test_english_api.py
+
+# Test authentication
+python x/test_auth.py
 ```
 
-## 📚 API Dokümantasyonu
+## 📊 API Documentation
 
-Uygulama başlatıldıktan sonra API dokümantasyonuna erişebilirsiniz:
+Once the application is running, visit:
 
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 - **Health Check**: http://localhost:8000/health
 
-## 🧪 Testler
+## 🔍 Key Endpoints
+
+### Authentication
+- `POST /api/v1/users/register` - User registration
+- `POST /api/v1/users/login` - User login
+- `POST /api/v1/auth/refresh` - Refresh access token
+
+### Math RAG
+- `POST /api/v1/math/rag/next-question` - Get next math question
+- `POST /api/v1/math/rag/submit-answer` - Submit math answer
+- `GET /api/v1/math/rag/profile` - Get math profile
+- `GET /api/v1/math/rag/analytics/learning-progress` - Learning progress analytics
+
+### English RAG
+- `POST /api/v1/english/rag/next-question` - Get next English question
+- `POST /api/v1/english/rag/submit-answer` - Submit English answer
+- `GET /api/v1/english/rag/profile` - Get English profile
+
+### Dashboard
+- `GET /api/v1/dashboard/data` - Get dashboard data
+- `GET /api/v1/dashboard/subject-selection` - Get subject selection data
+
+## 🏥 Health Checks
+
+### System Health
+```bash
+curl http://localhost:8000/health
+```
+
+### Vector Index Health
+```bash
+curl http://localhost:8000/api/v1/math/rag/monitoring/system-health
+```
+
+### Database Health
+```bash
+curl http://localhost:8000/api/v1/system/health
+```
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+1. **PgVector Extension Not Found**
+   ```bash
+   # Install pgvector extension
+   sudo apt-get install postgresql-13-pgvector
+   ```
+
+2. **Database Connection Failed**
+   - Check `DATABASE_URL` in `.env`
+   - Ensure PostgreSQL is running
+   - Verify database exists
+
+3. **Redis Connection Failed**
+   - Check `REDIS_URL` in `.env`
+   - Ensure Redis is running
+
+4. **Vector Index Creation Failed**
+   - Ensure pgvector extension is installed
+   - Check database permissions
+   - Run setup script: `python scripts/setup_system.py`
+
+### Logs
+
+Check application logs for detailed error information:
 
 ```bash
-# Tüm testleri çalıştırın
-cd backend
-python -m pytest
+# View application logs
+tail -f logs/app.log
 
-# Belirli test dosyalarını çalıştırın
-python test_task_11_2_complete.py
-python test_task_11_1_complete.py
+# View error logs
+tail -f logs/error.log
 ```
 
-## 📁 Proje Yapısı
+## 📈 Performance
 
-```
-yoladgu/
-├── backend/
-│   ├── app/
-│   │   ├── api/v1/           # API endpoints
-│   │   ├── core/             # Core configurations
-│   │   ├── models/           # Database models
-│   │   ├── services/         # Business logic
-│   │   ├── schemas/          # Pydantic schemas
-│   │   ├── middleware/       # Custom middleware
-│   │   ├── repositories/     # Data access layer
-│   │   └── mcp/              # MCP tools
-│   ├── scripts/              # Utility scripts
-│   ├── tests/                # Test files
-│   ├── alembic/              # Database migrations
-│   └── requirements.txt      # Python dependencies
-├── .kiro/                    # Project specifications
-├── docs/                     # Documentation
-└── README.md
-```
+### Optimization Tips
 
-## 🔧 Sistem Bileşenleri
+1. **Database Indexes**: Ensure all necessary indexes are created
+2. **Vector Search**: Use appropriate similarity thresholds
+3. **Caching**: Leverage Redis for frequently accessed data
+4. **Batch Processing**: Use batch operations for embeddings
 
-### Core Services
-- **User Service**: Kullanıcı yönetimi ve authentication
-- **Question Service**: Soru yönetimi ve öneriler
-- **Answer Evaluation Service**: Cevap değerlendirme
-- **Level Adjustment Service**: Dinamik seviye ayarlama
-- **Spaced Repetition Service**: Aralıklı tekrar algoritması
-- **Analytics Service**: Performans analizi
-- **PDF Processing Service**: PDF işleme
-- **LLM Gateway Service**: AI entegrasyonu
+### Monitoring
 
-### API Endpoints
-- **Authentication**: `/api/v1/auth/*`
-- **Users**: `/api/v1/users/*`
-- **Math Questions**: `/api/v1/math/*`
-- **English Questions**: `/api/v1/english/*`
-- **Answers**: `/api/v1/answers/*`
-- **Analytics**: `/api/v1/analytics/*`
-- **PDF**: `/api/v1/pdf/*`
-- **System**: `/api/v1/system/*`
+- **Performance Metrics**: `/api/v1/math/rag/monitoring/performance-metrics`
+- **System Health**: `/api/v1/math/rag/monitoring/system-health`
+- **Alerts**: `/api/v1/math/rag/monitoring/alerts`
 
-## 🤝 Katkıda Bulunma
+## 🤝 Contributing
 
-1. Fork yapın
-2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
-3. Değişikliklerinizi commit edin (`git commit -m 'Add amazing feature'`)
-4. Branch'inizi push edin (`git push origin feature/amazing-feature`)
-5. Pull Request oluşturun
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
 
-## 📄 Lisans
+## 📄 License
 
-Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için [LICENSE](LICENSE) dosyasına bakın.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 👥 Geliştirici
+## 🆘 Support
 
-**Elanur Buzluk**
-- GitHub: [@ElanurBUZLUK](https://github.com/ElanurBUZLUK)
-- Email: elanur.buzluk@example.com
+For support and questions:
 
-## 🆘 Destek
-
-Herhangi bir sorun yaşarsanız:
-1. [Issues](https://github.com/ElanurBUZLUK/yoladgu/issues) sayfasını kontrol edin
-2. Yeni bir issue oluşturun
-3. Email ile iletişime geçin
+1. Check the [documentation](docs/)
+2. Search existing [issues](issues/)
+3. Create a new issue with detailed information
 
 ## 🗺️ Roadmap
 
-### ✅ Tamamlanan Özellikler
-- [x] Backend API geliştirme
-- [x] Database schema ve migrations
-- [x] AI entegrasyonu (LLM, MCP)
-- [x] PDF işleme sistemi
-- [x] Analytics ve reporting
-- [x] Test coverage
-- [x] System initialization
-
-### 🚧 Geliştirilmekte Olan Özellikler
-- [ ] Frontend web uygulaması
-- [ ] Mobile app
 - [ ] Advanced analytics dashboard
-- [ ] Real-time notifications
 - [ ] Multi-language support
-
-### 📋 Planlanan Özellikler
-- [ ] Video ders entegrasyonu
-- [ ] Gamification elements
-- [ ] Parent/Teacher portal
-- [ ] Advanced AI features
-- [ ] Cloud deployment
-
----
-
-⭐ Bu projeyi beğendiyseniz yıldız vermeyi unutmayın!
+- [ ] Mobile app
+- [ ] Integration with LMS platforms
+- [ ] Advanced personalization algorithms
+- [ ] Real-time collaboration features

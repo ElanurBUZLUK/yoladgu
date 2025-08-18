@@ -216,7 +216,21 @@ export class DashboardComponent implements OnInit {
 
   startPlan(planTitle: string) {
     console.log('Starting plan:', planTitle);
-    // TODO: Start study plan
-    this.router.navigate(['/solve-question']);
+    
+    // Find the plan details
+    const plan = this.studyPlans.find(p => p.title === planTitle);
+    if (!plan) {
+      console.error('Plan not found:', planTitle);
+      return;
+    }
+    
+    // Navigate to solve questions with plan context
+    this.router.navigate(['/solve-question'], { 
+      queryParams: { 
+        plan_title: planTitle,
+        plan_description: plan.description,
+        mode: 'study_plan'
+      } 
+    });
   }
 } 

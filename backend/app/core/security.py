@@ -16,6 +16,7 @@ class SecurityService:
         self.secret_key = settings.secret_key
         self.algorithm = settings.algorithm
         self.access_token_expire_minutes = settings.access_token_expire_minutes
+        self.refresh_token_expire_days = settings.refresh_token_expire_days
     
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash"""
@@ -30,11 +31,11 @@ class SecurityService:
         to_encode = data.copy()
         
         if expires_delta:
-            expire = datetime.utcnow() + expires_delta
+            expire_time = datetime.utcnow() + expires_delta
         else:
-            expire = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
+            expire_time = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
         
-        to_encode.update({"exp": expire})
+        to_encode.update({"exp": expire_time})
         encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
     
@@ -53,8 +54,8 @@ class SecurityService:
     def create_refresh_token(self, data: dict) -> str:
         """Create a refresh token with longer expiration"""
         to_encode = data.copy()
-        expire = datetime.utcnow() + timedelta(days=7)  # 7 days for refresh token
-        to_encode.update({"exp": expire, "type": "refresh"})
+        expire_time = datetime.utcnow() + timedelta(days=self.refresh_token_expire_days)
+        to_encode.update({"exp": expire_time, "type": "refresh"})
         encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
     

@@ -454,13 +454,77 @@ class UserService:
         }
     
     async def get_user_activity_summary(self, db: AsyncSession, user_id: str) -> Dict[str, Any]:
-        """Get user activity summary (placeholder for future implementation)"""
+        """Get user activity summary with real analytics data"""
         
-        # This will be implemented when we have student_attempts table operations
-        # For now, return basic user info
+        from app.models.student_attempt import StudentAttempt
+        from sqlalchemy import func, and_, desc
+        from datetime import datetime, timedelta
+        
         user = await self.get_user_by_id(db, user_id)
         if not user:
             return {}
+        
+        # Get total attempts and correct attempts
+        attempts_result = await db.execute(
+            select(
+                func.count(StudentAttempt.id).label('total_attempts'),
+                func.count(StudentAttempt.id).filter(StudentAttempt.is_correct == True).label('correct_attempts'),
+                func.avg(StudentAttempt.response_time).label('avg_response_time')
+            ).where(StudentAttempt.user_id == user_id)
+        )
+        attempts_stats = attempts_result.first()
+        
+        total_attempts = attempts_stats.total_attempts or 0
+        correct_attempts = attempts_stats.correct_attempts or 0
+        accuracy_rate = (correct_attempts / total_attempts * 100) if total_attempts > 0 else 0.0
+        average_time_spent = attempts_stats.avg_response_time or 0.0
+        
+        # Get current streak
+        streak_result = await db.execute(
+            select(StudentAttempt.created_at)
+            .where(StudentAttempt.user_id == user_id)
+            .order_by(desc(StudentAttempt.created_at))
+            .limit(1)
+        )
+        last_attempt = streak_result.scalar_one_or_none()
+        
+        current_streak = 0
+        if last_attempt:
+            # Calculate streak by checking consecutive days with attempts
+            current_date = datetime.utcnow().date()
+            last_attempt_date = last_attempt.date()
+            
+            if (current_date - last_attempt_date).days <= 1:
+                # Check for consecutive days
+                streak_date = last_attempt_date
+                while True:
+                    day_attempts = await db.execute(
+                        select(StudentAttempt.id)
+                        .where(
+                            and_(
+                                StudentAttempt.user_id == user_id,
+                                func.date(StudentAttempt.created_at) == streak_date
+                            )
+                        )
+                    )
+                    if day_attempts.first():
+                        current_streak += 1
+                        streak_date -= timedelta(days=1)
+                    else:
+                        break
+        
+        # Get last activity
+        last_activity = last_attempt.isoformat() if last_attempt else None
+        
+        # Get recent performance (last 10 attempts)
+        recent_performance = await db.execute(
+            select(StudentAttempt.is_correct)
+            .where(StudentAttempt.user_id == user_id)
+            .order_by(desc(StudentAttempt.created_at))
+            .limit(10)
+        )
+        recent_correct = sum(1 for row in recent_performance.fetchall() if row[0])
+        recent_accuracy = (recent_correct / 10 * 100) if recent_performance.rowcount > 0 else 0.0
         
         return {
             "user_id": str(user.id),
@@ -472,13 +536,14 @@ class UserService:
             "account_created": user.created_at.isoformat(),
             "last_updated": user.updated_at.isoformat(),
             "is_active": user.is_active == "true",
-            # Placeholder stats - will be populated when we implement analytics
-            "total_attempts": 0,
-            "correct_attempts": 0,
-            "accuracy_rate": 0.0,
-            "average_time_spent": 0.0,
-            "current_streak": 0,
-            "last_activity": None
+            "total_attempts": total_attempts,
+            "correct_attempts": correct_attempts,
+            "accuracy_rate": round(accuracy_rate, 2),
+            "average_time_spent": round(average_time_spent, 2),
+            "current_streak": current_streak,
+            "last_activity": last_activity,
+            "recent_accuracy": round(recent_accuracy, 2),
+            "recent_attempts": min(10, total_attempts)
         }
 
 

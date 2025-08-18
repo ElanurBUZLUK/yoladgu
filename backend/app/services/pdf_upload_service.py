@@ -393,7 +393,7 @@ class PDFUploadService:
         return True
     
     async def virus_scan_file(self, file_path: Path) -> Dict[str, Any]:
-        """Perform virus scan on uploaded file (placeholder implementation)"""
+        """Perform virus scan on uploaded file with enhanced security checks"""
         
         if not self.VIRUS_SCAN_ENABLED:
             return {
@@ -402,35 +402,120 @@ class PDFUploadService:
                 "message": "Virus scanning disabled"
             }
         
-        # Placeholder implementation
-        # In a real system, you would integrate with ClamAV or similar
         try:
-            # Simulate virus scan
-            import time
-            await asyncio.sleep(1)  # Simulate scan time
-            
-            # Basic checks
+            # Enhanced security checks
             file_size = file_path.stat().st_size
             
-            # Very basic heuristics (not real virus detection)
-            if file_size > 100 * 1024 * 1024:  # Files over 100MB are suspicious
+            # File size validation
+            if file_size > 50 * 1024 * 1024:  # 50MB limit
                 return {
-                    "scan_result": "suspicious",
+                    "scan_result": "rejected",
                     "clean": False,
-                    "message": "File size exceeds normal limits"
+                    "message": "File size exceeds 50MB limit"
                 }
             
+            if file_size == 0:
+                return {
+                    "scan_result": "rejected",
+                    "clean": False,
+                    "message": "Empty file detected"
+                }
+            
+            # File extension validation
+            allowed_extensions = {'.pdf', '.PDF'}
+            if file_path.suffix not in allowed_extensions:
+                return {
+                    "scan_result": "rejected",
+                    "clean": False,
+                    "message": f"Invalid file type: {file_path.suffix}. Only PDF files allowed."
+                }
+            
+            # File header validation (basic PDF signature check)
+            try:
+                with open(file_path, 'rb') as f:
+                    header = f.read(4)
+                    if header != b'%PDF':
+                        return {
+                            "scan_result": "rejected",
+                            "clean": False,
+                            "message": "Invalid PDF file signature"
+                        }
+            except Exception:
+                return {
+                    "scan_result": "rejected",
+                    "clean": False,
+                    "message": "Unable to read file header"
+                }
+            
+            # ClamAV integration (if available)
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['clamscan', '--no-summary', str(file_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if result.returncode == 0:
+                    return {
+                        "scan_result": "clean",
+                        "clean": True,
+                        "message": "No threats detected by ClamAV",
+                        "scanner": "clamav"
+                    }
+                elif result.returncode == 1:
+                    return {
+                        "scan_result": "infected",
+                        "clean": False,
+                        "message": f"Threat detected: {result.stdout}",
+                        "scanner": "clamav"
+                    }
+                else:
+                    # ClamAV not available or error, fall back to basic checks
+                    pass
+                    
+            except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+                # ClamAV not available, continue with basic checks
+                pass
+            
+            # Additional security checks
+            suspicious_patterns = [
+                b'javascript:', b'vbscript:', b'<script', b'<iframe',
+                b'exec(', b'system(', b'shell_exec(', b'eval(',
+                b'http://', b'https://', b'ftp://'
+            ]
+            
+            try:
+                with open(file_path, 'rb') as f:
+                    content = f.read(1024 * 1024)  # Read first 1MB
+                    
+                    for pattern in suspicious_patterns:
+                        if pattern in content:
+                            return {
+                                "scan_result": "suspicious",
+                                "clean": False,
+                                "message": f"Suspicious content detected: {pattern.decode('utf-8', errors='ignore')}",
+                                "scanner": "pattern_check"
+                            }
+            except Exception:
+                pass
+            
+            # All checks passed
             return {
                 "scan_result": "clean",
                 "clean": True,
-                "message": "No threats detected"
+                "message": "File passed all security checks",
+                "scanner": "basic_checks",
+                "file_size": file_size
             }
             
         except Exception as e:
             return {
                 "scan_result": "error",
                 "clean": False,
-                "message": f"Scan failed: {str(e)}"
+                "message": f"Scan failed: {str(e)}",
+                "scanner": "error"
             }
 
 

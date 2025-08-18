@@ -8,6 +8,7 @@ from sqlalchemy import select, and_
 from app.core.database import get_async_session
 from app.models.pdf_upload import PDFUpload, ProcessingStatus
 from app.services.pdf_processing_service import pdf_processing_service
+from app.services.vector_index_manager import vector_index_manager
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,9 @@ class BackgroundScheduler:
     async def _start_core_tasks(self):
         """Temel görevleri başlat"""
         
+        # Vektör indekslerini oluştur
+        await vector_index_manager.create_vector_indexes()
+
         # PDF işleme görevleri
         self.tasks["pdf_processor"] = asyncio.create_task(
             self._pdf_processing_worker()

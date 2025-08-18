@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 from enum import Enum
+import os
 
 
 class Environment(str, Enum):
@@ -26,17 +27,18 @@ class Settings(BaseSettings):
     debug: bool = True
     
     # Database
-    database_url: str
+    database_url: str = "postgresql://user:password@localhost:5432/adaptive_learning"
     test_database_url: Optional[str] = None
     
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     
     # Security
-    secret_key: str
+    secret_key: str = "your-secret-key-change-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
-    encryption_key: str
+    refresh_token_expire_days: int = 7
+    encryption_key: str = "your-encryption-key-change-in-production"
     
     # LLM Configuration
     openai_api_key: Optional[str] = None
@@ -70,6 +72,24 @@ class Settings(BaseSettings):
     
     # Monitoring
     prometheus_enabled: bool = True
+    
+    # JWT Settings
+    jwt_secret: str = "your-jwt-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+    jwt_refresh_token_expire_days: int = 7
+    
+    # MCP Settings
+    mcp_server_url: str = "http://localhost:3001"
+    mcp_timeout: int = 30
+    
+    # Vector Database Settings
+    pgvector_enabled: bool = True
+    vector_similarity_threshold: float = 0.7
+    embedding_dimension: int = int(os.getenv("EMBEDDING_DIM", "1536"))
+    vector_batch_size: int = int(os.getenv("VECTOR_BATCH_SIZE", "100"))
+    vector_namespace_default: str = "default"
+    vector_slot_default: int = 1
     
     class Config:
         env_file = ".env"

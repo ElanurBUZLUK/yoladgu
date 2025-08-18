@@ -338,3 +338,5 @@ class EmbeddingService:
 
 # Global instance
 embedding_service = EmbeddingService()
+
+from app.services.embedding_service import embedding_service

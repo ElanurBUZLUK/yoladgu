@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.models.user import User, UserRole, LearningStyle
 from app.models.question import Question, Subject, QuestionType, SourceType
@@ -843,3 +843,126 @@ class SampleDataService:
 
 # Global sample data service instance
 sample_data_service = SampleDataService()
+
+
+# ---------- Alternative Simple Sample Data Service ----------
+class SimpleSampleDataService:
+    """
+    Örnek (seed) veri oluşturma servisi.
+    Varsayılan: DRY-RUN (apply=False) – DB'ye yazmaz, ne yapacağını raporlar.
+    apply=True ile çağrılırsa DB'ye yazmayı dener; hata olursa loglar ve devam eder.
+    """
+
+    async def create_sample_data(self, db: AsyncSession, apply: bool = False) -> Dict[str, Any]:
+        report: Dict[str, Any] = {
+            "apply": apply,
+            "created": {"users": 0, "questions": 0},
+            "skipped": {"users": 0, "questions": 0},
+            "errors": []
+        }
+
+        # --- Users ---
+        wanted_users: List[Dict[str, Any]] = [
+            {"username": "demo_teacher", "role": "teacher"},
+            {"username": "demo_student", "role": "student"},
+        ]
+
+        if User is not None and UserRole is not None:
+            for u in wanted_users:
+                try:
+                    # kullanıcı var mı?
+                    exists = await db.execute(
+                        select(func.count()).select_from(User).where(getattr(User, "username") == u["username"])
+                    )
+                    (cnt,) = exists.first() or (0,)
+                    if cnt and cnt > 0:
+                        report["skipped"]["users"] += 1
+                        continue
+
+                    if apply:
+                        user = User(
+                            username=u["username"],
+                            role=UserRole(u["role"]) if hasattr(UserRole, u["role"].upper()) or True else u["role"],  # olası enum
+                        )
+                        # İsteğe bağlı alanlar: email, hashed_password, created_at vs. proje şemanıza göre set edebilirsiniz.
+                        db.add(user)
+                        report["created"]["users"] += 1
+                except Exception as e:
+                    logger.exception("sample user create failed: %s", e)
+                    report["errors"].append(f"user:{u['username']} -> {e}")
+
+        # --- Questions ---
+        wanted_questions: List[Dict[str, Any]] = [
+            {
+                "subject": "math",
+                "question_type": "multiple_choice",
+                "content": "What is the value of 2 + 2?",
+                "options": ["3", "4", "5", "6"],
+                "correct_answer": "4",
+                "topic_category": "arithmetic",
+                "difficulty_level": 1,
+            },
+            {
+                "subject": "english",
+                "question_type": "open_ended",
+                "content": "Write a sentence using the word 'harmony'.",
+                "correct_answer": None,
+                "topic_category": "vocabulary",
+                "difficulty_level": 2,
+            },
+        ]
+
+        if Question is not None:
+            for q in wanted_questions:
+                try:
+                    # Aynı içerikte soru var mı?
+                    exists = await db.execute(
+                        select(func.count()).select_from(Question).where(getattr(Question, "content") == q["content"])
+                    )
+                    (cnt,) = exists.first() or (0,)
+                    if cnt and cnt > 0:
+                        report["skipped"]["questions"] += 1
+                        continue
+
+                    if apply:
+                        # Enum alanlara güvenli dönüşüm
+                        subj = Subject.MATH if hasattr(Subject, "MATH") and q["subject"] == "math" else (
+                            Subject.ENGLISH if hasattr(Subject, "ENGLISH") else q["subject"]
+                        )
+                        qtype = QuestionType.MULTIPLE_CHOICE if hasattr(QuestionType, "MULTIPLE_CHOICE") and q["question_type"] == "multiple_choice" else (
+                            QuestionType.OPEN_ENDED if hasattr(QuestionType, "OPEN_ENDED") else q["question_type"]
+                        )
+
+                        question = Question(
+                            subject=subj,
+                            question_type=qtype,
+                            content=q["content"],
+                            correct_answer=q["correct_answer"],
+                            options=q.get("options"),
+                            topic_category=q.get("topic_category", "general"),
+                            difficulty_level=q.get("difficulty_level", 1),
+                            original_difficulty=q.get("difficulty_level", 1),
+                        )
+                        db.add(question)
+                        report["created"]["questions"] += 1
+
+                except Exception as e:
+                    logger.exception("sample question create failed: %s", e)
+                    report["errors"].append(f"question:{q['content'][:40]} -> {e}")
+
+        # commit sadece apply=True iken
+        if apply:
+            try:
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.exception("sample data commit failed: %s", e)
+                report["errors"].append(f"commit -> {e}")
+
+        # son rapor
+        report["timestamp"] = datetime.utcnow().isoformat() + "Z"
+        return report
+
+
+# Tekil instance
+simple_sample_data_service = SimpleSampleDataService()

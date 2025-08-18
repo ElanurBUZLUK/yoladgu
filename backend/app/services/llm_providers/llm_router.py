@@ -4,8 +4,11 @@ from datetime import datetime, timedelta
 from .base import BaseLLMProvider, LLMResponse, LLMProvider
 from .openai_provider import GPT4Provider, GPT35Provider
 from .anthropic_provider import ClaudeOpusProvider, ClaudeSonnetProvider, ClaudeHaikuProvider
+from .policy_manager import policy_manager, PolicyType
 from app.core.config import settings
 from app.core.cache import cache_service
+from app.services.cost_monitoring_service import cost_monitoring_service, DegradationMode
+from app.services.content_moderation_service import content_moderation_service
 
 
 class CostController:
@@ -123,10 +126,40 @@ class LLMRouter:
         except Exception as e:
             print(f"Provider initialization error: {e}")
     
-    async def get_provider_for_task(self, task_type: str, complexity: str = "medium") -> Optional[BaseLLMProvider]:
-        """Görev tipine göre en uygun provider'ı seç"""
+    async def get_provider_for_task(
+        self, 
+        task_type: str, 
+        complexity: str = "medium",
+        policy_type: PolicyType = PolicyType.BALANCED,
+        user_id: Optional[str] = None,
+        estimated_tokens: int = 1000
+    ) -> Optional[BaseLLMProvider]:
+        """Görev tipine göre en uygun provider'ı seç (policy-based)"""
         
-        # Task type'a göre provider önceliği
+        # Check cost limits first
+        if user_id:
+            limit_check = await cost_monitoring_service.check_limits(
+                user_id=user_id,
+                estimated_tokens=estimated_tokens,
+                estimated_cost=self._estimate_cost_by_policy(policy_type, estimated_tokens)
+            )
+            
+            if not limit_check["allowed"]:
+                logger.warning(f"Cost limits exceeded for user {user_id}: {limit_check['warnings']}")
+                return None
+        
+        # Use policy manager to select provider
+        provider = await policy_manager.select_provider_for_task(
+            policy_type=policy_type,
+            available_providers=self.providers,
+            task_type=task_type,
+            estimated_tokens=estimated_tokens
+        )
+        
+        if provider:
+            return provider
+        
+        # Fallback to original logic if policy manager fails
         task_preferences = {
             "question_generation": ["gpt4", "claude_sonnet", "gpt35"],
             "answer_evaluation": ["claude_haiku", "gpt35", "claude_sonnet"],
@@ -161,29 +194,94 @@ class LLMRouter:
         prompt: str,
         system_prompt: Optional[str] = None,
         complexity: str = "medium",
+        policy_type: PolicyType = PolicyType.BALANCED,
+        user_id: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
-        """Fallback ile LLM çağrısı"""
+        """Fallback ile LLM çağrısı (policy-based with moderation)"""
+        
+        # Content moderation
+        moderation_result = await content_moderation_service.moderate_content(
+            content=prompt,
+            content_type="user_input",
+            user_id=user_id
+        )
+        
+        if not moderation_result["safe"]:
+            return {
+                "success": False,
+                "error": "Content blocked due to safety concerns",
+                "moderation_result": moderation_result,
+                "method": "blocked"
+            }
+        
+        # Create safe prompt
+        safe_prompt, prompt_result = await content_moderation_service.create_safe_prompt(
+            system_prompt=system_prompt or "",
+            user_input=prompt,
+            context=kwargs.get("context")
+        )
+        
+        if not safe_prompt:
+            return {
+                "success": False,
+                "error": prompt_result.get("error", "Failed to create safe prompt"),
+                "moderation_result": prompt_result.get("moderation_result"),
+                "method": "blocked"
+            }
+        
+        # Estimate tokens
+        estimated_tokens = len(safe_prompt.split()) * 1.3  # Rough estimation
         
         # Primary provider'ı dene
-        provider = await self.get_provider_for_task(task_type, complexity)
+        provider = await self.get_provider_for_task(
+            task_type=task_type,
+            complexity=complexity,
+            policy_type=policy_type,
+            user_id=user_id,
+            estimated_tokens=int(estimated_tokens)
+        )
         
         if provider:
             try:
-                response = await provider.generate_text(prompt, system_prompt, **kwargs)
+                response = await provider.generate_text(safe_prompt, system_prompt, **kwargs)
                 
                 if response.success:
+                    # Record usage
+                    if user_id:
+                        await cost_monitoring_service.record_usage(
+                            user_id=user_id,
+                            tokens_used=response.tokens_used or int(estimated_tokens),
+                            cost=response.cost,
+                            endpoint=task_type
+                        )
+                    
                     # Maliyeti kaydet
                     await self.cost_controller.add_cost(response.cost)
+                    
                     return {
                         "success": True,
                         "content": response.content,
                         "provider": response.provider,
                         "cost": response.cost,
-                        "method": "llm"
+                        "tokens_used": response.tokens_used,
+                        "method": "llm",
+                        "moderation_result": moderation_result
                     }
             except Exception as e:
-                print(f"LLM provider error: {e}")
+                logger.error(f"LLM provider error: {e}")
+                await policy_manager.mark_provider_failure(provider.name)
+        
+        # Check degradation mode
+        if user_id:
+            limit_check = await cost_monitoring_service.check_limits(
+                user_id=user_id,
+                estimated_tokens=int(estimated_tokens)
+            )
+            
+            if not limit_check["allowed"]:
+                degradation_mode = limit_check.get("degradation_mode")
+                return await self._handle_degradation_mode(degradation_mode, task_type, **kwargs)
         
         # Fallback stratejileri
         if task_type == "answer_evaluation":
@@ -197,6 +295,8 @@ class LLMRouter:
                     question, student_answer, correct_answer
                 )
                 result["success"] = True
+                result["method"] = "rule_based"
+                result["moderation_result"] = moderation_result
                 return result
         
         elif task_type == "question_generation":
@@ -266,6 +366,118 @@ class LLMRouter:
         
         tokens = estimated_tokens.get(task_type, 500)
         return provider.calculate_cost(tokens // 2, tokens // 2)  # Input/output split
+    
+    def _estimate_cost_by_policy(self, policy_type: PolicyType, tokens: int) -> float:
+        """Policy'ye göre maliyet tahmini"""
+        cost_per_1k = {
+            PolicyType.CHEAP_FAST: 0.001,
+            PolicyType.HIGH_QUALITY: 0.03,
+            PolicyType.OFFLINE_FALLBACK: 0.0,
+            PolicyType.BALANCED: 0.015
+        }
+        
+        return (tokens / 1000) * cost_per_1k.get(policy_type, 0.015)
+    
+    async def _handle_degradation_mode(
+        self,
+        degradation_mode: Optional[str],
+        task_type: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Handle degradation mode when limits are exceeded"""
+        
+        if degradation_mode == DegradationMode.SMALLER_MODEL:
+            # Try with smaller model
+            return await self._try_smaller_model(task_type, **kwargs)
+        
+        elif degradation_mode == DegradationMode.RAG_ONLY:
+            # Return RAG-only response
+            return {
+                "success": True,
+                "content": "RAG-only mode: Please use the search functionality to find relevant information.",
+                "method": "rag_only",
+                "degradation_reason": "Cost limits exceeded"
+            }
+        
+        elif degradation_mode == DegradationMode.TEMPLATE_ONLY:
+            # Use template-based response
+            if task_type == "answer_evaluation":
+                return await self.fallback_strategy.rule_based_evaluation(
+                    kwargs.get("question", ""),
+                    kwargs.get("student_answer", ""),
+                    kwargs.get("correct_answer", "")
+                )
+            else:
+                return {
+                    "success": True,
+                    "content": "Template response: Please try again later or contact support.",
+                    "method": "template_only",
+                    "degradation_reason": "Cost limits exceeded"
+                }
+        
+        elif degradation_mode == DegradationMode.BLOCKED:
+            # Block the request
+            return {
+                "success": False,
+                "error": "Service temporarily unavailable due to usage limits",
+                "method": "blocked",
+                "degradation_reason": "Global limits exceeded"
+            }
+        
+        else:
+            # Default fallback
+            return await self._try_smaller_model(task_type, **kwargs)
+    
+    async def _try_smaller_model(self, task_type: str, **kwargs) -> Dict[str, Any]:
+        """Try with smaller, cheaper model"""
+        try:
+            # Try Claude Haiku or GPT-3.5
+            small_providers = ["claude_haiku", "gpt35"]
+            
+            for provider_name in small_providers:
+                if provider_name in self.providers:
+                    provider = self.providers[provider_name]
+                    
+                    # Quick health check
+                    if await policy_manager._is_provider_healthy(provider):
+                        response = await provider.generate_text(
+                            kwargs.get("prompt", ""),
+                            kwargs.get("system_prompt"),
+                            **kwargs
+                        )
+                        
+                        if response.success:
+                            return {
+                                "success": True,
+                                "content": response.content,
+                                "provider": response.provider,
+                                "cost": response.cost,
+                                "method": "smaller_model",
+                                "degradation_reason": "Cost optimization"
+                            }
+            
+            # If no small model available, use template
+            return await self._use_template_fallback(task_type, **kwargs)
+            
+        except Exception as e:
+            logger.error(f"Error trying smaller model: {e}")
+            return await self._use_template_fallback(task_type, **kwargs)
+    
+    async def _use_template_fallback(self, task_type: str, **kwargs) -> Dict[str, Any]:
+        """Use template-based fallback"""
+        if task_type == "answer_evaluation":
+            return await self.fallback_strategy.rule_based_evaluation(
+                kwargs.get("question", ""),
+                kwargs.get("student_answer", ""),
+                kwargs.get("correct_answer", "")
+            )
+        else:
+            return {
+                "success": True,
+                "content": "Template response: Service temporarily degraded.",
+                "method": "template_fallback",
+                "degradation_reason": "Provider unavailable"
+            }
     
     async def get_provider_status(self) -> Dict[str, Any]:
         """Provider durumları"""
