@@ -115,3 +115,4 @@ Eğer hala sorun yaşıyorsanız:
 3. `python test_imports.py` komutunun çıktısını paylaşın
 
 **NOT: Terminal'de her şey çalışıyor. Sadece IDE ayarları düzeltilmesi gerekiyor.**
+
