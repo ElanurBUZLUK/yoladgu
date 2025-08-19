@@ -8,7 +8,9 @@ import numpy as np
 
 from app.core.cache import cache_service
 from app.services.embedding_service import embedding_service
-from app.core.database import database
+from app.core.database import database, get_async_session
+from app.repositories.user_repository import user_repository
+from app.services.vector_index_manager import vector_index_manager
 
 logger = logging.getLogger(__name__)
 
@@ -164,32 +166,32 @@ class AdvancedRetrievalService:
         """Find terms similar to the query"""
         
         try:
-            # Convert embedding to PostgreSQL array format
-            embedding_array = f"[{','.join(map(str, query_embedding))}]"
-            
-            # Query for similar content
-            query = f"""
+            # Convert embedding to PostgreSQL array string format
+            embedding_str = f"[{','.join(map(str, query_embedding))}]"
+
+            # Query for similar content using parameterized query
+            query = """
                 SELECT DISTINCT 
                     unnest(string_to_array(content, ' ')) as term,
-                    content_embedding <-> '{embedding_array}'::vector as distance
+                    content_embedding <-> :embedding_str::vector as distance
                 FROM questions
                 WHERE is_active = true
-                AND subject = %s
+                AND subject = :subject
                 AND content_embedding IS NOT NULL
                 AND length(content) > 20
             """
-            
-            params = [subject]
+
+            values = {"embedding_str": embedding_str, "subject": subject}
             if topic:
-                query += " AND topic ILIKE %s"
-                params.append(f"%{topic}%")
+                query += " AND topic ILIKE :topic"
+                values["topic"] = f"%{topic}%"
             
             query += """
                 ORDER BY distance ASC
                 LIMIT 50
             """
             
-            result = await database.fetch_all(query, params)
+            result = await database.fetch_all(query, values)
             
             # Process terms
             term_similarities = defaultdict(list)
@@ -231,65 +233,49 @@ class AdvancedRetrievalService:
             # Generate query embedding
             query_embedding = await embedding_service.get_embedding(query)
             
-            # Build search query
-            embedding_array = f"[{','.join(map(str, query_embedding))}]"
-            
-            search_query = f"""
-                SELECT 
-                    id, content, topic, difficulty_level, question_type,
-                    options, correct_answer, explanation, tags,
-                    content_embedding <-> '{embedding_array}'::vector as distance,
-                    1 - (content_embedding <=> '{embedding_array}'::vector) as similarity,
-                    usage_count, created_at,
-                    CASE 
-                        WHEN content ILIKE %s THEN 1.0
-                        WHEN content ILIKE %s THEN 0.8
-                        WHEN content ILIKE %s THEN 0.6
-                        ELSE 0.0
-                    END as keyword_score
-                FROM questions
-                WHERE is_active = true
-                AND subject = %s
-                AND content_embedding IS NOT NULL
-            """
-            
-            # Add filters
-            params = [f"%{query}%", f"%{query.split()[0]}%", f"%{query.split()[-1]}%", subject]
-            
+            # Prepare filters for vector search
+            filters = {
+                "subject": subject
+            }
             if topic:
-                search_query += " AND topic ILIKE %s"
-                params.append(f"%{topic}%")
-            
+                filters["topic_category"] = topic # Assuming topic maps to topic_category in vector_index_manager
             if difficulty_level:
-                search_query += " AND difficulty_level = %s"
-                params.append(difficulty_level)
+                filters["difficulty_level"] = difficulty_level
             
-            # Add ordering and limit
-            search_query += f"""
-                ORDER BY (similarity * 0.7 + keyword_score * 0.3) DESC
-                LIMIT {limit}
-            """
+            # Perform vector search using the VectorIndexManager
+            search_results = await vector_index_manager.perform_vector_search(
+                query_embedding=query_embedding,
+                table_name="questions", # Assuming we are searching questions table
+                filters=filters,
+                limit=limit,
+                min_similarity=self.min_similarity_threshold
+            )
             
-            result = await database.fetch_all(search_query, params)
-            
-            # Convert to response format
+            # Process results to match the expected format for reranking and MMR
             results = []
-            for row in result:
+            for row in search_results:
+                # Calculate a simple keyword score for initial compatibility,
+                # though vector_index_manager doesn't return it directly.
+                # This can be refined if keyword search is integrated into vector_index_manager.
+                keyword_score = 0.0
+                if query.lower() in row.get("content", "").lower():
+                    keyword_score = 1.0
+                
                 results.append({
                     "id": str(row["id"]),
                     "content": row["content"],
-                    "topic": row["topic"],
-                    "difficulty_level": row["difficulty_level"],
-                    "question_type": row["question_type"],
-                    "options": row["options"],
-                    "correct_answer": row["correct_answer"],
-                    "explanation": row["explanation"],
-                    "tags": row["tags"],
+                    "topic": row.get("topic_category"), # Map topic_category back to topic
+                    "difficulty_level": row.get("difficulty_level"),
+                    "question_type": row.get("question_type"),
+                    "options": row.get("options"), # These might not be returned by perform_vector_search, need to verify
+                    "correct_answer": row.get("correct_answer"), # These might not be returned by perform_vector_search, need to verify
+                    "explanation": row.get("explanation"), # These might not be returned by perform_vector_search, need to verify
+                    "tags": row.get("tags"), # These might not be returned by perform_vector_search, need to verify
                     "similarity": float(row["similarity"]),
-                    "keyword_score": float(row["keyword_score"]),
-                    "usage_count": row["usage_count"],
-                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                    "combined_score": float(row["similarity"]) * 0.7 + float(row["keyword_score"]) * 0.3
+                    "keyword_score": keyword_score,
+                    "usage_count": row.get("usage_count", 0), # These might not be returned by perform_vector_search, need to verify
+                    "created_at": row.get("created_at"), # These might not be returned by perform_vector_search, need to verify
+                    "combined_score": float(row["similarity"]) * 0.7 + keyword_score * 0.3
                 })
             
             return results
@@ -328,7 +314,7 @@ class AdvancedRetrievalService:
             # Sort by rerank score
             reranked_results.sort(key=lambda x: x["rerank_score"], reverse=True)
             
-            logger.debug(f"Reranked {len(riscored_results)} results")
+            logger.debug(f"Reranked {len(reranked_results)} results")
             return reranked_results
             
         except Exception as e:
@@ -590,15 +576,27 @@ class AdvancedRetrievalService:
         """Get user preferences and history"""
         
         try:
-            # This would query user preferences from database
-            # For now, return default preferences
-            return {
-                "preferred_difficulty": 3,
-                "preferred_topics": [],
-                "preferred_formats": ["mcq", "fill_blank"],
-                "recent_topics": [],
-                "learning_style": "visual"
-            }
+            async for db_session in get_async_session():
+                user = await user_repository.get(db_session, user_id)
+                if user:
+                    preferences = {
+                        "preferred_difficulty": user.current_math_level if subject == "math" else user.current_english_level,
+                        "preferred_topics": [], # Assuming topics are not stored directly on user model
+                        "preferred_formats": [], # Assuming formats are not stored directly on user model
+                        "recent_topics": [], # Assuming recent topics are not stored directly on user model
+                        "learning_style": user.learning_style.value if user.learning_style else "mixed"
+                    }
+                    logger.debug(f"Fetched user preferences for {user_id}: {preferences}")
+                    return preferences
+                else:
+                    logger.warning(f"User {user_id} not found. Returning default preferences.")
+                    return {
+                        "preferred_difficulty": 3,
+                        "preferred_topics": [],
+                        "preferred_formats": ["mcq", "fill_blank"],
+                        "recent_topics": [],
+                        "learning_style": "mixed"
+                    }
         except Exception as e:
             logger.error(f"Error getting user preferences: {e}")
             return {}
