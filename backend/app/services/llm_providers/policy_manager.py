@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta
 
 from app.core.config import settings
-from app.core.cache import cache_service
+from app.services.cache_service import cache_service
 from .base import BaseLLMProvider
 
 logger = logging.getLogger(__name__)

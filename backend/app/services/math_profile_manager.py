@@ -9,7 +9,7 @@ from app.models.user import User
 from app.models.student_attempt import StudentAttempt
 from app.services.math_selector import math_selector
 from app.services.advanced_math_algorithms import advanced_math_algorithms
-from app.core.cache import cache_service
+from app.services.cache_service import cache_service
 
 logger = logging.getLogger(__name__)
 

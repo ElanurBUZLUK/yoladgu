@@ -12,6 +12,11 @@ from app.services.llm_providers.policy_manager import policy_manager, PolicyType
 from app.services.cost_monitoring_service import cost_monitoring_service
 from app.services.content_moderation_service import content_moderation_service
 from app.services.llm_providers.llm_router import llm_router
+from app.schemas.llm_management import (
+    GetAllPoliciesResponse, GetUsageReportResponse, GetModerationStatsResponse,
+    CheckUserFlagStatusResponse, GetProviderStatusResponse, TestPolicySelectionResponse
+)
+from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig # Added import
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +77,7 @@ class LLMHealthResponse(BaseModel):
 
 
 # Policy Management Endpoints
-@router.get("/policies", response_model=Dict[str, Dict[str, Any]], status_code=status.HTTP_200_OK)
+@router.get("/policies", response_model=GetAllPoliciesResponse, status_code=status.HTTP_200_OK)
 async def get_all_policies(
     db: AsyncSession = Depends(get_async_session),
     user: User = Depends(get_current_teacher),
@@ -164,7 +169,7 @@ async def check_cost_limits(
         )
 
 
-@router.get("/usage-report/{user_id}", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.get("/usage-report/{user_id}", response_model=GetUsageReportResponse, status_code=status.HTTP_200_OK)
 async def get_usage_report(
     user_id: str,
     organization_id: Optional[str] = Query(None, description="Organization ID"),
@@ -191,6 +196,10 @@ async def get_usage_report(
 
 # Content Moderation Endpoints
 @router.post("/moderate-content", response_model=ContentModerationResponse, status_code=status.HTTP_200_OK)
+@idempotency_decorator(
+    key_builder=lambda request, user: f"moderate_content:{request.content_type}:{hash(request.content)}:{user.id}",
+    config=IdempotencyConfig(scope="content_moderation", ttl_seconds=3600)
+)
 async def moderate_content(
     request: ContentModerationRequest,
     db: AsyncSession = Depends(get_async_session),
@@ -214,7 +223,7 @@ async def moderate_content(
         )
 
 
-@router.get("/moderation-stats", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.get("/moderation-stats", response_model=GetModerationStatsResponse, status_code=status.HTTP_200_OK)
 async def get_moderation_stats(
     user_id: Optional[str] = Query(None, description="User ID"),
     time_period: str = Query("24h", description="Time period"),
@@ -237,7 +246,7 @@ async def get_moderation_stats(
         )
 
 
-@router.get("/user-flagged/{user_id}", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.get("/user-flagged/{user_id}", response_model=CheckUserFlagStatusResponse, status_code=status.HTTP_200_OK)
 async def check_user_flag_status(
     user_id: str,
     db: AsyncSession = Depends(get_async_session),
@@ -294,7 +303,7 @@ async def get_llm_health(
         )
 
 
-@router.get("/provider-status", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.get("/provider-status", response_model=GetProviderStatusResponse, status_code=status.HTTP_200_OK)
 async def get_provider_status(
     db: AsyncSession = Depends(get_async_session),
     user: User = Depends(get_current_teacher),
@@ -313,7 +322,11 @@ async def get_provider_status(
 
 
 # Test Endpoints
-@router.post("/test-policy", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.post("/test-policy", response_model=TestPolicySelectionResponse, status_code=status.HTTP_200_OK)
+@idempotency_decorator(
+    key_builder=lambda request, user: f"test_policy:{request.policy_type.value}:{request.task_type}:{request.complexity}:{user.id}",
+    config=IdempotencyConfig(scope="test_policy", ttl_seconds=3600)
+)
 async def test_policy_selection(
     request: PolicySelectionRequest,
     db: AsyncSession = Depends(get_async_session),

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
+from pydantic import BaseModel, Field
 
 from app.core.database import get_async_session
 from app.services.answer_evaluation_service import answer_evaluation_service
@@ -20,11 +21,319 @@ from app.schemas.spaced_repetition import (
 from app.middleware.auth import get_current_student, get_current_teacher, get_current_admin
 from app.models.user import User
 from app.models.question import Subject
+from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig # Added import
 
 router = APIRouter(prefix="/api/v1/answers", tags=["answers"])
 
+# New Response Models
+class AnswerSubmissionResponse(BaseModel):
+    success: bool
+    evaluation: AnswerEvaluation
+    attempt: StudentAttemptResponse
+    spaced_repetition: Optional[Any] # This might need a more specific schema later
+    message: str
 
-@router.post("/submit", response_model=dict)
+class ReviewCalendarResponse(BaseModel):
+    calendar: ReviewCalendar
+    total_days: int
+    total_reviews: int
+    days_ahead: int
+
+class ResetQuestionProgressResponse(BaseModel):
+    success: bool
+    message: str
+
+class ProcessAnswerForReviewResponse(BaseModel):
+    success: bool
+    message: str
+
+class UserReviewStatisticsAdminResponse(BaseModel):
+    user_id: str
+    statistics: ReviewStatistics
+    requested_by: str
+
+class UserLearningProgressAdminResponse(BaseModel):
+    user_id: str
+    progress: LearningProgress
+    requested_by: str
+
+class ResetUserQuestionProgressAdminResponse(BaseModel):
+    user_id: str
+    reset_result: ResetQuestionProgressResponse
+    applied_by: str
+
+class PerformanceSummary(BaseModel):
+    accuracy_rate: float
+    current_level: int
+    total_attempts: int
+    current_streak: int
+    progress_percentage: float
+    overdue_reviews: int
+    due_today: int
+
+class RecommendationItem(BaseModel):
+    type: str
+    priority: str
+    title: str
+    description: str
+    action: str
+    confidence: float
+
+class PerformanceBasedRecommendationsResponse(BaseModel):
+    subject: str
+    user_id: str
+    performance_summary: PerformanceSummary
+    recommendations: List[RecommendationItem]
+    total_recommendations: int
+    generated_at: str
+
+class ActivityItem(BaseModel):
+    type: str
+    title: str
+    duration_minutes: int
+    priority: str
+    questions: Optional[int] = None
+
+class StudyPlanDay(BaseModel):
+    date: str
+    day_name: str
+    total_time_minutes: int
+    activities: List[ActivityItem]
+    scheduled_reviews: int
+    focus_area: str
+
+class StudyPlanRecommendationsResponse(BaseModel):
+    subject: str
+    user_id: str
+    study_plan: List[StudyPlanDay]
+    total_days: int
+    average_daily_time: float
+    total_scheduled_reviews: int
+    generated_at: str
+
+class RecentPerformance(BaseModel):
+    attempts_analyzed: int
+    accuracy: float
+    average_difficulty: float
+    average_time_seconds: float
+    current_streak: int
+
+class AdaptiveRecommendationItem(BaseModel):
+    type: str
+    title: str
+    description: str
+    immediate_action: str
+    confidence: float
+
+class AdaptiveRecommendationsResponse(BaseModel):
+    subject: str
+    message: Optional[str] = None
+    user_id: Optional[str] = None
+    recent_performance: Optional[RecentPerformance] = None
+    recommendations: List[AdaptiveRecommendationItem]
+    next_suggested_action: Optional[str] = None
+    generated_at: Optional[str] = None
+
+class AnswersHealthResponse(BaseModel):
+    status: str
+    module: str
+
+class QuestionDetails(BaseModel):
+    id: str
+    content: str
+    correct_answer: str
+    options: Optional[List[str]] = None
+    topic_category: Optional[str] = None
+    source_type: str
+
+class MathErrorDetailItem(BaseModel):
+    operation: str
+    math_concept: str
+    error_step: str
+
+class ErrorDetails(BaseModel):
+    grammar_errors: Optional[List[str]] = None
+    vocabulary_errors: Optional[List[str]] = None
+    math_error_details: Optional[List[MathErrorDetailItem]] = None
+
+class AttemptDetailsResponse(BaseModel):
+    attempt: StudentAttemptResponse
+    question_details: QuestionDetails
+    error_details: ErrorDetails
+
+class FeedbackResponse(BaseModel):
+    question_id: str
+    attempt_id: str
+    is_correct: bool
+    personalized_feedback: str
+    generated_at: str
+
+class OverallSummary(BaseModel):
+    total_attempts: int
+    accuracy_rate: float
+    current_streak: int
+    best_streak: int
+
+class SubjectSummary(BaseModel):
+    attempts: int
+    accuracy: float
+    current_level: int
+
+class RecentErrorItem(BaseModel):
+    error_type: str
+    frequency: int
+    subject: str
+
+class StatisticsSummaryResponse(BaseModel):
+    overall: OverallSummary
+    by_subject: Dict[str, SubjectSummary]
+    recent_errors: List[RecentErrorItem]
+    improvement_areas: List[str]
+
+class SimilarStudentItem(BaseModel):
+    user_id: str
+    similarity_score: float
+
+class SimilarStudentsResponse(BaseModel):
+    similar_students: List[SimilarStudentItem]
+    total_found: int
+    subject: str
+    user_id: str
+
+class InterventionItem(BaseModel):
+    type: str
+    description: str
+    action: str
+
+class InterventionRecommendationsResponse(BaseModel):
+    interventions: List[InterventionItem]
+    total_recommendations: int
+    subject: str
+    generated_at: str
+
+class TrackedErrorPattern(BaseModel):
+    id: str
+    error_type: str
+    error_count: int
+    subject: str
+    last_occurrence: str
+
+class TrackErrorPatternResponse(BaseModel):
+    success: bool
+    error_pattern: TrackedErrorPattern
+    message: str
+
+class CommonErrorDetail(BaseModel):
+    error_type: str
+    frequency: int
+    student_count: Optional[int] = None
+
+class ClassErrorAnalyticsResponse(BaseModel):
+    total_error_types: int
+    affected_students: int
+    most_common_errors: List[CommonErrorDetail]
+
+class UserErrorPatternsAdminResponse(BaseModel):
+    user_id: str
+    error_patterns: List[TrackedErrorPattern]
+    total_patterns: int
+    subject_filter: str
+
+class OverviewSummary(BaseModel):
+    total_error_types: int
+    affected_students: int
+    analysis_period: str
+
+class SubjectErrorAnalytics(BaseModel):
+    error_types: int
+    affected_students: int
+    top_errors: List[CommonErrorDetail]
+
+class CriticalErrorItem(BaseModel):
+    error_type: str
+    frequency: int
+    subject: str
+    student_count: Optional[int] = None
+
+class ErrorAnalyticsOverviewResponse(BaseModel):
+    overview: OverviewSummary
+    by_subject: Dict[str, SubjectErrorAnalytics]
+    critical_errors: List[CriticalErrorItem]
+    recommendations: List[str]
+
+class BatchRecommendationItem(BaseModel):
+    user_id: str
+    current_level: int
+    recommended_level: int
+    confidence: float
+
+class BatchEvaluateLevelAdjustmentsResponse(BaseModel):
+    recommendations: List[BatchRecommendationItem]
+    total_users_evaluated: int
+    subject: str
+    min_attempts_threshold: int
+    evaluation_date: str
+
+class AdminApplyLevelAdjustmentResponse(BaseModel):
+    success: bool
+    adjustment: dict
+    target_user_id: str
+    applied_by: str
+    message: str
+
+class LevelHistoryItem(BaseModel):
+    old_level: int
+    new_level: int
+    reason: str
+    applied_at: str
+
+class UserLevelHistoryAdminResponse(BaseModel):
+    level_history: List[LevelHistoryItem]
+    total_adjustments: int
+    user_id: str
+    subject_filter: str
+    requested_by: str
+
+class LevelDistribution(BaseModel):
+    data: Dict[str, int]
+
+class SubjectPendingRecommendations(BaseModel):
+    total: int
+    promotions: int
+    demotions: int
+
+class RecommendationsSummaryItem(BaseModel):
+    data: List[BatchRecommendationItem]
+
+class LevelAnalyticsOverviewResponse(BaseModel):
+    level_distribution: Dict[str, LevelDistribution]
+    pending_recommendations: Dict[str, SubjectPendingRecommendations]
+    recommendations_summary: Dict[str, RecommendationsSummaryItem]
+    generated_at: str
+
+class DifficultyPerformance(BaseModel):
+    attempts: int
+    accuracy: float
+
+class CommonError(BaseModel):
+    error_type: str
+    frequency: int
+
+class ClassPerformanceAnalyticsResponse(BaseModel):
+    total_attempts: int
+    class_accuracy: float
+    active_students: int
+    difficulty_performance: Dict[str, DifficultyPerformance]
+    common_errors: List[CommonError]
+    analysis_period: str
+    subject_filter: str
+
+
+@router.post("/submit", response_model=AnswerSubmissionResponse)
+@idempotency_decorator(
+    key_builder=lambda submission, current_user: f"submit:{current_user.id}:{submission.question_id}:{hash(submission.student_answer)}",
+    config=IdempotencyConfig(scope="answer_submission", ttl_seconds=3600)
+)
 async def submit_answer(
     submission: AnswerSubmission,
     current_user: User = Depends(get_current_student),
@@ -172,6 +481,10 @@ async def get_level_adjustment_recommendation(
 
 
 @router.post("/level-adjustment/{subject}")
+@idempotency_decorator(
+    key_builder=lambda subject, new_level, reason, current_user: f"level_adj:{current_user.id}:{subject.value}:{new_level}",
+    config=IdempotencyConfig(scope="level_adjustment", ttl_seconds=3600)
+)
 async def apply_level_adjustment(
     subject: Subject,
     new_level: int = Query(..., ge=1, le=5, description="New level (1-5)"),
@@ -270,7 +583,7 @@ async def get_user_attempts(
     from app.models.question import Question
     
     # Build query
-    query = select(StudentAttempt, Question).join(Question).where(
+    query = select(StudentAttempt).join(Question).where(
         StudentAttempt.user_id == current_user.id
     )
     
@@ -310,7 +623,7 @@ async def get_user_attempts(
     }
 
 
-@router.get("/attempts/{attempt_id}")
+@router.get("/attempts/{attempt_id}", response_model=AttemptDetailsResponse)
 async def get_attempt_details(
     attempt_id: str,
     current_user: User = Depends(get_current_student),
@@ -391,7 +704,7 @@ async def get_attempt_details(
     return response
 
 
-@router.get("/feedback/{question_id}")
+@router.get("/feedback/{question_id}", response_model=FeedbackResponse)
 async def get_personalized_feedback(
     question_id: str,
     current_user: User = Depends(get_current_student),
@@ -445,7 +758,7 @@ async def get_personalized_feedback(
     }
 
 
-@router.get("/statistics/summary")
+@router.get("/statistics/summary", response_model=StatisticsSummaryResponse)
 async def get_statistics_summary(
     current_user: User = Depends(get_current_student),
     db: AsyncSession = Depends(get_async_session)
@@ -537,7 +850,7 @@ async def get_user_error_analysis_admin(
     return error_analysis
 
 
-@router.get("/analytics/class-performance")
+@router.get("/analytics/class-performance", response_model=ClassPerformanceAnalyticsResponse)
 async def get_class_performance_analytics(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
@@ -615,7 +928,7 @@ async def get_class_performance_analytics(
 
 
 # Error Pattern Analytics Endpoints
-@router.get("/error-patterns/similar-students")
+@router.get("/error-patterns/similar-students", response_model=SimilarStudentsResponse)
 async def get_similar_students(
     subject: Subject,
     limit: int = Query(10, ge=1, le=50, description="Number of similar students to return"),
@@ -652,7 +965,7 @@ async def get_error_trend_analysis(
     return trend_analysis
 
 
-@router.get("/error-patterns/interventions/{subject}")
+@router.get("/error-patterns/interventions/{subject}", response_model=InterventionRecommendationsResponse)
 async def get_intervention_recommendations(
     subject: Subject,
     current_user: User = Depends(get_current_student),
@@ -672,7 +985,11 @@ async def get_intervention_recommendations(
     }
 
 
-@router.post("/error-patterns/track")
+@router.post("/error-patterns/track", response_model=TrackErrorPatternResponse)
+@idempotency_decorator(
+    key_builder=lambda error_data, current_user: f"track_error:{current_user.id}:{error_data.get('subject')}:{error_data.get('error_type')}:{hash(frozenset(error_data.items()))}",
+    config=IdempotencyConfig(scope="error_pattern_track", ttl_seconds=3600)
+)
 async def track_error_pattern(
     error_data: dict,
     current_user: User = Depends(get_current_student),
@@ -720,7 +1037,7 @@ async def track_error_pattern(
 
 
 # Teacher/Admin Error Analytics Endpoints
-@router.get("/error-patterns/class-analytics/{subject}")
+@router.get("/error-patterns/class-analytics/{subject}", response_model=ClassErrorAnalyticsResponse)
 async def get_class_error_analytics(
     subject: Subject,
     days: int = Query(30, ge=7, le=365, description="Number of days to analyze"),
@@ -737,7 +1054,7 @@ async def get_class_error_analytics(
     return analytics
 
 
-@router.get("/error-patterns/user/{user_id}/patterns")
+@router.get("/error-patterns/user/{user_id}/patterns", response_model=UserErrorPatternsAdminResponse)
 async def get_user_error_patterns_admin(
     user_id: str,
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
@@ -759,7 +1076,7 @@ async def get_user_error_patterns_admin(
     }
 
 
-@router.get("/error-patterns/analytics/overview")
+@router.get("/error-patterns/analytics/overview", response_model=ErrorAnalyticsOverviewResponse)
 async def get_error_analytics_overview(
     days: int = Query(30, ge=7, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_teacher),
@@ -829,7 +1146,7 @@ async def get_error_analytics_overview(
 
 
 # Admin/Teacher Level Management Endpoints
-@router.get("/admin/level-evaluations/{subject}")
+@router.get("/admin/level-evaluations/{subject}", response_model=BatchEvaluateLevelAdjustmentsResponse)
 async def batch_evaluate_level_adjustments(
     subject: Subject,
     min_attempts: int = Query(10, ge=5, le=50, description="Minimum attempts required"),
@@ -851,7 +1168,11 @@ async def batch_evaluate_level_adjustments(
     }
 
 
-@router.post("/admin/level-adjustment/{user_id}/{subject}")
+@router.post("/admin/level-adjustment/{user_id}/{subject}", response_model=AdminApplyLevelAdjustmentResponse)
+@idempotency_decorator(
+    key_builder=lambda user_id, subject, new_level, reason, current_user: f"admin_level_adj:{user_id}:{subject.value}:{new_level}",
+    config=IdempotencyConfig(scope="admin_level_adjustment", ttl_seconds=3600)
+)
 async def admin_apply_level_adjustment(
     user_id: str,
     subject: Subject,
@@ -894,7 +1215,7 @@ async def admin_apply_level_adjustment(
         )
 
 
-@router.get("/admin/level-history/{user_id}")
+@router.get("/admin/level-history/{user_id}", response_model=UserLevelHistoryAdminResponse)
 async def get_user_level_history_admin(
     user_id: str,
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
@@ -917,7 +1238,7 @@ async def get_user_level_history_admin(
     }
 
 
-@router.get("/admin/level-analytics")
+@router.get("/admin/level-analytics", response_model=LevelAnalyticsOverviewResponse)
 async def get_level_analytics_overview(
     current_user: User = Depends(get_current_teacher),
     db: AsyncSession = Depends(get_async_session)
@@ -979,6 +1300,10 @@ async def get_due_reviews(
 
 
 @router.post("/reviews/schedule", response_model=ReviewScheduleResult)
+@idempotency_decorator(
+    key_builder=lambda request, current_user: f"schedule_review:{current_user.id}:{request.question_id}:{request.quality}",
+    config=IdempotencyConfig(scope="schedule_review", ttl_seconds=3600)
+)
 async def schedule_review(
     request: ScheduleReviewRequest,
     current_user: User = Depends(get_current_student),
@@ -1008,7 +1333,7 @@ async def get_review_statistics(
     return ReviewStatistics(**statistics)
 
 
-@router.get("/reviews/calendar")
+@router.get("/reviews/calendar", response_model=ReviewCalendarResponse)
 async def get_review_calendar(
     days_ahead: int = Query(30, ge=1, le=90, description="Number of days ahead to show"),
     current_user: User = Depends(get_current_student),
@@ -1043,7 +1368,11 @@ async def get_learning_progress(
     return LearningProgress(**progress)
 
 
-@router.post("/reviews/reset/{question_id}")
+@router.post("/reviews/reset/{question_id}", response_model=ResetQuestionProgressResponse)
+@idempotency_decorator(
+    key_builder=lambda question_id, current_user: f"reset_review:{current_user.id}:{question_id}",
+    config=IdempotencyConfig(scope="reset_review", ttl_seconds=3600)
+)
 async def reset_question_progress(
     question_id: str,
     current_user: User = Depends(get_current_student),
@@ -1059,6 +1388,10 @@ async def reset_question_progress(
 
 
 @router.post("/reviews/bulk-schedule", response_model=BulkReviewResponse)
+@idempotency_decorator(
+    key_builder=lambda request, current_user: f"bulk_schedule:{current_user.id}:{hash(frozenset(r.dict().items() for r in request.question_results))}",
+    config=IdempotencyConfig(scope="bulk_schedule", ttl_seconds=3600)
+)
 async def bulk_schedule_reviews(
     request: BulkReviewRequest,
     current_user: User = Depends(get_current_student),
@@ -1073,7 +1406,11 @@ async def bulk_schedule_reviews(
     return BulkReviewResponse(**result)
 
 
-@router.post("/reviews/process-answer/{question_id}")
+@router.post("/reviews/process-answer/{question_id}", response_model=ProcessAnswerForReviewResponse)
+@idempotency_decorator(
+    key_builder=lambda question_id, is_correct, response_time, expected_time, current_user: f"process_answer:{current_user.id}:{question_id}:{is_correct}",
+    config=IdempotencyConfig(scope="process_answer", ttl_seconds=3600)
+)
 async def process_answer_for_review(
     question_id: str,
     is_correct: bool = Query(..., description="Whether the answer was correct"),
@@ -1092,7 +1429,7 @@ async def process_answer_for_review(
 
 
 # Admin/Teacher Spaced Repetition Endpoints
-@router.get("/admin/reviews/user/{user_id}/statistics")
+@router.get("/admin/reviews/user/{user_id}/statistics", response_model=UserReviewStatisticsAdminResponse)
 async def get_user_review_statistics_admin(
     user_id: str,
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
@@ -1112,7 +1449,7 @@ async def get_user_review_statistics_admin(
     }
 
 
-@router.get("/admin/reviews/user/{user_id}/progress")
+@router.get("/admin/reviews/user/{user_id}/progress", response_model=UserLearningProgressAdminResponse)
 async def get_user_learning_progress_admin(
     user_id: str,
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
@@ -1132,7 +1469,11 @@ async def get_user_learning_progress_admin(
     }
 
 
-@router.post("/admin/reviews/user/{user_id}/reset/{question_id}")
+@router.post("/admin/reviews/user/{user_id}/reset/{question_id}", response_model=ResetUserQuestionProgressAdminResponse)
+@idempotency_decorator(
+    key_builder=lambda user_id, question_id, current_user: f"admin_reset_review:{user_id}:{question_id}",
+    config=IdempotencyConfig(scope="admin_reset_review", ttl_seconds=3600)
+)
 async def reset_user_question_progress_admin(
     user_id: str,
     question_id: str,
@@ -1153,7 +1494,7 @@ async def reset_user_question_progress_admin(
 
 
 # Performance-based Recommendations API
-@router.get("/recommendations/performance/{subject}")
+@router.get("/recommendations/performance/{subject}", response_model=PerformanceBasedRecommendationsResponse)
 async def get_performance_based_recommendations(
     subject: Subject,
     current_user: User = Depends(get_current_student),
@@ -1307,7 +1648,7 @@ async def get_performance_based_recommendations(
     }
 
 
-@router.get("/recommendations/study-plan/{subject}")
+@router.get("/recommendations/study-plan/{subject}", response_model=StudyPlanRecommendationsResponse)
 async def get_study_plan_recommendations(
     subject: Subject,
     days_ahead: int = Query(7, ge=1, le=30, description="Number of days to plan ahead"),
@@ -1398,7 +1739,7 @@ async def get_study_plan_recommendations(
     }
 
 
-@router.get("/recommendations/adaptive/{subject}")
+@router.get("/recommendations/adaptive/{subject}", response_model=AdaptiveRecommendationsResponse)
 async def get_adaptive_recommendations(
     subject: Subject,
     current_user: User = Depends(get_current_student),
@@ -1529,7 +1870,7 @@ async def get_adaptive_recommendations(
     }
 
 
-@router.get("/health")
+@router.get("/health", response_model=AnswersHealthResponse)
 async def answers_health():
     """Answer evaluation module health check"""
     return {"status": "ok", "module": "answers"}

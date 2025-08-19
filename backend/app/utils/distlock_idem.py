@@ -6,14 +6,12 @@ import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional, TypeVar, Coroutine
+import logging # Added logging import
 
 from redis.asyncio import Redis
+from app.core.config import settings
 
 T = TypeVar("T")
-
-# ---------------------------
-# Low-level: Distributed Lock
-# ---------------------------
 
 _RELEASE_LUA = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -45,23 +43,20 @@ class RedisLock:
         self.token = token or f"{uuid.uuid4()}"
 
     async def acquire(self) -> bool:
-        # SET key value NX PX ttl
         ok = await self.client.set(self.key, self.token, nx=True, px=self.ttl_ms)
         return bool(ok)
 
     async def release(self) -> bool:
-        # Safe compare-and-delete
         script = self.client.register_script(_RELEASE_LUA)
         res = await script(keys=[self.key], args=[self.token])
         return res == 1
 
     async def extend(self, ttl_ms: Optional[int] = None) -> bool:
-        # Optional lease extension
         ttl = ttl_ms or self.ttl_ms
         pipe = self.client.pipeline()
-        pipe.watch(self.key)
+        await pipe.watch(self.key)
         val = await self.client.get(self.key)
-        if val is None or val.decode() != self.token:
+        if val is None or (isinstance(val, bytes) and val.decode() != self.token) and val != self.token:
             await pipe.reset()
             return False
         pipe.multi()
@@ -81,7 +76,10 @@ class RedisLock:
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.release()
+        try:
+            await self.release()
+        except Exception:
+            pass
 
 
 async def acquire_with_retry(
@@ -91,20 +89,15 @@ async def acquire_with_retry(
     wait_timeout_ms: int = 5_000,
     backoff_ms: int = 100,
 ) -> LockResult:
-    """
-    Spin with jittered backoff until acquired or timeout.
-    """
     token = f"{uuid.uuid4()}"
     lock = RedisLock(client, key, ttl_ms, token)
     start = time.monotonic()
     sleep = backoff_ms / 1000.0
-
     while (time.monotonic() - start) * 1000 < wait_timeout_ms:
         if await lock.acquire():
             return LockResult(True, token)
-        # jitter
         await asyncio.sleep(sleep)
-        sleep = min(sleep * 1.5, 0.8)  # cap backoff
+        sleep = min(sleep * 1.5, 0.8)
     return LockResult(False, None)
 
 
@@ -113,19 +106,15 @@ def lock_decorator(
     ttl_ms: int = 10_000,
     wait_timeout_ms: int = 5_000,
     backoff_ms: int = 100,
-    redis_client_factory: Callable[[], Redis] | None = None,
+    redis_client_factory: Optional[Callable[[], Redis]] = None,
 ):
     """
     Decorator to guard a function with a Redis distributed lock.
-
-    Example:
-        @lock_decorator(lambda user_id: f"lock:reindex:{user_id}")
-        async def rebuild_index(user_id: str): ...
     """
     def wrapper(func: Callable[..., Coroutine[Any, Any, T]]):
         async def inner(*args, **kwargs) -> T:
             key = key_builder(*args, **kwargs)
-            client = redis_client_factory() if redis_client_factory else Redis.from_url("redis://redis:6379/0")
+            client = redis_client_factory() if redis_client_factory else Redis.from_url(settings.redis_url)
             lr = await acquire_with_retry(client, key, ttl_ms, wait_timeout_ms, backoff_ms)
             if not lr.acquired:
                 raise TimeoutError(f"Lock busy: {key}")
@@ -136,7 +125,6 @@ def lock_decorator(
                 try:
                     await lock.release()
                 except Exception:
-                    # swallow release error to not mask real exceptions
                     pass
         return inner
     return wrapper
@@ -146,20 +134,13 @@ def lock_decorator(
 # Idempotency Utilities
 # ---------------------------
 
-# States and key layout:
-# idem:{scope}:{key} -> {
-#   "status": "in_progress|done",
-#   "result": <json-serializable>,
-#   "updated_at": epoch_ms
-# }
-
 @dataclass
 class IdempotencyConfig:
-    scope: str = "default"        # e.g. "payments", "embeddings"
-    ttl_seconds: int = 3600       # cache lifetime for completed results
-    in_progress_ttl: int = 300    # how long to wait for ongoing work
-    wait_timeout_ms: int = 5000   # how long caller should wait polling
-    poll_interval_ms: int = 150   # polling cadence
+    scope: str = "default"
+    ttl_seconds: int = 3600
+    in_progress_ttl: int = 300
+    wait_timeout_ms: int = 5000
+    poll_interval_ms: int = 150
 
 def _idem_key(scope: str, key: str) -> str:
     return f"idem:{scope}:{key}"
@@ -170,12 +151,15 @@ async def _json_get(client: Redis, k: str) -> Optional[dict]:
         return None
     try:
         return json.loads(raw)
-    except Exception:
+    except Exception as e:
+        logging.error(f"Error decoding JSON from Redis key {k}: {e}", exc_info=True)
         return None
 
 async def _json_set(client: Redis, k: str, value: dict, ex: Optional[int] = None) -> None:
-    await client.set(k, json.dumps(value, ensure_ascii=False), ex=ex)
-
+    try:
+        await client.set(k, json.dumps(value, ensure_ascii=False), ex=ex)
+    except Exception as e:
+        logging.error(f"Error encoding or setting JSON to Redis key {k}: {e}", exc_info=True)
 
 async def idempotent_singleflight(
     client: Redis,
@@ -183,70 +167,78 @@ async def idempotent_singleflight(
     config: IdempotencyConfig,
     worker: Callable[[], Awaitable[dict]],
 ) -> dict:
-    """
-    Ensures only one worker executes for a given (scope,key).
-    Others will either wait for result or return last completed value.
-    Result MUST be JSON-serializable dict.
-    """
     k = _idem_key(config.scope, key)
+    logger = logging.getLogger(__name__) # Initialize logger inside function
 
-    # fast path: completed
+    logger.debug(f"Attempting idempotent single-flight for key: {k}")
+
     snapshot = await _json_get(client, k)
-    if snapshot and snapshot.get("status") == "done":
-        return snapshot.get("result", {})
+    if snapshot:
+        status = snapshot.get("status")
+        if status == "done":
+            logger.debug(f"Found 'done' status for key {k}. Returning cached result.")
+            return snapshot.get("result", {})
+        elif status == "in_progress":
+            logger.debug(f"Found 'in_progress' status for key {k}. Waiting for result.")
+            # Continue to polling loop
+        else:
+            logger.warning(f"Unexpected status '{status}' for key {k}. Proceeding to acquire lock.")
+    else:
+        logger.debug(f"No existing state found for key {k}. Attempting to acquire lock.")
 
-    # mark in-progress if not marked
     token = str(uuid.uuid4())
-    # Use SET NX to avoid racing; we store minimal state first
-    ok = await client.set(k, json.dumps({"status": "in_progress", "token": token, "updated_at": int(time.time()*1000)}), nx=True, ex=config.in_progress_ttl)
+    try:
+        ok = await client.set(k, json.dumps({"status": "in_progress", "token": token, "updated_at": int(time.time()*1000)}),
+                              nx=True, ex=config.in_progress_ttl)
+    except Exception as e:
+        logger.error(f"Error setting 'in_progress' state for key {k}: {e}", exc_info=True)
+        raise
+
     if ok:
-        # We are the leader; run worker
+        logger.debug(f"Acquired 'in_progress' lock for key {k} with token {token}. Executing worker.")
         try:
             result = await worker()
-            payload = {
-                "status": "done",
-                "result": result,
-                "updated_at": int(time.time()*1000)
-            }
+            payload = {"status": "done", "result": result, "updated_at": int(time.time()*1000)}
             await _json_set(client, k, payload, ex=config.ttl_seconds)
+            logger.debug(f"Worker completed for key {k}. State set to 'done'.")
             return result
-        except Exception:
-            # reset in_progress quickly so others can retry
+        except Exception as e:
+            logger.error(f"Worker failed for key {k}: {e}. Deleting 'in_progress' state.", exc_info=True)
             await client.delete(k)
             raise
-
-    # follower: someone else is doing the work → wait/poll or return last done
-    start = time.monotonic()
-    interval = config.poll_interval_ms / 1000.0
-    while (time.monotonic() - start) * 1000 < config.wait_timeout_ms:
-        await asyncio.sleep(interval)
-        snap = await _json_get(client, k)
-        if not snap:
-            # leader failed & cleared → give caller chance to try again
-            break
-        if snap.get("status") == "done":
-            return snap.get("result", {})
-    # timeout: give up and let caller retry (or you can 409)
-    raise TimeoutError("Idempotent operation still in progress, please retry later.")
-
+    else:
+        logger.debug(f"Failed to acquire 'in_progress' lock for key {k}. Another process is in progress. Polling for result.")
+        start = time.monotonic()
+        interval = config.poll_interval_ms / 1000.0
+        while (time.monotonic() - start) * 1000 < config.wait_timeout_ms:
+            await asyncio.sleep(interval)
+            snap = await _json_get(client, k)
+            if not snap:
+                logger.debug(f"State for key {k} disappeared during polling. Assuming worker failed or expired.")
+                break
+            status = snap.get("status")
+            if status == "done":
+                logger.debug(f"Found 'done' status during polling for key {k}. Returning result.")
+                return snap.get("result", {})
+            elif status != "in_progress":
+                logger.warning(f"Unexpected status '{status}' for key {k} during polling. Breaking loop.")
+                break # Unexpected state, break and let it timeout or retry
+            logger.debug(f"Still 'in_progress' for key {k}. Polling again.")
+        
+        logger.warning(f"Idempotent operation for key {k} still in progress after {config.wait_timeout_ms}ms. Timeout.")
+        raise TimeoutError("Idempotent operation still in progress, please retry later.")
 
 def idempotency_decorator(
     key_builder: Callable[..., str],
     config: IdempotencyConfig = IdempotencyConfig(),
-    redis_client_factory: Callable[[], Redis] | None = None,
+    redis_client_factory: Optional[Callable[[], Redis]] = None,
 ):
-    """
-    Decorator that caches JSON-serializable results per Idempotency-Key.
-    Suitable for POST endpoints where the client sends a stable key.
-    """
     def wrapper(func: Callable[..., Awaitable[dict]]):
         async def inner(*args, **kwargs) -> dict:
             k = key_builder(*args, **kwargs)
-            client = redis_client_factory() if redis_client_factory else Redis.from_url("redis://redis:6379/0")
-
+            client = redis_client_factory() if redis_client_factory else Redis.from_url(settings.redis_url)
             async def worker():
                 return await func(*args, **kwargs)
-
             return await idempotent_singleflight(client, k, config, worker)
         return inner
     return wrapper

@@ -1,6 +1,9 @@
+import logging
 from typing import Dict, Any, List, Optional
 from .llm_providers.llm_router import llm_router
 from .llm_providers.base import LLMResponse
+
+logger = logging.getLogger(__name__)
 
 
 class LLMGatewayService:
@@ -392,6 +395,118 @@ class LLMGatewayService:
     async def health_check(self) -> Dict[str, Any]:
         """Sağlık kontrolü"""
         return await self.router.health_check()
+
+    # RAG için gerekli metodlar
+    async def embed_query(self, query: str) -> List[float]:
+        """Sorgu için embedding üret"""
+        try:
+            from app.services.embedding_service import embedding_service
+            embeddings = await embedding_service.embed_texts([query])
+            logger.info(f"embed_query successful for query: {query[:50]}...")
+            return embeddings[0] if embeddings else []
+        except Exception as e:
+            logger.error(f"Error in embed_query for query '{query[:50]}...': {e}", exc_info=True)
+            return []
+
+    async def compress_context(self, context: str, max_len: int = 1600) -> str:
+        """Bağlamı sıkıştır"""
+        if len(context) <= max_len:
+            logger.info("Context already within max_len, no compression needed.")
+            return context
+
+        prompt = f"""
+        Aşağıdaki metni {max_len} karaktere sıkıştır, önemli bilgileri koru:
+
+        {context}
+        """
+
+        system_prompt = "Sen bir metin sıkıştırma uzmanısın. Önemli bilgileri koruyarak metni kısalt."
+
+        try:
+            result = await self.router.generate_with_fallback(
+                task_type="content_analysis",
+                prompt=prompt,
+                system_prompt=system_prompt,
+                complexity="low"
+            )
+            compressed_text = result.get("text", context[:max_len])
+            logger.info(f"compress_context successful. Original length: {len(context)}, Compressed length: {len(compressed_text)}")
+            return compressed_text
+        except Exception as e:
+            logger.error(f"Error in compress_context: {e}", exc_info=True)
+            return context[:max_len] # Fallback to simple truncation on error
+
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        context: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> Dict[str, Any]:
+        """Metin üretimi"""
+        try:
+            full_prompt = f"Context: {context}\n\n{prompt}" if context else prompt
+            result = await self.router.generate_with_fallback(
+                task_type="content_generation",
+                prompt=full_prompt,
+                system_prompt=system_prompt,
+                complexity="medium",
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            logger.info(f"generate_text successful. Usage: {result.get('usage', {})}")
+            return {
+                "success": True,
+                "text": result.get("text", ""),
+                "usage": result.get("usage", {}),
+                "error": None
+            }
+        except Exception as e:
+            logger.error(f"Error in generate_text: {e}", exc_info=True)
+            return {
+                "success": False,
+                "text": "",
+                "usage": {},
+                "error": str(e)
+            }
+
+    async def generate_json(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        schema: Optional[Dict[str, Any]] = None,
+        context: Optional[str] = None,
+        temperature: float = 0.2,
+        max_tokens: int = 1000
+    ) -> Dict[str, Any]:
+        """JSON üretimi"""
+        try:
+            full_prompt = f"Context: {context}\n\n{prompt}" if context else prompt
+            result = await self.router.generate_structured_with_fallback(
+                task_type="structured_generation",
+                prompt=full_prompt,
+                schema=schema or {},
+                system_prompt=system_prompt,
+                complexity="medium",
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            logger.info(f"generate_json successful. Usage: {result.get('usage', {})}")
+            return {
+                "success": True,
+                "parsed_json": result.get("parsed_data", {}),
+                "usage": result.get("usage", {}),
+                "error": None
+            }
+        except Exception as e:
+            logger.error(f"Error in generate_json: {e}", exc_info=True)
+            return {
+                "success": False,
+                "parsed_json": {},
+                "usage": {},
+                "error": str(e)
+            }
 
 
 # Global LLM gateway instance

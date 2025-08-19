@@ -17,7 +17,7 @@ class QuestionBase(BaseModel):
 
 
 class QuestionCreate(QuestionBase):
-    pass
+    ...
 
 
 class QuestionUpdate(BaseModel):
@@ -100,7 +100,7 @@ class QuestionPool(BaseModel):
 
 
 class QuestionMetadata(BaseModel):
-    estimated_time: Optional[int] = None  # seconds
+    estimated_time: Optional[int] = None
     complexity_score: Optional[float] = None
     prerequisite_topics: Optional[List[str]] = None
     learning_objectives: Optional[List[str]] = None
@@ -113,7 +113,7 @@ class QuestionMetadata(BaseModel):
 
 class BulkQuestionOperation(BaseModel):
     question_ids: List[str]
-    operation: str  # "adjust_difficulty", "change_category", "archive"
+    operation: str
     parameters: Optional[Dict[str, Any]] = None
 
 
@@ -123,3 +123,42 @@ class QuestionValidationResult(BaseModel):
     warnings: List[str]
     suggestions: List[str]
     quality_score: Optional[float] = None
+
+
+class QuestionContent(BaseModel):
+    id: str
+    content: str
+    question_type: str
+    difficulty_level: int
+    topic_category: str
+    options: Optional[List[str]]
+
+class GetQuestionsByLevelResponse(BaseModel):
+    level: int
+    count: int
+    questions: List[QuestionContent]
+    user_current_level: int
+
+
+class GetQuestionPoolResponse(BaseModel):
+    pool_size: int
+    subject: str
+    difficulty_level: Optional[int]
+    total_questions: int
+
+
+class GetMathTopicsResponse(BaseModel):
+    total_topics: int
+    all_topics: List[str]
+    topics_by_level: Dict[str, List[str]]
+
+
+class GetDifficultyDistributionResponse(BaseModel):
+    total_questions: int
+    user_level: int
+    distribution: Dict[str, int]
+
+
+class GetRandomQuestionResponse(BaseModel):
+    question: QuestionContent
+    difficulty_level: int

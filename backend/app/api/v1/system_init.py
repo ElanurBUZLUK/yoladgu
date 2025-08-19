@@ -4,7 +4,8 @@ import logging
 
 from app.core.config import settings
 from app.core.security import security_service
-from app.services.system_initialization_service import system_init_service
+from app.services.system_initialization_service import system_initialization_service
+from app.services.sample_data_service import sample_data_service
 from app.schemas.user import UserResponse
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ async def initialize_system(
         logger.info("System initialization requested")
         
         # Run initialization
-        result = await system_init_service.initialize_system()
+        result = await system_initialization_service.initialize_system()
         
         if result["success"]:
             logger.info("System initialization completed successfully")
@@ -63,7 +64,7 @@ async def get_system_status():
     Get current system initialization status
     """
     try:
-        status = await system_init_service.get_system_status()
+        status = await system_initialization_service.get_system_status()
         return {
             "message": "System status retrieved successfully",
             "status": status
@@ -73,6 +74,64 @@ async def get_system_status():
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get system status: {str(e)}"
+        )
+
+
+@router.get("/init", response_model=Dict[str, Any])
+async def initialize_pgvector(apply: bool = False):
+    """
+    Initialize PgVector extension and indexes
+    
+    Args:
+        apply: If True, create missing extensions/columns/indexes
+    """
+    try:
+        from app.core.database import get_async_session
+        from sqlalchemy.ext.asyncio import AsyncSession
+        
+        async for db in get_async_session():
+            result = await system_initialization_service.run_all(db, apply=apply)
+            break
+        
+        return {
+            "message": "PgVector initialization completed",
+            "apply": apply,
+            "result": result
+        }
+    except Exception as e:
+        logger.error(f"PgVector initialization failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"PgVector initialization failed: {str(e)}"
+        )
+
+
+@router.post("/sample", response_model=Dict[str, Any])
+async def create_sample_data(apply: bool = False):
+    """
+    Create sample data for development/testing
+    
+    Args:
+        apply: If True, actually create the data in database
+    """
+    try:
+        from app.core.database import get_async_session
+        from sqlalchemy.ext.asyncio import AsyncSession
+        
+        async for db in get_async_session():
+            result = await sample_data_service.create_sample_data(db, apply=apply)
+            break
+        
+        return {
+            "message": "Sample data creation completed",
+            "apply": apply,
+            "result": result
+        }
+    except Exception as e:
+        logger.error(f"Sample data creation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Sample data creation failed: {str(e)}"
         )
 
 
@@ -88,7 +147,7 @@ async def get_system_health():
     - MCP server connectivity
     """
     try:
-        health_status = await system_init_service.validate_system_health()
+        health_status = await system_initialization_service.validate_system_health()
         
         overall_health = health_status["overall"]
         

@@ -2,11 +2,17 @@ from datetime import datetime, timedelta
 from typing import Optional, Union
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
+from app.models.user import User
+from app.repositories.user_repository import UserRepository
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Security scheme
+security = HTTPBearer()
 
 
 class SecurityService:
@@ -78,3 +84,40 @@ class SecurityService:
 
 # Global security service instance
 security_service = SecurityService()
+
+
+def verify_token(token: str) -> dict:
+    """Verify and decode a JWT token - standalone function for direct import"""
+    return security_service.verify_token(token)
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user_repo: UserRepository = Depends()
+) -> User:
+    """Get current user from JWT token"""
+    token = credentials.credentials
+    try:
+        payload = security_service.verify_token(token)
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except HTTPException:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user = await user_repo.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user

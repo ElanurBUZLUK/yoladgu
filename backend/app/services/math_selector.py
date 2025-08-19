@@ -8,7 +8,7 @@ import logging
 
 from app.models.question import Question, Subject
 from app.models.math_profile import MathProfile
-from app.core.cache import cache_service
+from app.services.cache_service import cache_service
 from app.services.advanced_math_algorithms import advanced_math_algorithms
 
 logger = logging.getLogger(__name__)

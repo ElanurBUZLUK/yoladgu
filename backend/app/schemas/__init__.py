@@ -10,6 +10,8 @@ from .pdf_upload import *
 from .user import *
 from .error import *
 from .api_docs import *
+from .llm_management import *
+from .vector_management import *
 
 __all__ = [
     # Question schemas
@@ -53,5 +55,23 @@ __all__ = [
     # API documentation schemas
     "ApiDocumentation", "ApiEndpoint", "ApiGroup", "ApiVersion", "ApiExample",
     "ApiTutorial", "ApiChangelog", "ApiMetric", "ApiHealthCheck", "ApiRateLimit",
-    "ApiUsage", "ApiSchema", "ApiErrorCode", "ApiSDK"
+    "ApiUsage", "ApiSchema", "ApiErrorCode", "ApiSDK",
+
+    # LLM Management schemas
+    "PolicySelectionRequest", "PolicySelectionResponse",
+    "CostLimitRequest", "CostLimitResponse",
+    "ContentModerationRequest", "ContentModerationResponse",
+    "LLMHealthRequest", "LLMHealthResponse",
+    "GetAllPoliciesResponse", "UsageReportEntry", "GetUsageReportResponse",
+    "ModerationStatsEntry", "GetModerationStatsResponse",
+    "CheckUserFlagStatusResponse", "ProviderStatusEntry", "GetProviderStatusResponse",
+    "TestPolicySelectionResponse",
+
+    # Vector Management schemas
+    "BatchUpsertRequest", "BatchUpsertResponse",
+    "RebuildIndexRequest", "RebuildIndexResponse",
+    "CleanupRequest", "CleanupResponse",
+    "LockStatusResponse",
+    "GetVectorStatisticsResponse", "ForceReleaseLockResponse",
+    "RebuildIndexManualResponse", "VectorHealthCheckResponse"
 ]

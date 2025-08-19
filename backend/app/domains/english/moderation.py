@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from app.models.question import Question, Subject
 from app.models.student_attempt import StudentAttempt
 from app.models.user import User
-from app.core.cache import cache_service
+from app.services.cache_service import cache_service
 
 logger = logging.getLogger(__name__)
 

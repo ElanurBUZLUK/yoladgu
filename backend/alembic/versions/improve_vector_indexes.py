@@ -8,6 +8,7 @@ Create Date: 2025-01-17 11:00:00.000000
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from app.core.config import settings
 
 # revision identifiers, used by Alembic.
 revision = 'improve_vector_indexes'
@@ -92,8 +93,8 @@ def upgrade() -> None:
     op.create_index('ix_error_patterns_deactivated_at', 'error_patterns', ['deactivated_at'], unique=False)
     
     # Add embedding dimension configuration column
-    op.add_column('questions', sa.Column('embedding_dim', sa.Integer(), nullable=True, server_default='1536'))
-    op.add_column('error_patterns', sa.Column('embedding_dim', sa.Integer(), nullable=True, server_default='1536'))
+    op.add_column('questions', sa.Column('embedding_dim', sa.Integer(), nullable=True, server_default=str(settings.embedding_dimension)))
+    op.add_column('error_patterns', sa.Column('embedding_dim', sa.Integer(), nullable=True, server_default=str(settings.embedding_dimension)))
     
     # Create HNSW indexes for better quality (optional, for high-performance scenarios)
     # Uncomment if you want HNSW indexes instead of IVFFLAT

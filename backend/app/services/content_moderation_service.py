@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from app.core.config import settings
-from app.core.cache import cache_service
+from app.services.cache_service import cache_service
 
 logger = logging.getLogger(__name__)
 

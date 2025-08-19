@@ -7,11 +7,13 @@ import os
 import sys
 import logging
 from pathlib import Path
+from typing import List
+from sqlalchemy import text # Added import
 
 # Add the app directory to the Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from app.core.database import database
+from app.core.database import database, get_async_session # Added get_async_session
 from app.services.vector_index_manager import vector_index_manager
 from app.services.sample_data_service import sample_data_service
 from app.core.config import settings
@@ -157,6 +159,21 @@ async def setup_embeddings():
         print(f"❌ Embeddings setup failed: {e}")
         return False
 
+async def run_analyze_on_tables(tables: List[str]):
+    """Runs ANALYZE on specified tables to update statistics."""
+    print(f"📊 Running ANALYZE on tables: {', '.join(tables)}...")
+    try:
+        async for session in get_async_session():
+            for table_name in tables:
+                await session.execute(text(f"ANALYZE {table_name};"))
+                print(f"✅ ANALYZE completed for {table_name}")
+            await session.commit() # Commit the analyze commands
+        print("✅ All ANALYZE commands completed.")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to run ANALYZE: {e}")
+        return False
+
 async def health_check():
     """Perform system health check"""
     print("🏥 Performing health check...")
@@ -211,6 +228,7 @@ async def main():
         ("Vector Indexes", setup_vector_indexes),
         ("Sample Data", setup_sample_data),
         ("Embeddings", setup_embeddings),
+        ("ANALYZE Tables", lambda: run_analyze_on_tables(["embeddings", "questions", "error_patterns"])), # Added ANALYZE step
         ("Health Check", health_check)
     ]
     
@@ -219,7 +237,11 @@ async def main():
     for step_name, step_func in steps:
         print(f"\n{'='*20} {step_name} {'='*20}")
         try:
-            success = await step_func()
+            # Check if step_func is an async function (coroutine function)
+            if asyncio.iscoroutinefunction(step_func):
+                success = await step_func()
+            else:
+                success = step_func() # Call directly if not async
             results[step_name] = success
             if not success:
                 print(f"⚠️  {step_name} step failed, but continuing...")

@@ -17,6 +17,20 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=128)
     confirm_password: str = Field(..., min_length=8, max_length=128)
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "testuser",
+                "email": "test@example.com",
+                "role": "student",
+                "current_math_level": 3,
+                "current_english_level": 2,
+                "learning_style": "visual",
+                "password": "securepassword123",
+                "confirm_password": "securepassword123"
+            }
+        }
+
 
 class UserUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_]+$")
@@ -34,11 +48,33 @@ class UserResponse(UserBase):
     
     class Config:
         from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id": "a1b2c3d4e5f6g7h8i9j0k1l2",
+                "username": "testuser",
+                "email": "test@example.com",
+                "role": "student",
+                "current_math_level": 3,
+                "current_english_level": 2,
+                "learning_style": "visual",
+                "is_active": True,
+                "created_at": "2023-01-01T12:00:00Z",
+                "updated_at": "2023-01-01T12:00:00Z"
+            }
+        }
 
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "test@example.com",
+                "password": "securepassword123"
+            }
+        }
 
 
 class UserLoginResponse(BaseModel):

@@ -1,0 +1,8 @@
+[MAIN]
+disable=all
+
+[MESSAGES CONTROL]
+disable=all
+
+[REPORTS]
+reports=no

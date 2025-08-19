@@ -1,7 +1,8 @@
 from pydantic_settings import BaseSettings
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from enum import Enum
 import os
+import secrets
 
 
 class Environment(str, Enum):
@@ -19,6 +20,20 @@ class LLMProvider(str, Enum):
     LOCAL_MODEL = "local_model"
 
 
+class StorageBackend(str, Enum):
+    LOCAL = "local"
+    S3 = "s3"
+    MINIO = "minio"
+
+
+class LogLevel(str, Enum):
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
 class Settings(BaseSettings):
     # App
     app_name: str = "Adaptive Question System"
@@ -33,12 +48,20 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     
-    # Security
+    # Security - Production Hardening
     secret_key: str = "your-secret-key-change-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     encryption_key: str = "your-encryption-key-change-in-production"
+    
+    # JWT Settings - Enhanced
+    jwt_secret: str = "your-jwt-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+    jwt_refresh_token_expire_days: int = 7
+    jwt_issuer: str = "adaptive-learning-system"
+    jwt_audience: str = "adaptive-learning-users"
     
     # LLM Configuration
     openai_api_key: Optional[str] = None
@@ -51,6 +74,8 @@ class Settings(BaseSettings):
     enable_llm_fallback: bool = True
     fallback_to_templates: bool = True
     max_retry_attempts: int = 3
+    llm_timeout_seconds: int = 30
+    llm_health_check_interval: int = 300  # 5 minutes
     
     # Embedding Configuration
     embedding_model: str = "text-embedding-3-small"
@@ -60,24 +85,52 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 100
     embedding_rate_limit_delay: float = 0.1  # 100ms
     
-    # CORS
+    # CORS - Environment-based
     cors_origins: str = "http://localhost:3000"
+    cors_allow_credentials: bool = True
+    cors_allow_methods: List[str] = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    cors_allow_headers: List[str] = ["*"]
     
-    # File Upload
+    # File Upload & Storage
     max_file_size: int = 10 * 1024 * 1024  # 10MB
     upload_dir: str = "./uploads"
+    storage_backend: StorageBackend = StorageBackend.LOCAL
     
-    # Rate Limiting
+    # S3/MinIO Configuration
+    s3_endpoint_url: Optional[str] = None
+    s3_access_key_id: Optional[str] = None
+    s3_secret_access_key: Optional[str] = None
+    s3_bucket_name: str = "adaptive-learning-uploads"
+    s3_region: str = "us-east-1"
+    s3_use_ssl: bool = True
+    
+    # Rate Limiting - Enhanced
     rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 60
+    rate_limit_requests_per_hour: int = 1000
+    rate_limit_requests_per_day: int = 10000
+    rate_limit_burst_size: int = 10
+    rate_limit_storage_backend: str = "redis"  # redis or memory
     
-    # Monitoring
+    # Monitoring & Observability
     prometheus_enabled: bool = True
+    prometheus_port: int = 9090
+    prometheus_path: str = "/metrics"
     
-    # JWT Settings
-    jwt_secret: str = "your-jwt-secret-change-in-production"
-    jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 30
-    jwt_refresh_token_expire_days: int = 7
+    # Logging
+    log_level: LogLevel = LogLevel.INFO
+    log_format: str = "json"
+    log_file: Optional[str] = None
+    log_max_size: int = 100 * 1024 * 1024  # 100MB
+    log_backup_count: int = 5
+    
+    # API Documentation
+    api_docs_enabled: bool = True
+    api_docs_title: str = "Adaptive Learning API"
+    api_docs_description: str = "AI-powered adaptive learning system API"
+    api_docs_version: str = "1.0.0"
+    api_docs_contact_name: str = "API Support"
+    api_docs_contact_email: str = "support@adaptive-learning.com"
     
     # MCP Settings
     mcp_server_url: str = "http://localhost:3001"
@@ -91,15 +144,142 @@ class Settings(BaseSettings):
     vector_namespace_default: str = "default"
     vector_slot_default: int = 1
     
+    # Content Moderation
+    content_moderation_enabled: bool = True
+    forbidden_patterns: List[str] = []
+    injection_detection_enabled: bool = True
+    max_content_length: int = 10000
+    
+    # Cost Monitoring
+    cost_monitoring_enabled: bool = True
+    user_monthly_limit: float = 50.0
+    organization_monthly_limit: float = 500.0
+    endpoint_daily_limit: float = 10.0
+    global_daily_limit: float = 1000.0
+    
+    # Testing
+    test_data_cleanup: bool = True
+    test_parallel_workers: int = 4
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._validate_environment_config()
+        self._generate_secure_keys_if_needed()
+
+    def _validate_environment_config(self):
+        """Validate configuration based on environment"""
+        if self.environment == Environment.PRODUCTION:
+            if self.debug:
+                raise ValueError("Debug mode cannot be enabled in production")
+            
+            if self.secret_key == "your-secret-key-change-in-production":
+                raise ValueError("Secret key must be changed in production")
+            
+            if self.jwt_secret == "your-jwt-secret-change-in-production":
+                raise ValueError("JWT secret must be changed in production")
+            
+            if self.encryption_key == "your-encryption-key-change-in-production":
+                raise ValueError("Encryption key must be changed in production")
+            
+            if not self.openai_api_key and not self.anthropic_api_key:
+                raise ValueError("At least one LLM API key must be configured in production")
+            
+            if self.storage_backend == StorageBackend.S3:
+                if not all([self.s3_access_key_id, self.s3_secret_access_key, self.s3_bucket_name]):
+                    raise ValueError("S3 configuration incomplete for production")
+
+    def _generate_secure_keys_if_needed(self):
+        """Generate secure keys for development/testing if not provided"""
+        if self.environment in [Environment.DEVELOPMENT, Environment.TESTING]:
+            if self.secret_key == "your-secret-key-change-in-production":
+                self.secret_key = secrets.token_urlsafe(32)
+            
+            if self.jwt_secret == "your-jwt-secret-change-in-production":
+                self.jwt_secret = secrets.token_urlsafe(32)
+            
+            if self.encryption_key == "your-encryption-key-change-in-production":
+                self.encryption_key = secrets.token_urlsafe(32)
 
     @property
     def cors_origins_list(self) -> List[str]:
         if isinstance(self.cors_origins, str):
             return [origin.strip() for origin in self.cors_origins.split(",")]
         return self.cors_origins
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == Environment.PRODUCTION
+
+    @property
+    def is_development(self) -> bool:
+        return self.environment == Environment.DEVELOPMENT
+
+    @property
+    def is_testing(self) -> bool:
+        return self.environment == Environment.TESTING
+
+    @property
+    def llm_providers_available(self) -> List[str]:
+        """Return list of available LLM providers based on API keys"""
+        providers = []
+        if self.openai_api_key:
+            providers.extend([LLMProvider.OPENAI_GPT4, LLMProvider.OPENAI_GPT35])
+        if self.anthropic_api_key:
+            providers.extend([
+                LLMProvider.ANTHROPIC_CLAUDE_OPUS,
+                LLMProvider.ANTHROPIC_CLAUDE_SONNET,
+                LLMProvider.ANTHROPIC_CLAUDE_HAIKU
+            ])
+        if self.local_embedding_model:
+            providers.append(LLMProvider.LOCAL_MODEL)
+        return providers
+
+    @property
+    def storage_config(self) -> Dict[str, Any]:
+        """Return storage configuration based on backend"""
+        if self.storage_backend == StorageBackend.S3:
+            return {
+                "backend": "s3",
+                "endpoint_url": self.s3_endpoint_url,
+                "access_key_id": self.s3_access_key_id,
+                "secret_access_key": self.s3_secret_access_key,
+                "bucket_name": self.s3_bucket_name,
+                "region": self.s3_region,
+                "use_ssl": self.s3_use_ssl
+            }
+        else:
+            return {
+                "backend": "local",
+                "upload_dir": self.upload_dir
+            }
+
+    @property
+    def rate_limit_config(self) -> Dict[str, Any]:
+        """Return rate limiting configuration"""
+        return {
+            "enabled": self.rate_limit_enabled,
+            "requests_per_minute": self.rate_limit_requests_per_minute,
+            "requests_per_hour": self.rate_limit_requests_per_hour,
+            "requests_per_day": self.rate_limit_requests_per_day,
+            "burst_size": self.rate_limit_burst_size,
+            "storage_backend": self.rate_limit_storage_backend
+        }
+
+    @property
+    def monitoring_config(self) -> Dict[str, Any]:
+        """Return monitoring configuration"""
+        return {
+            "prometheus_enabled": self.prometheus_enabled,
+            "prometheus_port": self.prometheus_port,
+            "prometheus_path": self.prometheus_path,
+            "log_level": self.log_level,
+            "log_format": self.log_format,
+            "log_file": self.log_file
+        }
 
 
 settings = Settings()

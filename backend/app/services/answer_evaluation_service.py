@@ -15,11 +15,21 @@ from app.schemas.answer import (
     AnswerSubmission, AnswerEvaluation, AnswerEvaluationRequest,
     StudentAttemptResponse, ErrorAnalysisResult, PerformanceMetrics,
     DetailedErrorAnalysis, LevelAdjustmentRecommendation,
-    FeedbackGeneration, AnswerValidation
+    FeedbackGeneration
 )
+from pydantic import BaseModel
+from typing import Optional, List
 from app.services.llm_gateway import llm_gateway
 from app.services.mcp_service import mcp_service
 from app.core.cache import cache_service
+
+
+class AnswerValidation(BaseModel):
+    """Validation result for answer format"""
+    is_valid_format: bool
+    validation_errors: List[str] = []
+    normalized_answer: Optional[str] = None
+    confidence_score: float = 0.0
 
 
 class AnswerEvaluationService:

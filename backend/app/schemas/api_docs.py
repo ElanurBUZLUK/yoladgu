@@ -1,6 +1,10 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from enum import Enum
+from fastapi.openapi.utils import get_openapi
+from fastapi import FastAPI
+from ..core.config import settings
+from ..services.security_service import Permission, Role
 
 
 class ApiEndpointMethod(str, Enum):
@@ -210,3 +214,364 @@ class ApiSDK(BaseModel):
     examples: List[Dict[str, Any]]
     installation_instructions: str
     dependencies: List[str] = []
+
+
+def custom_openapi(app: FastAPI) -> Dict[str, Any]:
+    """Custom OpenAPI schema with enhanced security and documentation"""
+    
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=settings.api_docs_title,
+        version=settings.api_docs_version,
+        description=settings.api_docs_description,
+        routes=app.routes,
+    )
+    
+    # Enhanced security schemes
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "JWT token obtained from /api/v1/auth/login endpoint"
+        },
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "API key for service-to-service communication"
+        }
+    }
+    
+    # Global security requirement
+    openapi_schema["security"] = [
+        {"BearerAuth": []}
+    ]
+    
+    # Enhanced info section
+    openapi_schema["info"]["contact"] = {
+        "name": settings.api_docs_contact_name,
+        "email": settings.api_docs_contact_email,
+        "url": "https://github.com/adaptive-learning/backend"
+    }
+    
+    openapi_schema["info"]["license"] = {
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT"
+    }
+    
+    # Add servers
+    openapi_schema["servers"] = [
+        {
+            "url": "http://localhost:8000",
+            "description": "Development server"
+        },
+        {
+            "url": "https://api.adaptive-learning.com",
+            "description": "Production server"
+        }
+    ]
+    
+    # Add tags with descriptions
+    openapi_schema["tags"] = [
+        {
+            "name": "authentication",
+            "description": "User authentication and authorization endpoints"
+        },
+        {
+            "name": "math",
+            "description": "Mathematics question and RAG endpoints"
+        },
+        {
+            "name": "english",
+            "description": "English question and RAG endpoints"
+        },
+        {
+            "name": "users",
+            "description": "User management endpoints"
+        },
+        {
+            "name": "dashboard",
+            "description": "Dashboard and analytics endpoints"
+        },
+        {
+            "name": "llm",
+            "description": "LLM provider management and policy endpoints"
+        },
+        {
+            "name": "vector",
+            "description": "Vector database management endpoints"
+        },
+        {
+            "name": "monitoring",
+            "description": "System monitoring and metrics endpoints"
+        },
+        {
+            "name": "pdf",
+            "description": "PDF upload and processing endpoints"
+        },
+        {
+            "name": "analytics",
+            "description": "Advanced analytics and reporting endpoints"
+        },
+        {
+            "name": "system",
+            "description": "System initialization and management endpoints"
+        }
+    ]
+    
+    # Add examples for common responses
+    openapi_schema["components"]["examples"] = {
+        "LoginRequest": {
+            "summary": "User login request",
+            "value": {
+                "email": "student@example.com",
+                "password": "password123"
+            }
+        },
+        "LoginResponse": {
+            "summary": "Successful login response",
+            "value": {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "token_type": "bearer",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "expires_in": 1800,
+                "user": {
+                    "id": 1,
+                    "email": "student@example.com",
+                    "full_name": "John Doe",
+                    "role": "student",
+                    "is_active": True
+                }
+            }
+        },
+        "ErrorResponse": {
+            "summary": "Error response",
+            "value": {
+                "detail": "Error message",
+                "error_code": "ERROR_CODE",
+                "status_code": 400
+            }
+        },
+        "RateLimitResponse": {
+            "summary": "Rate limit exceeded response",
+            "value": {
+                "detail": "Rate limit exceeded",
+                "error_code": "RATE_LIMIT_EXCEEDED",
+                "retry_after": 60,
+                "rate_limit_info": {
+                    "limit": 100,
+                    "remaining": 0,
+                    "reset_time": 1640995200
+                }
+            }
+        }
+    }
+    
+    # Add security requirements to paths
+    for path in openapi_schema["paths"]:
+        for method in openapi_schema["paths"][path]:
+            operation = openapi_schema["paths"][path][method]
+            
+            # Add security requirements based on endpoint
+            if _requires_auth(path, method):
+                operation["security"] = [{"BearerAuth": []}]
+            
+            # Add role-based security descriptions
+            if _is_admin_only(path, method):
+                operation["summary"] = f"{operation.get('summary', '')} [Admin Only]"
+                operation["description"] = f"{operation.get('description', '')}\n\n**Required Role:** Admin"
+            elif _is_teacher_or_admin(path, method):
+                operation["summary"] = f"{operation.get('summary', '')} [Teacher/Admin]"
+                operation["description"] = f"{operation.get('description', '')}\n\n**Required Role:** Teacher or Admin"
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+def _requires_auth(path: str, method: str) -> bool:
+    """Check if endpoint requires authentication"""
+    # Public endpoints that don't require auth
+    public_endpoints = [
+        "/health",
+        "/health/simple",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/api/v1/auth/login",
+        "/api/v1/auth/register",
+        "/api/v1/auth/refresh",
+    ]
+    
+    return not any(path.startswith(endpoint) for endpoint in public_endpoints)
+
+
+def _is_admin_only(path: str, method: str) -> bool:
+    """Check if endpoint is admin-only"""
+    admin_endpoints = [
+        "/api/v1/users/",
+        "/api/v1/system/",
+        "/api/v1/monitoring/",
+        "/api/v1/llm/policies",
+        "/api/v1/vector/rebuild-index",
+        "/api/v1/cost/limits",
+    ]
+    
+    return any(path.startswith(endpoint) for endpoint in admin_endpoints)
+
+
+def _is_teacher_or_admin(path: str, method: str) -> bool:
+    """Check if endpoint requires teacher or admin role"""
+    teacher_admin_endpoints = [
+        "/api/v1/questions/",
+        "/api/v1/analytics/",
+        "/api/v1/dashboard/",
+        "/api/v1/moderation/",
+    ]
+    
+    return any(path.startswith(endpoint) for endpoint in teacher_admin_endpoints)
+
+
+def get_api_version_info() -> Dict[str, Any]:
+    """Get API version information"""
+    return {
+        "version": settings.api_docs_version,
+        "environment": settings.environment.value,
+        "features": {
+            "authentication": True,
+            "role_based_access": True,
+            "rate_limiting": settings.rate_limit_enabled,
+            "monitoring": settings.prometheus_enabled,
+            "content_moderation": settings.content_moderation_enabled,
+            "cost_monitoring": settings.cost_monitoring_enabled,
+            "vector_search": True,
+            "llm_integration": True,
+            "pdf_processing": True,
+            "analytics": True,
+        },
+        "endpoints": {
+            "total": _count_endpoints(),
+            "authenticated": _count_authenticated_endpoints(),
+            "public": _count_public_endpoints(),
+        },
+        "security": {
+            "jwt_enabled": True,
+            "cors_enabled": True,
+            "rate_limiting": settings.rate_limit_enabled,
+            "content_moderation": settings.content_moderation_enabled,
+        }
+    }
+
+
+def _count_endpoints() -> int:
+    """Count total endpoints (placeholder)"""
+    return 50  # Approximate count
+
+
+def _count_authenticated_endpoints() -> int:
+    """Count authenticated endpoints (placeholder)"""
+    return 45  # Approximate count
+
+
+def _count_public_endpoints() -> int:
+    """Count public endpoints (placeholder)"""
+    return 5  # Approximate count
+
+
+def get_permission_matrix() -> Dict[str, Dict[str, List[str]]]:
+    """Get permission matrix for different roles"""
+    return {
+        "student": {
+            "permissions": [
+                Permission.QUESTION_READ.value,
+                Permission.ATTEMPT_READ.value,
+                Permission.ATTEMPT_CREATE.value,
+                Permission.ATTEMPT_UPDATE.value,
+                Permission.ANALYTICS_READ.value,
+            ],
+            "endpoints": [
+                "/api/v1/math/rag/next-question",
+                "/api/v1/math/rag/submit-answer",
+                "/api/v1/english/rag/next-question",
+                "/api/v1/dashboard/overview",
+                "/api/v1/users/me",
+            ]
+        },
+        "teacher": {
+            "permissions": [
+                Permission.USER_READ.value,
+                Permission.QUESTION_READ.value,
+                Permission.QUESTION_CREATE.value,
+                Permission.QUESTION_UPDATE.value,
+                Permission.ATTEMPT_READ.value,
+                Permission.ATTEMPT_UPDATE.value,
+                Permission.ANALYTICS_READ.value,
+                Permission.ANALYTICS_CREATE.value,
+                Permission.ANALYTICS_UPDATE.value,
+                Permission.MODERATION_READ.value,
+                Permission.MODERATION_UPDATE.value,
+            ],
+            "endpoints": [
+                "/api/v1/questions/",
+                "/api/v1/analytics/",
+                "/api/v1/dashboard/",
+                "/api/v1/moderation/",
+                "/api/v1/users/",
+            ]
+        },
+        "admin": {
+            "permissions": [perm.value for perm in Permission],
+            "endpoints": [
+                "/api/v1/users/",
+                "/api/v1/system/",
+                "/api/v1/monitoring/",
+                "/api/v1/llm/",
+                "/api/v1/vector/",
+                "/api/v1/cost/",
+                "/api/v1/moderation/",
+            ]
+        }
+    }
+
+
+def get_rate_limit_info() -> Dict[str, Any]:
+    """Get rate limiting information"""
+    return {
+        "enabled": settings.rate_limit_enabled,
+        "limits": {
+            "default": {
+                "requests_per_minute": settings.rate_limit_requests_per_minute,
+                "requests_per_hour": settings.rate_limit_requests_per_hour,
+                "requests_per_day": settings.rate_limit_requests_per_day,
+                "burst_size": settings.rate_limit_burst_size,
+            },
+            "auth": {
+                "requests_per_minute": 10,
+                "window": 60,
+            },
+            "upload": {
+                "requests_per_minute": 5,
+                "window": 60,
+            },
+            "admin": {
+                "requests_per_minute": 1000,
+                "window": 60,
+            },
+            "student": {
+                "requests_per_minute": 200,
+                "window": 60,
+            },
+            "teacher": {
+                "requests_per_minute": 500,
+                "window": 60,
+            },
+        },
+        "headers": {
+            "X-RateLimit-Limit": "Request limit for the time window",
+            "X-RateLimit-Remaining": "Remaining requests in the current window",
+            "X-RateLimit-Reset": "Time when the rate limit resets (Unix timestamp)",
+            "Retry-After": "Seconds to wait before retrying (when rate limited)",
+        }
+    }

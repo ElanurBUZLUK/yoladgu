@@ -8,6 +8,7 @@ Create Date: 2025-01-17 10:00:00.000000
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from app.core.config import settings
 
 # revision identifiers, used by Alembic.
 revision = 'add_pgvector_support'
@@ -21,12 +22,12 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector;")
     
     # Add embedding columns to questions table
-    op.add_column('questions', sa.Column('content_embedding', sa.dialects.postgresql.VECTOR(1536), nullable=True))
+    op.add_column('questions', sa.Column('content_embedding', sa.dialects.postgresql.VECTOR(settings.embedding_dimension), nullable=True))
     op.add_column('questions', sa.Column('estimated_difficulty', sa.Float(), nullable=True))
     op.add_column('questions', sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'))
     
     # Add embedding columns to error_patterns table
-    op.add_column('error_patterns', sa.Column('embedding', sa.dialects.postgresql.VECTOR(1536), nullable=True))
+    op.add_column('error_patterns', sa.Column('embedding', sa.dialects.postgresql.VECTOR(settings.embedding_dimension), nullable=True))
     op.add_column('error_patterns', sa.Column('pattern_details', sa.Text(), nullable=True))
     
     # Add math profile columns to users table

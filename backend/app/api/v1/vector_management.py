@@ -4,13 +4,18 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 import logging
 from datetime import datetime
+import json # Added for hashing request body
 
 from app.core.database import get_async_session
 from app.middleware.auth import get_current_teacher, get_current_student
 from app.models.user import User
 from app.services.vector_index_manager import vector_index_manager
-from app.utils.distlock_idem import RedisLock, IdempotencyConfig
+from app.utils.distlock_idem import RedisLock, IdempotencyConfig, idempotency_decorator # Added idempotency_decorator
 from redis.asyncio import Redis
+from app.schemas.vector_management import (
+    GetVectorStatisticsResponse, ForceReleaseLockResponse,
+    RebuildIndexManualResponse, VectorHealthCheckResponse
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,10 @@ class LockStatusResponse(BaseModel):
 
 # Vector Management Endpoints
 @router.post("/batch-upsert", response_model=BatchUpsertResponse, status_code=status.HTTP_200_OK)
+@idempotency_decorator(
+    key_builder=lambda request, user: f"batch_upsert:{request.table_name}:{request.namespace}:{hash(json.dumps(request.dict(), sort_keys=True))}",
+    config=IdempotencyConfig(scope="batch_upsert", ttl_seconds=3600)
+)
 async def batch_upsert_embeddings(
     request: BatchUpsertRequest,
     db: AsyncSession = Depends(get_async_session),
@@ -88,6 +97,10 @@ async def batch_upsert_embeddings(
 
 
 @router.post("/rebuild-index", response_model=RebuildIndexResponse, status_code=status.HTTP_200_OK)
+@idempotency_decorator(
+    key_builder=lambda request, user: f"rebuild_index:{request.namespace}",
+    config=IdempotencyConfig(scope="rebuild_index", ttl_seconds=3600)
+)
 async def rebuild_vector_index(
     request: RebuildIndexRequest,
     db: AsyncSession = Depends(get_async_session),
@@ -114,6 +127,10 @@ async def rebuild_vector_index(
 
 
 @router.post("/cleanup-slots", response_model=CleanupResponse, status_code=status.HTTP_200_OK)
+@idempotency_decorator(
+    key_builder=lambda request, user: f"cleanup_slots:{request.namespace}:{request.keep_slots}",
+    config=IdempotencyConfig(scope="cleanup_slots", ttl_seconds=3600)
+)
 async def cleanup_old_slots(
     request: CleanupRequest,
     db: AsyncSession = Depends(get_async_session),
@@ -142,7 +159,7 @@ async def cleanup_old_slots(
         )
 
 
-@router.get("/statistics", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.get("/statistics", response_model=GetVectorStatisticsResponse, status_code=status.HTTP_200_OK)
 async def get_vector_statistics(
     db: AsyncSession = Depends(get_async_session),
     user: User = Depends(get_current_teacher),
@@ -193,7 +210,7 @@ async def check_lock_status(
         )
 
 
-@router.delete("/lock/{lock_key}", status_code=status.HTTP_200_OK)
+@router.delete("/lock/{lock_key}", response_model=ForceReleaseLockResponse, status_code=status.HTTP_200_OK)
 async def force_release_lock(
     lock_key: str,
     db: AsyncSession = Depends(get_async_session),
@@ -221,7 +238,11 @@ async def force_release_lock(
 
 
 # Context Manager Example Endpoint
-@router.post("/admin/rebuild-index-manual", status_code=status.HTTP_200_OK)
+@router.post("/admin/rebuild-index-manual", response_model=RebuildIndexManualResponse, status_code=status.HTTP_200_OK)
+@idempotency_decorator(
+    key_builder=lambda namespace, user: f"manual_rebuild:{namespace}",
+    config=IdempotencyConfig(scope="manual_rebuild", ttl_seconds=3600)
+)
 async def rebuild_index_manual(
     namespace: str,
     db: AsyncSession = Depends(get_async_session),
@@ -257,7 +278,7 @@ async def rebuild_index_manual(
 
 
 # Health Check Endpoint
-@router.get("/health", response_model=Dict[str, Any], status_code=status.HTTP_200_OK)
+@router.get("/health", response_model=VectorHealthCheckResponse, status_code=status.HTTP_200_OK)
 async def vector_health_check(
     db: AsyncSession = Depends(get_async_session),
     user: User = Depends(get_current_teacher),

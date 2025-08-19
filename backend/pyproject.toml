@@ -1,0 +1,432 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adaptive-learning-backend"
+version = "1.0.0"
+description = "AI-powered adaptive learning system backend"
+authors = [
+    {name = "Adaptive Learning Team", email = "team@adaptive-learning.com"}
+]
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.29.0",
+    "alembic>=1.12.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "python-multipart>=0.0.6",
+    "redis>=5.0.0",
+    "structlog>=23.2.0",
+    "prometheus-client>=0.19.0",
+    "psutil>=5.9.0",
+    "boto3>=1.34.0",
+    "openai>=1.3.0",
+    "anthropic>=0.7.0",
+    "httpx>=0.25.0",
+    "python-dotenv>=1.0.0",
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.5.0",
+    "bandit>=1.7.0",
+    "safety>=2.3.0",
+]
+test = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "factory-boy>=3.3.0",
+    "faker>=20.0.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.4.0",
+    "mkdocstrings[python]>=0.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/adaptive-learning/backend"
+Documentation = "https://adaptive-learning.readthedocs.io"
+Repository = "https://github.com/adaptive-learning/backend"
+Issues = "https://github.com/adaptive-learning/backend/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.txt", "*.md", "*.yml", "*.yaml", "*.json"]
+
+# Black configuration
+[tool.black]
+line-length = 88
+target-version = ["py39", "py310", "py311", "py312"]
+include = "\\.pyi?$"
+extend-exclude = '''
+/(
+  # directories
+  \\.eggs
+  | \\.git
+  | \\.hg
+  | \\.mypy_cache
+  | \\.tox
+  | \\.venv
+  | build
+  | dist
+  | migrations
+)/
+'''
+
+# isort configuration
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["app"]
+known_third_party = ["fastapi", "sqlalchemy", "pydantic", "structlog"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+default_section = "THIRDPARTY"
+
+# Ruff configuration
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+    "ARG001", # unused-function-args
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "TID", # flake8-tidy-imports
+    "Q",  # flake8-quotes
+    "RSE", # flake8-raise
+    "RET", # flake8-return
+    "SLF", # flake8-self
+    "SLOT", # flake8-slots
+    "PIE", # flake8-pie
+    "LOG", # flake8-logging-format
+    "PTH", # flake8-use-pathlib
+    "ERA", # eradicate
+    "PD",  # pandas-vet
+    "PGH", # pygrep-hooks
+    "PL",  # pylint
+    "TRY", # tryceratops
+    "NPY", # numpy-vet
+    "AIR", # flake8-airflow
+    "PERF", # perflint
+    "FBT", # flake8-boolean-trap
+    "COM", # flake8-commas
+    "C90", # mccabe
+    "DTZ", # flake8-datetimez
+    "T20", # flake8-print
+    "FA",  # flake8-future-annotations
+    "ISC", # flake8-implicit-str-concat
+    "G",   # flake8-logging-format
+    "INP", # flake8-no-pep420
+    "PIE", # flake8-pie
+    "TID", # flake8-tidy-imports
+    "TCH", # flake8-type-checking
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-pathlib
+    "SIM", # flake8-simplify
+    "A",   # flake8-builtins
+    "COM", # flake8-commas
+    "C4",  # flake8-comprehensions
+    "DTZ", # flake8-datetimez
+    "T20", # flake8-print
+    "FA",  # flake8-future-annotations
+    "ISC", # flake8-implicit-str-concat
+    "G",   # flake8-logging-format
+    "INP", # flake8-no-pep420
+    "PIE", # flake8-pie
+    "TID", # flake8-tidy-imports
+    "TCH", # flake8-type-checking
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-path-lib
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "PLR0913", # too many arguments
+    "PLR0915", # too many statements
+    "PLR0912", # too many branches
+    "PLR0911", # too many return statements
+    "PLR2004", # magic value used in comparison
+    "PLR0916", # too many boolean expressions
+    "PLR0917", # too many boolean expressions
+    "PLR0918", # too many boolean expressions
+    "PLR0919", # too many boolean expressions
+    "PLR0920", # too many boolean expressions
+    "PLR0921", # too many boolean expressions
+    "PLR0922", # too many boolean expressions
+    "PLR0923", # too many boolean expressions
+    "PLR0924", # too many boolean expressions
+    "PLR0925", # too many boolean expressions
+    "PLR0926", # too many boolean expressions
+    "PLR0927", # too many boolean expressions
+    "PLR0928", # too many boolean expressions
+    "PLR0929", # too many boolean expressions
+    "PLR0930", # too many boolean expressions
+    "PLR0931", # too many boolean expressions
+    "PLR0932", # too many boolean expressions
+    "PLR0933", # too many boolean expressions
+    "PLR0934", # too many boolean expressions
+    "PLR0935", # too many boolean expressions
+    "PLR0936", # too many boolean expressions
+    "PLR0937", # too many boolean expressions
+    "PLR0938", # too many boolean expressions
+    "PLR0939", # too many boolean expressions
+    "PLR0940", # too many boolean expressions
+    "PLR0941", # too many boolean expressions
+    "PLR0942", # too many boolean expressions
+    "PLR0943", # too many boolean expressions
+    "PLR0944", # too many boolean expressions
+    "PLR0945", # too many boolean expressions
+    "PLR0946", # too many boolean expressions
+    "PLR0947", # too many boolean expressions
+    "PLR0948", # too many boolean expressions
+    "PLR0949", # too many boolean expressions
+    "PLR0950", # too many boolean expressions
+    "PLR0951", # too many boolean expressions
+    "PLR0952", # too many boolean expressions
+    "PLR0953", # too many boolean expressions
+    "PLR0954", # too many boolean expressions
+    "PLR0955", # too many boolean expressions
+    "PLR0956", # too many boolean expressions
+    "PLR0957", # too many boolean expressions
+    "PLR0958", # too many boolean expressions
+    "PLR0959", # too many boolean expressions
+    "PLR0960", # too many boolean expressions
+    "PLR0961", # too many boolean expressions
+    "PLR0962", # too many boolean expressions
+    "PLR0963", # too many boolean expressions
+    "PLR0964", # too many boolean expressions
+    "PLR0965", # too many boolean expressions
+    "PLR0966", # too many boolean expressions
+    "PLR0967", # too many boolean expressions
+    "PLR0968", # too many boolean expressions
+    "PLR0969", # too many boolean expressions
+    "PLR0970", # too many boolean expressions
+    "PLR0971", # too many boolean expressions
+    "PLR0972", # too many boolean expressions
+    "PLR0973", # too many boolean expressions
+    "PLR0974", # too many boolean expressions
+    "PLR0975", # too many boolean expressions
+    "PLR0976", # too many boolean expressions
+    "PLR0977", # too many boolean expressions
+    "PLR0978", # too many boolean expressions
+    "PLR0979", # too many boolean expressions
+    "PLR0980", # too many boolean expressions
+    "PLR0981", # too many boolean expressions
+    "PLR0982", # too many boolean expressions
+    "PLR0983", # too many boolean expressions
+    "PLR0984", # too many boolean expressions
+    "PLR0985", # too many boolean expressions
+    "PLR0986", # too many boolean expressions
+    "PLR0987", # too many boolean expressions
+    "PLR0988", # too many boolean expressions
+    "PLR0989", # too many boolean expressions
+    "PLR0990", # too many boolean expressions
+    "PLR0991", # too many boolean expressions
+    "PLR0992", # too many boolean expressions
+    "PLR0993", # too many boolean expressions
+    "PLR0994", # too many boolean expressions
+    "PLR0995", # too many boolean expressions
+    "PLR0996", # too many boolean expressions
+    "PLR0997", # too many boolean expressions
+    "PLR0998", # too many boolean expressions
+    "PLR0999", # too many boolean expressions
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**/*" = ["PLR0913", "PLR0915", "PLR0912", "PLR0911", "PLR2004"]
+"migrations/**/*" = ["E501", "F401"]
+
+# MyPy configuration
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    "boto3.*",
+    "botocore.*",
+    "redis.*",
+    "psutil.*",
+    "prometheus_client.*",
+    "alembic.*",
+    "pytest.*",
+    "factory_boy.*",
+    "faker.*",
+]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml",
+    "--cov-fail-under=80",
+    "--asyncio-mode=auto",
+    "--tb=short",
+    "-v",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "database: marks tests that require database",
+    "api: marks tests as API tests",
+    "auth: marks tests as authentication tests",
+    "llm: marks tests as LLM tests",
+    "vector: marks tests as vector search tests",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "*/tests/*",
+    "*/migrations/*",
+    "*/venv/*",
+    "*/__pycache__/*",
+    "*/conftest.py",
+    "*/setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\\\bProtocol\\\\):",
+    "@(abc\\\\.)?abstractmethod",
+]
+
+# Bandit configuration
+[tool.bandit]
+exclude_dirs = ["tests", "migrations", "venv"]
+skips = ["B101", "B601"]
+
+# Safety configuration
+[tool.safety]
+output = "json"
+full-report = true
+
+# Pre-commit configuration
+[tool.pre-commit]
+repos = [
+    {
+        repo = "https://github.com/pre-commit/pre-commit-hooks",
+        rev = "v4.5.0",
+        hooks = [
+            {id = "trailing-whitespace"},
+            {id = "end-of-file-fixer"},
+            {id = "check-yaml"},
+            {id = "check-added-large-files"},
+            {id = "check-merge-conflict"},
+            {id = "check-case-conflict"},
+            {id = "check-docstring-first"},
+            {id = "check-json"},
+            {id = "check-merge-conflict"},
+            {id = "check-toml"},
+            {id = "debug-statements"},
+            {id = "name-tests-test"},
+            {id = "requirements-txt-fixer"},
+        ],
+    },
+    {
+        repo = "https://github.com/psf/black",
+        rev = "23.12.0",
+        hooks = [{id = "black"}],
+    },
+    {
+        repo = "https://github.com/pycqa/isort",
+        rev = "5.13.2",
+        hooks = [{id = "isort"}],
+    },
+    {
+        repo = "https://github.com/astral-sh/ruff-pre-commit",
+        rev = "v0.1.6",
+        hooks = [{id = "ruff", args = ["--fix"]}],
+    },
+    {
+        repo = "https://github.com/pre-commit/mirrors-mypy",
+        rev = "v1.7.1",
+        hooks = [{id = "mypy"}],
+    },
+    {
+        repo = "https://github.com/PyCQA/bandit",
+        rev = "1.7.5",
+        hooks = [{id = "bandit", args = ["-r", ".", "-f", "json", "-o", "bandit-report.json"]}],
+    },
+]

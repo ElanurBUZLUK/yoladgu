@@ -8,6 +8,7 @@ Create Date: 2025-01-17 12:00:00.000000
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from app.core.config import settings
 
 # revision identifiers, used by Alembic.
 revision = 'create_embeddings_table'
@@ -23,9 +24,9 @@ def upgrade() -> None:
         sa.Column('obj_ref', sa.String(length=255), nullable=False),
         sa.Column('namespace', sa.String(length=100), nullable=False, server_default='default'),
         sa.Column('slot', sa.Integer(), nullable=False, server_default='1'),
-        sa.Column('embedding', sa.dialects.postgresql.VECTOR(1536), nullable=False),
+        sa.Column('embedding', sa.dialects.postgresql.VECTOR(settings.embedding_dimension), nullable=False),
         sa.Column('meta', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column('embedding_dim', sa.Integer(), nullable=False, server_default='1536'),
+        sa.Column('embedding_dim', sa.Integer(), nullable=False, server_default=str(settings.embedding_dimension)),
         sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

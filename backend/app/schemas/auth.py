@@ -13,10 +13,29 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6, max_length=100)
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "newuser",
+                "email": "newuser@example.com",
+                "role": "student",
+                "learning_style": "auditory",
+                "password": "securepass"
+            }
+        }
+
 
 class UserLogin(BaseModel):
     username: str
     password: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "testuser",
+                "password": "testpass"
+            }
+        }
 
 
 class UserResponse(UserBase):
@@ -44,6 +63,16 @@ class Token(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "token_type": "bearer",
+                "expires_in": 3600
+            }
+        }
 
 
 class TokenData(BaseModel):
