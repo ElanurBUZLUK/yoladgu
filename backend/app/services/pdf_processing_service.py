@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import pdfplumber
@@ -10,7 +11,11 @@ from sqlalchemy import select
 from app.models.pdf_upload import PDFUpload, ProcessingStatus
 from app.models.question import Question, Subject, QuestionType, SourceType
 from app.services.llm_gateway import llm_gateway
+from app.services.embedding_service import embedding_service
+from app.services.metadata_schema_service import metadata_schema_service, ContentType, Domain
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class PDFProcessingService:
@@ -19,6 +24,33 @@ class PDFProcessingService:
     def __init__(self):
         self.upload_dir = settings.upload_dir
         self.max_file_size = settings.max_file_size
+        
+        # Domain-specific question indicators
+        self.question_indicators = {
+            Subject.MATH: ['?', 'soru', 'problem', 'question', 'hesapla', 'çöz', 'bul', '=', '+', '-', '*', '/'],
+            Subject.ENGLISH: ['?', 'soru', 'question', 'fill', 'blank', 'choose', 'correct', 'grammar', 'vocabulary'],
+            Subject.GENERAL: ['?', 'soru', 'question', 'problem', 'test']
+        }
+        
+        # Domain-specific metadata patterns
+        self.metadata_patterns = {
+            Subject.MATH: {
+                'topics': ['algebra', 'geometry', 'calculus', 'trigonometry', 'statistics', 'arithmetic'],
+                'difficulty_keywords': {
+                    'easy': ['basit', 'kolay', 'temel', 'basic'],
+                    'medium': ['orta', 'normal', 'standard'],
+                    'hard': ['zor', 'difficult', 'advanced', 'ileri']
+                }
+            },
+            Subject.ENGLISH: {
+                'topics': ['grammar', 'vocabulary', 'reading', 'writing', 'listening', 'speaking'],
+                'difficulty_keywords': {
+                    'easy': ['beginner', 'elementary', 'basic', 'temel'],
+                    'medium': ['intermediate', 'orta', 'normal'],
+                    'hard': ['advanced', 'upper', 'ileri', 'difficult']
+                }
+            }
+        }
     
     async def process_pdf_upload(
         self, 
@@ -29,6 +61,8 @@ class PDFProcessingService:
         """PDF yüklemesini işle ve soruları çıkar"""
         
         try:
+            logger.info(f"🚀 Starting PDF processing for upload {upload_id}")
+            
             # Upload kaydını al
             result = await db.execute(
                 select(PDFUpload).where(PDFUpload.id == upload_id)
@@ -50,13 +84,16 @@ class PDFProcessingService:
             
             # PDF'den metin çıkar
             extracted_text = await self._extract_text_from_pdf(pdf_path)
+            logger.info(f"📄 Extracted {len(extracted_text)} characters from PDF")
             
-            # LLM ile soruları çıkar
+            # Domain-specific soru çıkarma
             questions = await self._extract_questions_from_text(
                 extracted_text, 
                 upload.subject,
                 user_id
             )
+            
+            logger.info(f"❓ Extracted {len(questions)} questions from PDF")
             
             # Soruları veritabanına kaydet
             saved_questions = await self._save_questions_to_db(
@@ -72,26 +109,34 @@ class PDFProcessingService:
                 "extracted_questions": len(saved_questions),
                 "processing_time": (datetime.utcnow() - upload.processing_started_at).total_seconds(),
                 "text_length": len(extracted_text),
-                "quality_score": upload.quality_score
+                "quality_score": upload.quality_score,
+                "domain": upload.subject.value,
+                "extraction_method": "enhanced_domain_specific"
             }
             
             await db.commit()
+            
+            logger.info(f"✅ PDF processing completed successfully for upload {upload_id}")
             
             return {
                 "success": True,
                 "upload_id": upload_id,
                 "questions_extracted": len(saved_questions),
                 "quality_score": upload.quality_score,
-                "processing_time": upload.processing_metadata["processing_time"]
+                "processing_time": upload.processing_metadata["processing_time"],
+                "domain": upload.subject.value
             }
             
         except Exception as e:
+            logger.error(f"❌ PDF processing failed for upload {upload_id}: {e}", exc_info=True)
+            
             # Hata durumunda status'u failed olarak güncelle
             if upload:
                 upload.processing_status = ProcessingStatus.FAILED
                 upload.processing_metadata = {
                     "error": str(e),
-                    "failed_at": datetime.utcnow().isoformat()
+                    "failed_at": datetime.utcnow().isoformat(),
+                    "error_type": type(e).__name__
                 }
                 await db.commit()
             
@@ -103,14 +148,18 @@ class PDFProcessingService:
             text_content = []
             
             with pdfplumber.open(pdf_path) as pdf:
-                for page in pdf.pages:
+                for page_num, page in enumerate(pdf.pages):
                     text = page.extract_text()
                     if text:
-                        text_content.append(text)
+                        # Sayfa numarası ekle
+                        text_content.append(f"--- PAGE {page_num + 1} ---\n{text}")
             
-            return "\n".join(text_content)
+            extracted_text = "\n".join(text_content)
+            logger.info(f"📄 Successfully extracted text from {len(pdf.pages)} pages")
+            return extracted_text
             
         except Exception as e:
+            logger.error(f"❌ PDF text extraction failed: {e}", exc_info=True)
             raise Exception(f"PDF text extraction failed: {str(e)}")
     
     async def _extract_questions_from_text(
@@ -119,10 +168,12 @@ class PDFProcessingService:
         subject: Subject,
         user_id: str
     ) -> List[Dict[str, Any]]:
-        """Metinden soruları çıkar"""
+        """Metinden domain-specific soruları çıkar"""
         
         try:
-            # LLM Gateway kullanarak soru çıkarma
+            logger.info(f"🔍 Extracting questions for subject: {subject.value}")
+            
+            # LLM Gateway kullanarak domain-specific soru çıkarma
             llm_result = await llm_gateway.extract_questions_from_text(
                 text=text,
                 subject=subject.value,
@@ -130,44 +181,180 @@ class PDFProcessingService:
             )
             
             if llm_result.get("success"):
-                return llm_result.get("questions", [])
+                questions = llm_result.get("questions", [])
+                # LLM sonuçlarını domain-specific olarak işle
+                processed_questions = await self._process_llm_questions(questions, subject)
+                logger.info(f"✅ LLM extracted {len(processed_questions)} questions")
+                return processed_questions
             else:
-                # Fallback: basit soru çıkarma
+                logger.warning(f"⚠️ LLM question extraction failed, using fallback")
+                # Fallback: domain-specific soru çıkarma
                 return await self._fallback_question_extraction(text, subject)
                 
         except Exception as e:
-            print(f"LLM question extraction failed: {e}")
+            logger.error(f"❌ LLM question extraction failed: {e}", exc_info=True)
             # Fallback kullan
             return await self._fallback_question_extraction(text, subject)
+    
+    async def _process_llm_questions(
+        self, 
+        questions: List[Dict[str, Any]], 
+        subject: Subject
+    ) -> List[Dict[str, Any]]:
+        """LLM'den gelen soruları domain-specific olarak işle"""
+        
+        processed_questions = []
+        
+        for question in questions:
+            try:
+                # Domain-specific metadata ekle
+                enhanced_question = await self._enhance_question_metadata(question, subject)
+                processed_questions.append(enhanced_question)
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to process question: {e}")
+                continue
+        
+        return processed_questions
+    
+    async def _enhance_question_metadata(
+        self, 
+        question: Dict[str, Any], 
+        subject: Subject
+    ) -> Dict[str, Any]:
+        """Soru metadata'sını domain-specific olarak geliştir"""
+        
+        try:
+            content = question.get("content", "")
+            
+            # Domain-specific topic detection
+            topic = self._detect_topic(content, subject)
+            
+            # Domain-specific difficulty detection
+            difficulty = self._detect_difficulty(content, subject)
+            
+            # Enhanced metadata
+            enhanced_question = {
+                **question,
+                "topic_category": topic,
+                "difficulty_level": difficulty,
+                "domain": subject.value,
+                "extraction_method": "llm_enhanced",
+                "confidence_score": question.get("confidence_score", 0.8),
+                "metadata_version": "2.0.0"
+            }
+            
+            return enhanced_question
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to enhance question metadata: {e}")
+            return question
+    
+    def _detect_topic(self, content: str, subject: Subject) -> str:
+        """İçerikten domain-specific topic tespit et"""
+        
+        content_lower = content.lower()
+        
+        if subject == Subject.MATH:
+            for topic in self.metadata_patterns[Subject.MATH]['topics']:
+                if topic in content_lower:
+                    return topic
+            return "general_math"
+            
+        elif subject == Subject.ENGLISH:
+            for topic in self.metadata_patterns[Subject.ENGLISH]['topics']:
+                if topic in content_lower:
+                    return topic
+            return "general_english"
+        
+        return "general"
+    
+    def _detect_difficulty(self, content: str, subject: Subject) -> int:
+        """İçerikten domain-specific difficulty tespit et"""
+        
+        content_lower = content.lower()
+        difficulty_keywords = self.metadata_patterns.get(subject, {}).get('difficulty_keywords', {})
+        
+        # Difficulty keyword detection
+        for level, keywords in difficulty_keywords.items():
+            if any(keyword in content_lower for keyword in keywords):
+                if level == 'easy':
+                    return 1
+                elif level == 'medium':
+                    return 3
+                elif level == 'hard':
+                    return 5
+        
+        # Content-based difficulty estimation
+        if subject == Subject.MATH:
+            # Matematik için content complexity
+            if any(op in content for op in ['+', '-', '*', '/', '=']):
+                if len(content) < 100:
+                    return 2
+                elif len(content) < 200:
+                    return 3
+                else:
+                    return 4
+            else:
+                return 3
+                
+        elif subject == Subject.ENGLISH:
+            # İngilizce için content complexity
+            if len(content) < 80:
+                return 2
+            elif len(content) < 150:
+                return 3
+            else:
+                return 4
+        
+        return 3  # Default difficulty
     
     async def _fallback_question_extraction(
         self, 
         text: str, 
         subject: Subject
     ) -> List[Dict[str, Any]]:
-        """Basit soru çıkarma (LLM başarısız olduğunda)"""
+        """Domain-specific basit soru çıkarma (LLM başarısız olduğunda)"""
         
-        questions = []
-        lines = text.split('\n')
-        
-        # Basit soru tespiti
-        question_indicators = ['?', 'soru', 'problem', 'question']
-        
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if any(indicator in line.lower() for indicator in question_indicators):
-                if len(line) > 20:  # Minimum uzunluk kontrolü
-                    questions.append({
-                        "content": line,
-                        "question_type": "multiple_choice",
-                        "difficulty_level": 3,
-                        "topic_category": "general",
-                        "correct_answer": "",
-                        "options": [],
-                        "source_type": "pdf"
-                    })
-        
-        return questions[:10]  # Maksimum 10 soru
+        try:
+            logger.info(f"🔄 Using fallback question extraction for {subject.value}")
+            
+            questions = []
+            lines = text.split('\n')
+            
+            # Domain-specific question indicators
+            indicators = self.question_indicators.get(subject, self.question_indicators[Subject.GENERAL])
+            
+            for i, line in enumerate(lines):
+                line = line.strip()
+                if any(indicator in line.lower() for indicator in indicators):
+                    if len(line) > 20:  # Minimum uzunluk kontrolü
+                        
+                        # Domain-specific metadata
+                        topic = self._detect_topic(line, subject)
+                        difficulty = self._detect_difficulty(line, subject)
+                        
+                        question = {
+                            "content": line,
+                            "question_type": "multiple_choice",
+                            "difficulty_level": difficulty,
+                            "topic_category": topic,
+                            "correct_answer": "",
+                            "options": [],
+                            "source_type": "pdf",
+                            "domain": subject.value,
+                            "extraction_method": "fallback_pattern",
+                            "confidence_score": 0.6
+                        }
+                        
+                        questions.append(question)
+            
+            logger.info(f"🔄 Fallback extraction found {len(questions)} questions")
+            return questions[:10]  # Maksimum 10 soru
+            
+        except Exception as e:
+            logger.error(f"❌ Fallback question extraction failed: {e}")
+            return []
     
     async def _save_questions_to_db(
         self, 
@@ -176,12 +363,13 @@ class PDFProcessingService:
         upload: PDFUpload,
         user_id: str
     ) -> List[Question]:
-        """Soruları veritabanına kaydet"""
+        """Soruları veritabanına kaydet ve embedding oluştur"""
         
         saved_questions = []
         
         for question_data in questions:
             try:
+                # Question object oluştur
                 question = Question(
                     subject=upload.subject,
                     content=question_data.get("content", ""),
@@ -198,22 +386,29 @@ class PDFProcessingService:
                         "upload_id": str(upload.id),
                         "user_id": user_id,
                         "extraction_method": question_data.get("extraction_method", "llm"),
-                        "confidence_score": question_data.get("confidence_score", 0.5)
+                        "confidence_score": question_data.get("confidence_score", 0.5),
+                        "domain": question_data.get("domain", upload.subject.value),
+                        "topic_category": question_data.get("topic_category", "general"),
+                        "difficulty_level": question_data.get("difficulty_level", 3),
+                        "metadata_version": "2.0.0"
                     }
                 )
                 
                 db.add(question)
                 saved_questions.append(question)
                 
+                logger.debug(f"✅ Question saved: {question.id}")
+                
             except Exception as e:
-                print(f"Failed to save question: {e}")
+                logger.error(f"❌ Failed to save question: {e}")
                 continue
         
         await db.commit()
+        logger.info(f"💾 Saved {len(saved_questions)} questions to database")
         return saved_questions
     
     def _calculate_quality_score(self, questions: List[Dict[str, Any]]) -> float:
-        """Soru kalitesi skorunu hesapla"""
+        """Domain-specific soru kalitesi skorunu hesapla"""
         
         if not questions:
             return 0.0
@@ -245,6 +440,10 @@ class PDFProcessingService:
             
             # Doğru cevap kontrolü
             if question.get("correct_answer"):
+                score += 0.1
+            
+            # Domain-specific bonus
+            if question.get("domain") and question.get("topic_category"):
                 score += 0.1
             
             total_score += score
