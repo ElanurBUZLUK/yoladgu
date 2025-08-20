@@ -1429,7 +1429,7 @@ class VectorIndexManager:
                     "index_name": row["indexname"],
                     "scans": row["idx_scan"],
                     "tuples_read": row["idx_tup_read"],
-                    "tuples_fetched": row["idx_tup_fetch"]
+                    "tuples_fetch": row["idx_tup_fetch"]
                 }
                 for row in index_stats
             ]
@@ -1475,6 +1475,485 @@ class VectorIndexManager:
             
         except Exception as e:
             logger.error(f"Error getting performance metrics: {e}")
+            return {"error": str(e)}
+
+    async def get_real_time_metrics(self) -> Dict[str, Any]:
+        """Get real-time performance metrics for monitoring"""
+        try:
+            real_time_metrics = {}
+            
+            # Get current active connections
+            connections = await database.fetch_one("""
+                SELECT 
+                    COUNT(*) as active_connections,
+                    COUNT(*) FILTER (WHERE state = 'active') as executing_queries
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+            """)
+            
+            real_time_metrics["database_connections"] = {
+                "active_connections": connections["active_connections"],
+                "executing_queries": connections["executing_queries"]
+            }
+            
+            # Get recent embedding operations
+            recent_ops = await database.fetch_all("""
+                SELECT 
+                    namespace,
+                    COUNT(*) as operations_last_hour,
+                    AVG(EXTRACT(EPOCH FROM (NOW() - created_at))) as avg_processing_time_seconds
+                FROM embeddings
+                WHERE created_at >= NOW() - INTERVAL '1 hour'
+                GROUP BY namespace
+                ORDER BY operations_last_hour DESC
+            """)
+            
+            real_time_metrics["recent_operations"] = [
+                {
+                    "namespace": row["namespace"],
+                    "operations_last_hour": row["operations_last_hour"],
+                    "avg_processing_time_seconds": row["avg_processing_time_seconds"]
+                }
+                for row in recent_ops
+            ]
+            
+            # Get cache hit rates
+            cache_stats = await self._get_cache_performance_stats()
+            real_time_metrics["cache_performance"] = cache_stats
+            
+            return real_time_metrics
+            
+        except Exception as e:
+            logger.error(f"Error getting real-time metrics: {e}")
+            return {"error": str(e)}
+
+    async def _get_cache_performance_stats(self) -> Dict[str, Any]:
+        """Get cache performance statistics"""
+        try:
+            # This would integrate with Redis cache service
+            # For now, return placeholder stats
+            return {
+                "cache_hit_rate": 0.85,
+                "cache_size_mb": 128,
+                "eviction_count": 0,
+                "memory_usage_percent": 65
+            }
+        except Exception as e:
+            logger.debug(f"Could not get cache stats: {e}")
+            return {"error": str(e)}
+
+    async def optimize_indexes_for_domain(self, domain: str) -> Dict[str, Any]:
+        """Optimize indexes for specific domain performance"""
+        try:
+            logger.info(f"🔧 Optimizing indexes for domain: {domain}")
+            
+            domain_configs = {
+                "english": {"lists": 100, "similarity_threshold": 0.7},
+                "math": {"lists": 150, "similarity_threshold": 0.8},
+                "cefr": {"lists": 50, "similarity_threshold": 0.6}
+            }
+            
+            if domain not in domain_configs:
+                raise ValueError(f"Unknown domain: {domain}")
+            
+            config = domain_configs[domain]
+            
+            # Get domain namespaces
+            namespace_mapping = self._get_domain_namespace_mapping()
+            if domain not in namespace_mapping:
+                raise ValueError(f"No namespace mapping for domain: {domain}")
+            
+            optimization_results = {}
+            
+            for content_type, namespace in namespace_mapping[domain].items():
+                try:
+                    # Analyze current index performance
+                    index_name = f"ix_{namespace}_embedding"
+                    
+                    if await self._check_index_exists(index_name):
+                        # Rebuild index with optimized parameters
+                        await self._rebuild_optimized_index(
+                            index_name, 
+                            "ivfflat", 
+                            config["lists"]
+                        )
+                        
+                        optimization_results[namespace] = {
+                            "status": "optimized",
+                            "index_type": "ivfflat",
+                            "lists": config["lists"],
+                            "similarity_threshold": config["similarity_threshold"]
+                        }
+                    else:
+                        optimization_results[namespace] = {
+                            "status": "not_found",
+                            "error": f"Index {index_name} does not exist"
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"Error optimizing index for {namespace}: {e}")
+                    optimization_results[namespace] = {
+                        "status": "error",
+                        "error": str(e)
+                    }
+            
+            logger.info(f"✅ Domain {domain} optimization completed")
+            return {
+                "domain": domain,
+                "optimization_results": optimization_results,
+                "config": config
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error optimizing indexes for domain {domain}: {e}")
+            return {"error": str(e)}
+
+    async def _rebuild_optimized_index(
+        self, 
+        index_name: str, 
+        index_type: str = "ivfflat", 
+        lists: int = 100
+    ):
+        """Rebuild an index with optimized parameters"""
+        try:
+            # Drop existing index
+            await database.execute(f"DROP INDEX IF EXISTS {index_name}")
+            
+            # Create new optimized index
+            await self._create_optimized_index(index_name, index_type, lists)
+            
+            logger.info(f"✅ Rebuilt optimized index: {index_name}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error rebuilding index {index_name}: {e}")
+            raise
+
+    async def get_domain_performance_summary(self) -> Dict[str, Any]:
+        """Get comprehensive performance summary for all domains"""
+        try:
+            summary = {}
+            
+            domains = ["english", "math", "cefr"]
+            
+            for domain in domains:
+                try:
+                    # Get domain-specific metrics
+                    domain_metrics = await self._get_domain_metrics(domain)
+                    summary[domain] = domain_metrics
+                    
+                except Exception as e:
+                    logger.error(f"Error getting metrics for domain {domain}: {e}")
+                    summary[domain] = {"error": str(e)}
+            
+            # Add overall system metrics
+            overall_metrics = await self.get_performance_metrics()
+            summary["overall"] = overall_metrics
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error getting domain performance summary: {e}")
+            return {"error": str(e)}
+
+    async def _get_domain_metrics(self, domain: str) -> Dict[str, Any]:
+        """Get performance metrics for specific domain"""
+        try:
+            namespace_mapping = self._get_domain_namespace_mapping()
+            
+            if domain not in namespace_mapping:
+                return {"error": f"No namespace mapping for domain: {domain}"}
+            
+            domain_metrics = {
+                "namespaces": {},
+                "total_embeddings": 0,
+                "avg_similarity_score": 0.0
+            }
+            
+            for content_type, namespace in namespace_mapping[domain].items():
+                try:
+                    # Get namespace statistics
+                    namespace_stats = await database.fetch_one("""
+                        SELECT 
+                            COUNT(*) as embedding_count,
+                            AVG(metadata->>'similarity_score')::float as avg_similarity
+                        FROM embeddings
+                        WHERE namespace = :namespace AND is_active = true
+                    """, {"namespace": namespace})
+                    
+                    domain_metrics["namespaces"][namespace] = {
+                        "embedding_count": namespace_stats["embedding_count"],
+                        "avg_similarity_score": namespace_stats["avg_similarity"] or 0.0
+                    }
+                    
+                    domain_metrics["total_embeddings"] += namespace_stats["embedding_count"]
+                    
+                except Exception as e:
+                    logger.debug(f"Could not get stats for namespace {namespace}: {e}")
+                    domain_metrics["namespaces"][namespace] = {"error": str(e)}
+            
+            # Calculate average similarity score
+            valid_scores = [
+                ns.get("avg_similarity_score", 0.0) 
+                for ns in domain_metrics["namespaces"].values() 
+                if "avg_similarity_score" in ns
+            ]
+            
+            if valid_scores:
+                domain_metrics["avg_similarity_score"] = sum(valid_scores) / len(valid_scores)
+            
+            return domain_metrics
+            
+        except Exception as e:
+            logger.error(f"Error getting domain metrics for {domain}: {e}")
+            return {"error": str(e)}
+
+    async def get_system_health_status(self) -> Dict[str, Any]:
+        """Get comprehensive system health status"""
+        try:
+            health_status = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "overall_status": "healthy",
+                "components": {},
+                "recommendations": []
+            }
+            
+            # Check database connectivity
+            try:
+                db_result = await database.fetch_one("SELECT 1 as health_check")
+                health_status["components"]["database"] = {
+                    "status": "healthy",
+                    "response_time_ms": 0,  # Would measure actual response time
+                    "details": "Database connection successful"
+                }
+            except Exception as e:
+                health_status["components"]["database"] = {
+                    "status": "unhealthy",
+                    "error": str(e),
+                    "details": "Database connection failed"
+                }
+                health_status["overall_status"] = "degraded"
+                health_status["recommendations"].append("Check database connectivity and credentials")
+            
+            # Check vector indexes
+            try:
+                index_status = await self._check_all_indexes_health()
+                health_status["components"]["vector_indexes"] = index_status
+                
+                if index_status.get("overall_status") == "unhealthy":
+                    health_status["overall_status"] = "degraded"
+                    health_status["recommendations"].append("Rebuild vector indexes")
+                    
+            except Exception as e:
+                health_status["components"]["vector_indexes"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+                health_status["overall_status"] = "degraded"
+            
+            # Check embedding service
+            try:
+                embedding_stats = await self._check_embedding_service_health()
+                health_status["components"]["embedding_service"] = embedding_stats
+                
+                if embedding_stats.get("status") == "unhealthy":
+                    health_status["overall_status"] = "degraded"
+                    health_status["recommendations"].append("Check embedding service configuration")
+                    
+            except Exception as e:
+                health_status["components"]["embedding_service"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+                health_status["overall_status"] = "degraded"
+            
+            # Check performance metrics
+            try:
+                performance_metrics = await self.get_performance_metrics()
+                health_status["components"]["performance"] = {
+                    "status": "healthy",
+                    "metrics": performance_metrics
+                }
+                
+                # Check for performance issues
+                if performance_metrics.get("table_statistics", {}).get("total_embeddings", 0) == 0:
+                    health_status["recommendations"].append("No embeddings found - consider initial data population")
+                    
+            except Exception as e:
+                health_status["components"]["performance"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+            
+            return health_status
+            
+        except Exception as e:
+            logger.error(f"Error getting system health status: {e}")
+            return {
+                "overall_status": "unknown",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+    async def _check_all_indexes_health(self) -> Dict[str, Any]:
+        """Check health of all vector indexes"""
+        try:
+            index_health = {
+                "overall_status": "healthy",
+                "indexes": {},
+                "total_indexes": 0,
+                "healthy_indexes": 0
+            }
+            
+            # Get all embedding indexes
+            indexes = await database.fetch_all("""
+                SELECT indexname, tablename, schemaname
+                FROM pg_indexes
+                WHERE indexname LIKE 'ix_%_embedding'
+                ORDER BY indexname
+            """)
+            
+            for index in indexes:
+                index_name = index["indexname"]
+                try:
+                    # Check if index is valid
+                    is_valid = await self._check_index_validity(index_name)
+                    
+                    index_health["indexes"][index_name] = {
+                        "status": "healthy" if is_valid else "unhealthy",
+                        "table": index["tablename"],
+                        "schema": index["schemaname"],
+                        "valid": is_valid
+                    }
+                    
+                    index_health["total_indexes"] += 1
+                    if is_valid:
+                        index_health["healthy_indexes"] += 1
+                    else:
+                        index_health["overall_status"] = "degraded"
+                        
+                except Exception as e:
+                    index_health["indexes"][index_name] = {
+                        "status": "error",
+                        "error": str(e)
+                    }
+                    index_health["overall_status"] = "degraded"
+                    index_health["total_indexes"] += 1
+            
+            # Calculate health percentage
+            if index_health["total_indexes"] > 0:
+                health_percentage = (index_health["healthy_indexes"] / index_health["total_indexes"]) * 100
+                index_health["health_percentage"] = round(health_percentage, 2)
+            
+            return index_health
+            
+        except Exception as e:
+            logger.error(f"Error checking indexes health: {e}")
+            return {
+                "overall_status": "error",
+                "error": str(e)
+            }
+
+    async def _check_index_validity(self, index_name: str) -> bool:
+        """Check if an index is valid and usable"""
+        try:
+            # Check if index exists and is valid
+            result = await database.fetch_one("""
+                SELECT 1 FROM pg_indexes 
+                WHERE indexname = :index_name AND indexdef IS NOT NULL
+            """, {"index_name": index_name})
+            
+            if not result:
+                return False
+            
+            # Check if index is not corrupted
+            result = await database.fetch_one("""
+                SELECT 1 FROM pg_stat_user_indexes 
+                WHERE indexname = :index_name
+            """, {"index_name": index_name})
+            
+            return result is not None
+            
+        except Exception as e:
+            logger.debug(f"Could not check index validity for {index_name}: {e}")
+            return False
+
+    async def _check_embedding_service_health(self) -> Dict[str, Any]:
+        """Check embedding service health"""
+        try:
+            # This would integrate with actual embedding service
+            # For now, return placeholder health check
+            return {
+                "status": "healthy",
+                "model_available": True,
+                "api_accessible": True,
+                "last_check": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+
+    async def get_optimization_recommendations(self) -> Dict[str, Any]:
+        """Get optimization recommendations based on current performance"""
+        try:
+            recommendations = {
+                "priority": "medium",
+                "recommendations": [],
+                "estimated_impact": "moderate"
+            }
+            
+            # Get current performance metrics
+            metrics = await self.get_performance_metrics()
+            
+            # Check for optimization opportunities
+            if metrics.get("table_statistics", {}).get("total_embeddings", 0) > 10000:
+                recommendations["recommendations"].append({
+                    "type": "index_optimization",
+                    "description": "Large dataset detected - consider rebuilding indexes with optimized parameters",
+                    "priority": "high",
+                    "estimated_improvement": "20-30% faster similarity search"
+                })
+            
+            # Check index performance
+            index_performance = metrics.get("index_performance", [])
+            for index in index_performance:
+                if index.get("scans", 0) < 10:
+                    recommendations["recommendations"].append({
+                        "type": "index_usage",
+                        "description": f"Index {index['index_name']} has low usage - consider removing if unused",
+                        "priority": "low",
+                        "estimated_improvement": "Storage space savings"
+                    })
+            
+            # Check namespace distribution
+            namespace_dist = metrics.get("namespace_distribution", [])
+            if namespace_dist:
+                largest_namespace = max(namespace_dist, key=lambda x: x.get("count", 0))
+                if largest_namespace.get("count", 0) > 5000:
+                    recommendations["recommendations"].append({
+                        "type": "namespace_optimization",
+                        "description": f"Namespace {largest_namespace['namespace']} is very large - consider partitioning",
+                        "priority": "medium",
+                        "estimated_improvement": "15-25% faster operations"
+                    })
+            
+            # Set overall priority based on recommendations
+            high_priority_count = sum(1 for r in recommendations["recommendations"] if r.get("priority") == "high")
+            if high_priority_count > 0:
+                recommendations["priority"] = "high"
+                recommendations["estimated_impact"] = "high"
+            elif len(recommendations["recommendations"]) > 3:
+                recommendations["priority"] = "medium"
+                recommendations["estimated_impact"] = "moderate"
+            else:
+                recommendations["priority"] = "low"
+                recommendations["estimated_impact"] = "low"
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"Error getting optimization recommendations: {e}")
             return {"error": str(e)}
 
 

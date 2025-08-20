@@ -443,129 +443,188 @@ class MathRecommendService:
         session: AsyncSession,
         user_id: str,
         test_results: Dict[str, Any],
-        questions_answered: List[Dict[str, Any]]
+        test_questions: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Record placement test results with embedding-based analysis"""
+        """Record placement test results with real-time embedding and profile updates"""
         try:
             logger.info(f"📊 Recording placement test results for user {user_id}")
             
-            # 1. Generate embeddings for test results
-            test_embedding = await self._generate_placement_test_embedding(test_results, questions_answered)
+            # 1. Generate embedding for test results
+            test_embedding = await self._generate_placement_test_embedding(test_results, test_questions)
             
-            # 2. Update math profile with placement test results
-            math_profile = await self.math_profile_repo.get_by_user_id(session, user_id)
-            if not math_profile:
-                # Create new profile if doesn't exist
-                math_profile = await self._create_math_profile_from_placement_test(session, user_id, test_results)
-            else:
-                # Update existing profile
-                await self._update_math_profile_with_placement_test(session, math_profile, test_results)
-            
-            # 3. Store placement test embedding in vector DB
-            await self._store_placement_test_embedding(
-                user_id=user_id,
-                test_results=test_results,
-                test_embedding=test_embedding,
-                math_profile=math_profile
-            )
-            
-            # 4. Generate initial question recommendations based on placement test
-            initial_recommendations = await self._generate_initial_recommendations_from_placement(
+            # 2. Create or update math profile
+            math_profile = await self._create_or_update_math_profile_from_placement_test(
                 session, user_id, test_results, test_embedding
             )
             
-            logger.info(f"✅ Placement test results recorded for user {user_id}")
+            # 3. Store embedding in vector DB
+            await self._store_placement_test_embedding(
+                user_id, test_embedding, test_results, math_profile
+            )
+            
+            # 4. Generate initial recommendations
+            initial_recommendations = await self._generate_initial_recommendations_from_placement(
+                session, test_embedding, math_profile, limit=5
+            )
+            
+            # 5. Real-time profile update
+            await self._update_math_profile_with_placement_test(session, math_profile, test_results)
+            
+            logger.info(f"✅ Placement test results recorded successfully for user {user_id}")
             
             return {
                 "success": True,
-                "math_profile_updated": True,
-                "placement_embedding_stored": True,
-                "initial_recommendations": len(initial_recommendations),
-                "math_profile": {
-                    "global_skill": math_profile.global_skill,
-                    "placement_level": test_results.get("overall_level", "unknown"),
-                    "confidence": test_results.get("confidence", 0.0)
-                }
+                "math_profile_id": math_profile.id,
+                "placement_level": math_profile.global_skill,
+                "initial_recommendations_count": len(initial_recommendations),
+                "embedding_stored": True,
+                "profile_updated": True
             }
             
         except Exception as e:
             logger.error(f"❌ Error recording placement test results: {e}", exc_info=True)
-            await session.rollback()
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     async def _generate_placement_test_embedding(
-        self,
-        test_results: Dict[str, Any],
-        questions_answered: List[Dict[str, Any]]
+        self, 
+        test_results: Dict[str, Any], 
+        test_questions: List[Dict[str, Any]]
     ) -> List[float]:
         """Generate embedding for placement test results"""
         try:
-            # Combine test results and question content for embedding
-            test_summary = f"""
-            Placement Test Results:
-            Overall Level: {test_results.get('overall_level', 'unknown')}
-            Confidence: {test_results.get('confidence', 0.0)}
-            Topics Covered: {', '.join(test_results.get('topics', []))}
+            # Combine test results and questions into a single text
+            test_summary = self._build_placement_test_summary(test_results, test_questions)
             
-            Questions Answered: {len(questions_answered)}
-            Average Difficulty: {test_results.get('average_difficulty', 0.0)}
-            """
-            
-            # Add question content for better context
-            for i, q in enumerate(questions_answered[:5]):  # Limit to first 5 questions
-                test_summary += f"\nQ{i+1}: {q.get('content', '')[:100]}..."
-            
-            # Generate embedding
+            # Generate embedding using embedding service
             embedding = await embedding_service.get_embedding(
-                text=test_summary,
-                domain="math",
-                content_type="placement_test"
+                test_summary, 
+                domain="math"
             )
             
+            logger.info(f"✅ Generated placement test embedding: {len(embedding)} dimensions")
             return embedding
             
         except Exception as e:
-            logger.error(f"Error generating placement test embedding: {e}")
-            # Return default embedding
-            return [0.0] * 3072  # Default dimension for math
+            logger.error(f"❌ Error generating placement test embedding: {e}")
+            raise
+
+    def _build_placement_test_summary(
+        self, 
+        test_results: Dict[str, Any], 
+        test_questions: List[Dict[str, Any]]
+    ) -> str:
+        """Build comprehensive summary of placement test"""
+        try:
+            summary_parts = []
+            
+            # Test results summary
+            summary_parts.append(f"Test Score: {test_results.get('score', 0)}/{test_results.get('total_questions', 0)}")
+            summary_parts.append(f"Accuracy: {test_results.get('accuracy', 0):.2f}%")
+            summary_parts.append(f"Time Taken: {test_results.get('time_taken_minutes', 0)} minutes")
+            
+            # Question difficulty distribution
+            difficulty_counts = {}
+            for question in test_questions:
+                difficulty = question.get('difficulty_level', 'unknown')
+                difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+            
+            summary_parts.append("Difficulty Distribution:")
+            for difficulty, count in difficulty_counts.items():
+                summary_parts.append(f"  {difficulty}: {count} questions")
+            
+            # Topic distribution
+            topic_counts = {}
+            for question in test_questions:
+                topic = question.get('topic', 'unknown')
+                topic_counts[topic] = topic_counts.get(topic, 0) + 1
+            
+            summary_parts.append("Topic Distribution:")
+            for topic, count in topic_counts.items():
+                summary_parts.append(f"  {topic}: {count} questions")
+            
+            # Performance analysis
+            if test_results.get('correct_answers'):
+                correct_topics = [q.get('topic') for q in test_results['correct_answers']]
+                incorrect_topics = [q.get('topic') for q in test_results.get('incorrect_answers', [])]
+                
+                summary_parts.append("Strong Topics:")
+                for topic in set(correct_topics):
+                    summary_parts.append(f"  {topic}: {correct_topics.count(topic)} correct")
+                
+                summary_parts.append("Weak Topics:")
+                for topic in set(incorrect_topics):
+                    summary_parts.append(f"  {topic}: {incorrect_topics.count(topic)} incorrect")
+            
+            return "\n".join(summary_parts)
+            
+        except Exception as e:
+            logger.error(f"Error building placement test summary: {e}")
+            return f"Placement test with score {test_results.get('score', 0)}"
+
+    async def _create_or_update_math_profile_from_placement_test(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        test_results: Dict[str, Any],
+        test_embedding: List[float]
+    ) -> MathProfile:
+        """Create or update math profile based on placement test"""
+        try:
+            # Check if profile exists
+            existing_profile = await self.math_profile_repo.get_by_user_id(session, user_id)
+            
+            if existing_profile:
+                # Update existing profile
+                profile = await self._update_math_profile_with_placement_test(
+                    session, existing_profile, test_results
+                )
+            else:
+                # Create new profile
+                profile = await self._create_math_profile_from_placement_test(
+                    session, user_id, test_results, test_embedding
+                )
+            
+            return profile
+            
+        except Exception as e:
+            logger.error(f"Error creating/updating math profile: {e}")
+            raise
 
     async def _create_math_profile_from_placement_test(
         self,
         session: AsyncSession,
         user_id: str,
-        test_results: Dict[str, Any]
+        test_results: Dict[str, Any],
+        test_embedding: List[float]
     ) -> MathProfile:
         """Create new math profile from placement test results"""
         try:
-            # Calculate initial skill levels
-            overall_level = test_results.get("overall_level", "intermediate")
-            confidence = test_results.get("confidence", 0.5)
+            # Calculate initial skill level based on test results
+            initial_skill = self._calculate_initial_skill_from_placement(test_results)
             
-            # Map level to numerical skill
-            level_mapping = {
-                "beginner": 1.0,
-                "elementary": 2.0,
-                "intermediate": 3.0,
-                "upper_intermediate": 4.0,
-                "advanced": 5.0
-            }
-            
-            global_skill = level_mapping.get(overall_level, 3.0)
-            
-            # Create profile
-            math_profile = MathProfile(
+            # Create new profile
+            profile = MathProfile(
                 user_id=user_id,
-                global_skill=global_skill,
-                confidence=confidence,
+                global_skill=initial_skill,
+                algebra_skill=initial_skill * 0.8,  # Slightly lower for specific skills
+                geometry_skill=initial_skill * 0.8,
+                calculus_skill=initial_skill * 0.7,
+                statistics_skill=initial_skill * 0.7,
+                last_updated=datetime.utcnow(),
                 placement_test_date=datetime.utcnow(),
-                last_updated=datetime.utcnow()
+                placement_test_score=test_results.get('score', 0),
+                placement_test_accuracy=test_results.get('accuracy', 0.0),
+                placement_test_embedding=test_embedding
             )
             
-            session.add(math_profile)
-            await session.commit()
-            await session.refresh(math_profile)
+            # Save to database
+            saved_profile = await self.math_profile_repo.create(session, profile)
             
-            return math_profile
+            logger.info(f"✅ Created new math profile for user {user_id} with skill level {initial_skill}")
+            return saved_profile
             
         except Exception as e:
             logger.error(f"Error creating math profile: {e}")
@@ -574,101 +633,165 @@ class MathRecommendService:
     async def _update_math_profile_with_placement_test(
         self,
         session: AsyncSession,
-        math_profile: MathProfile,
+        profile: MathProfile,
         test_results: Dict[str, Any]
-    ):
+    ) -> MathProfile:
         """Update existing math profile with placement test results"""
         try:
-            # Update skill level if placement test shows different level
-            new_level = test_results.get("overall_level", "intermediate")
-            new_confidence = test_results.get("confidence", 0.5)
+            # Update placement test information
+            profile.placement_test_date = datetime.utcnow()
+            profile.placement_test_score = test_results.get('score', 0)
+            profile.placement_test_accuracy = test_results.get('accuracy', 0.0)
             
-            level_mapping = {
-                "beginner": 1.0,
-                "elementary": 2.0,
-                "intermediate": 3.0,
-                "upper_intermediate": 4.0,
-                "advanced": 5.0
-            }
+            # Update skill levels based on test performance
+            new_skill = self._calculate_updated_skill_from_placement(profile, test_results)
             
-            new_skill = level_mapping.get(new_level, math_profile.global_skill)
+            if new_skill != profile.global_skill:
+                profile.global_skill = new_skill
+                logger.info(f"📈 Updated global skill from {profile.global_skill} to {new_skill}")
             
-            # Update profile
-            math_profile.global_skill = new_skill
-            math_profile.confidence = new_confidence
-            math_profile.placement_test_date = datetime.utcnow()
-            math_profile.last_updated = datetime.utcnow()
+            # Update last updated timestamp
+            profile.last_updated = datetime.utcnow()
             
-            await session.commit()
+            # Save updates
+            updated_profile = await self.math_profile_repo.update(session, profile)
+            
+            logger.info(f"✅ Updated math profile for user {profile.user_id}")
+            return updated_profile
             
         except Exception as e:
             logger.error(f"Error updating math profile: {e}")
             raise
 
+    def _calculate_initial_skill_from_placement(self, test_results: Dict[str, Any]) -> float:
+        """Calculate initial skill level from placement test"""
+        try:
+            accuracy = test_results.get('accuracy', 0.0)
+            score = test_results.get('score', 0)
+            total = test_results.get('total_questions', 1)
+            
+            # Base skill calculation
+            base_skill = (accuracy / 100.0) * 5.0  # Scale 0-5
+            
+            # Adjust based on question difficulty
+            difficulty_bonus = 0.0
+            if test_results.get('difficulty_level') == 'advanced':
+                difficulty_bonus = 1.0
+            elif test_results.get('difficulty_level') == 'intermediate':
+                difficulty_bonus = 0.5
+            
+            # Adjust based on time taken (faster = slightly higher skill)
+            time_bonus = 0.0
+            avg_time_per_question = test_results.get('time_taken_minutes', 0) / total
+            if avg_time_per_question < 1.0:  # Less than 1 minute per question
+                time_bonus = 0.3
+            
+            final_skill = min(5.0, base_skill + difficulty_bonus + time_bonus)
+            
+            logger.info(f"Calculated initial skill: {final_skill:.2f} (base: {base_skill:.2f}, difficulty: {difficulty_bonus}, time: {time_bonus})")
+            return final_skill
+            
+        except Exception as e:
+            logger.error(f"Error calculating initial skill: {e}")
+            return 2.5  # Default middle skill level
+
+    def _calculate_updated_skill_from_placement(
+        self, 
+        profile: MathProfile, 
+        test_results: Dict[str, Any]
+    ) -> float:
+        """Calculate updated skill level from placement test"""
+        try:
+            current_skill = profile.global_skill
+            new_accuracy = test_results.get('accuracy', 0.0)
+            
+            # Weighted average: 70% new result, 30% previous skill
+            new_skill = (new_accuracy / 100.0) * 5.0 * 0.7 + current_skill * 0.3
+            
+            # Ensure skill stays within bounds
+            new_skill = max(0.0, min(5.0, new_skill))
+            
+            logger.info(f"Updated skill: {current_skill:.2f} -> {new_skill:.2f}")
+            return new_skill
+            
+        except Exception as e:
+            logger.error(f"Error calculating updated skill: {e}")
+            return profile.global_skill
+
     async def _store_placement_test_embedding(
         self,
         user_id: str,
-        test_results: Dict[str, Any],
         test_embedding: List[float],
+        test_results: Dict[str, Any],
         math_profile: MathProfile
     ):
-        """Store placement test embedding in vector DB"""
+        """Store placement test embedding in vector database"""
         try:
-            await vector_index_manager.upsert_embedding(
-                obj_ref=f"placement_test_{user_id}",
-                namespace="math_placement_tests",
-                embedding=test_embedding,
-                metadata={
-                    "domain": "math",
-                    "content_type": "placement_test",
-                    "user_id": user_id,
-                    "overall_level": test_results.get("overall_level", "unknown"),
-                    "confidence": test_results.get("confidence", 0.0),
-                    "topics": test_results.get("topics", []),
-                    "average_difficulty": test_results.get("average_difficulty", 0.0),
-                    "global_skill": math_profile.global_skill,
-                    "test_date": datetime.utcnow().isoformat()
-                }
+            # Prepare metadata
+            metadata = {
+                "domain": "math",
+                "content_type": "placement_test",
+                "user_id": user_id,
+                "test_score": test_results.get('score', 0),
+                "test_accuracy": test_results.get('accuracy', 0.0),
+                "skill_level": math_profile.global_skill,
+                "test_date": datetime.utcnow().isoformat(),
+                "total_questions": test_results.get('total_questions', 0),
+                "difficulty_level": test_results.get('difficulty_level', 'unknown'),
+                "topics_covered": list(set(q.get('topic', 'unknown') for q in test_results.get('test_questions', [])))
+            }
+            
+            # Store in vector DB
+            await vector_index_manager.batch_upsert_domain_embeddings_enhanced(
+                domain="math",
+                content_type="placement_tests",
+                items=[{
+                    "obj_ref": f"placement_test_{user_id}_{datetime.utcnow().timestamp()}",
+                    "content": f"Placement test for user {user_id} with score {test_results.get('score', 0)}",
+                    "embedding": test_embedding,
+                    "metadata": metadata
+                }],
+                batch_size=1
             )
             
-            logger.info(f"✅ Placement test embedding stored for user {user_id}")
+            logger.info(f"✅ Stored placement test embedding for user {user_id}")
             
         except Exception as e:
-            logger.error(f"❌ Failed to store placement test embedding: {e}")
+            logger.error(f"❌ Error storing placement test embedding: {e}")
+            raise
 
     async def _generate_initial_recommendations_from_placement(
         self,
         session: AsyncSession,
-        user_id: str,
-        test_results: Dict[str, Any],
-        test_embedding: List[float]
+        placement_embedding: List[float],
+        math_profile: MathProfile,
+        limit: int = 5
     ) -> List[Question]:
-        """Generate initial question recommendations based on placement test"""
+        """Generate initial recommendations based on placement test"""
         try:
-            # Get questions similar to placement test results
+            # Search for similar questions
             similar_questions = await vector_index_manager.search_similar_content(
-                test_embedding,
+                placement_embedding,
                 namespace="math_questions",
                 similarity_threshold=0.6,
-                limit=10,
+                limit=limit * 2,  # Get more to filter
                 metadata_filters={
                     "domain": "math",
-                    "difficulty_level": test_results.get("average_difficulty", 3.0)
+                    "difficulty_level": math_profile.global_skill
                 }
             )
             
-            # Convert to Question objects
             questions = []
-            for result in similar_questions:
+            for result in similar_questions[:limit]:
                 question_id = result.get("obj_ref")
                 if question_id:
                     question = await self.question_repo.get_by_id(session, question_id)
-                    if question and question.subject == Subject.MATH:
+                    if question:
                         question.similarity_score = result.get("similarity", 0.0)
-                        question.recommendation_source = "placement_test"
+                        question.recommendation_source = "placement_test_initial"
                         questions.append(question)
             
-            logger.info(f"Generated {len(questions)} initial recommendations from placement test")
+            logger.info(f"✅ Generated {len(questions)} initial recommendations from placement test")
             return questions
             
         except Exception as e:

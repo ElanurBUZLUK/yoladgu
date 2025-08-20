@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import Dict, Any
@@ -7,6 +7,7 @@ import time
 
 from app.core.database import get_async_session
 from app.core.config import settings
+from app.services.vector_index_manager import vector_index_manager
 from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
@@ -328,20 +329,232 @@ async def _check_llm_health() -> Dict[str, Any]:
 
 @router.get("/info")
 async def system_info() -> Dict[str, Any]:
-    """Get system information and configuration details"""
-    return {
-        "app_name": settings.app_name,
-        "version": settings.version,
-        "environment": settings.environment.value,
-        "debug": settings.debug,
-        "database_url": settings.database_url.split("@")[-1] if "@" in settings.database_url else "configured",
-        "redis_url": settings.redis_url.split("@")[-1] if "@" in settings.redis_url else "configured",
-        "llm_providers": settings.llm_providers_available,
-        "pgvector_enabled": settings.pgvector_enabled,
-        "mcp_enabled": getattr(settings, 'use_mcp_demo', False),
-        "feature_flags": {
-            "use_languagetool": getattr(settings, 'use_languagetool', True),
-            "enable_llm_fallback": getattr(settings, 'enable_llm_fallback', True),
-            "content_moderation": settings.content_moderation_enabled
+    """
+    Get comprehensive system information including configuration and capabilities.
+    
+    Returns:
+        Dict with system information, configuration, and feature flags
+    """
+    try:
+        info = {
+            "system": {
+                "name": "Yoladgu Adaptive Learning Backend",
+                "version": "2.0.0",
+                "environment": settings.environment,
+                "python_version": "3.12+",
+                "framework": "FastAPI",
+                "database": "PostgreSQL + pgvector",
+                "cache": "Redis",
+                "llm_providers": []
+            },
+            "features": {
+                "embedding_system": {
+                    "enabled": settings.pgvector_enabled,
+                    "dimension": settings.embedding_dimension,
+                    "model": settings.embedding_model,
+                    "batch_size": settings.embedding_batch_size
+                },
+                "vector_search": {
+                    "enabled": True,
+                    "similarity_threshold": settings.vector_similarity_threshold,
+                    "namespaces": ["english_errors", "english_questions", "math_errors", "math_questions", "cefr_rubrics"]
+                },
+                "question_generation": {
+                    "enabled": True,
+                    "template_based": True,
+                    "gpt_based": True,
+                    "hybrid_orchestration": True
+                },
+                "real_time_updates": True,
+                "performance_monitoring": True
+            },
+            "configuration": {
+                "database_url": f"postgresql://***:***@{settings.database_host}:{settings.database_port}/{settings.database_name}",
+                "redis_url": f"redis://***:***@{settings.redis_host}:{settings.redis_port}",
+                "cors_origins": settings.cors_origins[:3] + ["..."] if len(settings.cors_origins) > 3 else settings.cors_origins,
+                "max_upload_size_mb": settings.max_upload_size_mb,
+                "rate_limit_per_minute": settings.rate_limit_per_minute
+            }
         }
-    }
+        
+        # Add LLM provider info
+        if settings.openai_api_key:
+            info["system"]["llm_providers"].append("OpenAI GPT-4")
+        if settings.anthropic_api_key:
+            info["system"]["llm_providers"].append("Anthropic Claude")
+        
+        return info
+        
+    except Exception as e:
+        logger.error(f"Error getting system info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get system info: {str(e)}"
+        )
+
+@router.get("/vector/performance")
+async def get_vector_performance_metrics() -> Dict[str, Any]:
+    """
+    Get comprehensive vector index performance metrics.
+    
+    Returns:
+        Dict with performance metrics, index statistics, and optimization recommendations
+    """
+    try:
+        # Get performance metrics
+        performance_metrics = await vector_index_manager.get_performance_metrics()
+        
+        # Get real-time metrics
+        real_time_metrics = await vector_index_manager.get_real_time_metrics()
+        
+        # Get domain performance summary
+        domain_summary = await vector_index_manager.get_domain_performance_summary()
+        
+        # Get optimization recommendations
+        optimization_recommendations = await vector_index_manager.get_optimization_recommendations()
+        
+        return {
+            "timestamp": time.time(),
+            "performance_metrics": performance_metrics,
+            "real_time_metrics": real_time_metrics,
+            "domain_performance": domain_summary,
+            "optimization_recommendations": optimization_recommendations
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting vector performance metrics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get performance metrics: {str(e)}"
+        )
+
+@router.get("/vector/health")
+async def get_vector_health_status() -> Dict[str, Any]:
+    """
+    Get comprehensive vector system health status.
+    
+    Returns:
+        Dict with health status of all vector components
+    """
+    try:
+        health_status = await vector_index_manager.get_system_health_status()
+        return health_status
+        
+    except Exception as e:
+        logger.error(f"Error getting vector health status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get health status: {str(e)}"
+        )
+
+@router.post("/vector/optimize/{domain}")
+async def optimize_vector_indexes_for_domain(domain: str) -> Dict[str, Any]:
+    """
+    Optimize vector indexes for a specific domain.
+    
+    Args:
+        domain: Domain to optimize (english, math, cefr)
+    
+    Returns:
+        Dict with optimization results and status
+    """
+    try:
+        if domain not in ["english", "math", "cefr"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Domain must be one of: english, math, cefr"
+            )
+        
+        optimization_results = await vector_index_manager.optimize_indexes_for_domain(domain)
+        return optimization_results
+        
+    except Exception as e:
+        logger.error(f"Error optimizing indexes for domain {domain}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to optimize indexes: {str(e)}"
+        )
+
+@router.get("/vector/domains/{domain}/metrics")
+async def get_domain_specific_metrics(domain: str) -> Dict[str, Any]:
+    """
+    Get performance metrics for a specific domain.
+    
+    Args:
+        domain: Domain to get metrics for (english, math, cefr)
+    
+    Returns:
+        Dict with domain-specific metrics and performance data
+    """
+    try:
+        if domain not in ["english", "math", "cefr"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Domain must be one of: english, math, cefr"
+            )
+        
+        # Get domain metrics
+        domain_metrics = await vector_index_manager._get_domain_metrics(domain)
+        
+        # Get domain-specific performance data
+        domain_performance = await vector_index_manager.get_domain_performance_summary()
+        domain_data = domain_performance.get(domain, {})
+        
+        return {
+            "domain": domain,
+            "timestamp": time.time(),
+            "metrics": domain_metrics,
+            "performance": domain_data,
+            "recommendations": []
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting metrics for domain {domain}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get domain metrics: {str(e)}"
+        )
+
+@router.get("/vector/namespaces")
+async def get_namespace_statistics() -> Dict[str, Any]:
+    """
+    Get statistics for all vector namespaces.
+    
+    Returns:
+        Dict with namespace statistics and distribution
+    """
+    try:
+        # Get namespace distribution from performance metrics
+        performance_metrics = await vector_index_manager.get_performance_metrics()
+        namespace_dist = performance_metrics.get("namespace_distribution", [])
+        
+        # Group by domain
+        domain_namespaces = {
+            "english": [],
+            "math": [],
+            "cefr": []
+        }
+        
+        for namespace_info in namespace_dist:
+            namespace = namespace_info["namespace"]
+            if namespace.startswith("english"):
+                domain_namespaces["english"].append(namespace_info)
+            elif namespace.startswith("math"):
+                domain_namespaces["math"].append(namespace_info)
+            elif namespace.startswith("cefr") or namespace.startswith("user_assessments"):
+                domain_namespaces["cefr"].append(namespace_info)
+        
+        return {
+            "timestamp": time.time(),
+            "total_namespaces": len(namespace_dist),
+            "total_embeddings": sum(ns["count"] for ns in namespace_dist),
+            "domain_distribution": domain_namespaces,
+            "namespace_details": namespace_dist
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting namespace statistics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get namespace statistics: {str(e)}"
+        )
