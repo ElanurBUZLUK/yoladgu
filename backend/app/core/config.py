@@ -3,7 +3,10 @@ from typing import List, Optional, Dict, Any
 from enum import Enum
 import os
 import secrets
+from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
 
 class Environment(str, Enum):
     DEVELOPMENT = "development"
@@ -63,7 +66,7 @@ class Settings(BaseSettings):
     jwt_issuer: str = "adaptive-learning-system"
     jwt_audience: str = "adaptive-learning-users"
     
-    # LLM Configuration
+    # LLM Configuration - Secure API Key Management
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     primary_llm_provider: str = "gpt4"
@@ -135,6 +138,7 @@ class Settings(BaseSettings):
     # MCP Settings
     mcp_server_url: str = "http://localhost:3001"
     mcp_timeout: int = 30
+    use_mcp_demo: bool = False
     
     # Vector Database Settings
     pgvector_enabled: bool = True
@@ -161,14 +165,115 @@ class Settings(BaseSettings):
     test_data_cleanup: bool = True
     test_parallel_workers: int = 4
     
+    # ELO/PFA parameters for LevelUpdateService
+    elo_k_factor: float = 0.2
+    elo_tau_factor: float = 1.0
+    
+    # Math recommendation parameters
+    math_recommendation_weights: Dict[str, float] = {
+        'difficulty_fit': 0.4,
+        'neighbor_wrongs': 0.4,
+        'diversity': 0.2
+    }
+    
+    # English cloze generation parameters
+    cloze_generation_params: Dict[str, Any] = {
+        'max_retries': 3,
+        'self_repair_attempts': 2,
+        'default_difficulty': 3
+    }
+    
+    # CEFR assessment parameters
+    cefr_assessment_params: Dict[str, Any] = {
+        'max_retries': 3,
+        'strict_validation': True,
+        'confidence_threshold': 0.7
+    }
+    
+    # Question Generation parameters
+    question_generation_params: Dict[str, Any] = {
+        'use_templates': True,
+        'use_gpt': True,
+        'template_fallback': True,
+        'max_gpt_questions_per_day': 100,
+        'gpt_creativity': 0.7,
+        'question_diversity_threshold': 0.8
+    }
+    
+    # LanguageTool integration
+    use_languagetool: bool = False
+    languagetool_url: Optional[str] = None
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._load_api_keys_from_env()
         self._validate_environment_config()
         self._generate_secure_keys_if_needed()
+
+    def _load_api_keys_from_env(self):
+        """Load API keys from environment variables securely"""
+        # Load OpenAI API key
+        if not self.openai_api_key:
+            self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        
+        # Load Anthropic API key
+        if not self.anthropic_api_key:
+            self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+        
+        # Load other configuration from environment
+        if os.getenv("ELO_K_FACTOR"):
+            self.elo_k_factor = float(os.getenv("ELO_K_FACTOR"))
+        
+        if os.getenv("ELO_TAU_FACTOR"):
+            self.elo_tau_factor = float(os.getenv("ELO_TAU_FACTOR"))
+        
+        # Load math recommendation weights
+        if os.getenv("MATH_WEIGHT_DIFFICULTY_FIT"):
+            self.math_recommendation_weights['difficulty_fit'] = float(os.getenv("MATH_WEIGHT_DIFFICULTY_FIT"))
+        if os.getenv("MATH_WEIGHT_NEIGHBOR_WRONGS"):
+            self.math_recommendation_weights['neighbor_wrongs'] = float(os.getenv("MATH_WEIGHT_NEIGHBOR_WRONGS"))
+        if os.getenv("MATH_WEIGHT_DIVERSITY"):
+            self.math_recommendation_weights['diversity'] = float(os.getenv("MATH_WEIGHT_DIVERSITY"))
+        
+        # Load cloze generation parameters
+        if os.getenv("CLOZE_MAX_RETRIES"):
+            self.cloze_generation_params['max_retries'] = int(os.getenv("CLOZE_MAX_RETRIES"))
+        if os.getenv("CLOZE_SELF_REPAIR_ATTEMPTS"):
+            self.cloze_generation_params['self_repair_attempts'] = int(os.getenv("CLOZE_SELF_REPAIR_ATTEMPTS"))
+        if os.getenv("CLOZE_DEFAULT_DIFFICULTY"):
+            self.cloze_generation_params['default_difficulty'] = int(os.getenv("CLOZE_DEFAULT_DIFFICULTY"))
+        
+        # Load CEFR assessment parameters
+        if os.getenv("CEFR_MAX_RETRIES"):
+            self.cefr_assessment_params['max_retries'] = int(os.getenv("CEFR_MAX_RETRIES"))
+        if os.getenv("CEFR_STRICT_VALIDATION"):
+            self.cefr_assessment_params['strict_validation'] = os.getenv("CEFR_STRICT_VALIDATION").lower() == 'true'
+        if os.getenv("CEFR_CONFIDENCE_THRESHOLD"):
+            self.cefr_assessment_params['confidence_threshold'] = float(os.getenv("CEFR_CONFIDENCE_THRESHOLD"))
+        
+        # Load question generation parameters
+        if os.getenv("USE_TEMPLATE_QUESTIONS"):
+            self.question_generation_params['use_templates'] = os.getenv("USE_TEMPLATE_QUESTIONS").lower() == 'true'
+        if os.getenv("USE_GPT_QUESTIONS"):
+            self.question_generation_params['use_gpt'] = os.getenv("USE_GPT_QUESTIONS").lower() == 'true'
+        if os.getenv("TEMPLATE_FALLBACK"):
+            self.question_generation_params['template_fallback'] = os.getenv("TEMPLATE_FALLBACK").lower() == 'true'
+        if os.getenv("MAX_GPT_QUESTIONS_PER_DAY"):
+            self.question_generation_params['max_gpt_questions_per_day'] = int(os.getenv("MAX_GPT_QUESTIONS_PER_DAY"))
+        if os.getenv("GPT_CREATIVITY"):
+            self.question_generation_params['gpt_creativity'] = float(os.getenv("GPT_CREATIVITY"))
+        if os.getenv("QUESTION_DIVERSITY_THRESHOLD"):
+            self.question_generation_params['question_diversity_threshold'] = float(os.getenv("QUESTION_DIVERSITY_THRESHOLD"))
+        
+        # Load LanguageTool settings
+        if os.getenv("USE_LANGUAGETOOL"):
+            self.use_languagetool = os.getenv("USE_LANGUAGETOOL").lower() == 'true'
+        if os.getenv("LANGUAGETOOL_URL"):
+            self.languagetool_url = os.getenv("LANGUAGETOOL_URL")
 
     def _validate_environment_config(self):
         """Validate configuration based on environment"""
@@ -212,56 +317,7 @@ class Settings(BaseSettings):
             if self.environment == Environment.PRODUCTION:
                 critical_errors.append("At least one LLM API key (OPENAI_API_KEY or ANTHROPIC_API_KEY) must be configured")
             else:
-                logger.warning("No LLM API keys configured - some features may not work")
-        
-        # Feature flags validation
-        if not hasattr(self, 'enable_llm_fallback'):
-            self.enable_llm_fallback = os.getenv('ENABLE_LLM_FALLBACK', 'true').lower() == 'true'
-        
-        if not hasattr(self, 'fallback_to_templates'):
-            self.fallback_to_templates = os.getenv('FALLBACK_TO_TEMPLATES', 'true').lower() == 'true'
-        
-        # ELO/PFA parameters for LevelUpdateService
-        if not hasattr(self, 'elo_k_factor'):
-            self.elo_k_factor = float(os.getenv('ELO_K_FACTOR', '0.2'))
-        
-        if not hasattr(self, 'elo_tau_factor'):
-            self.elo_tau_factor = float(os.getenv('ELO_TAU_FACTOR', '1.0'))
-        
-        # Math recommendation parameters
-        if not hasattr(self, 'math_recommendation_weights'):
-            self.math_recommendation_weights = {
-                'difficulty_fit': float(os.getenv('MATH_WEIGHT_DIFFICULTY_FIT', '0.4')),
-                'neighbor_wrongs': float(os.getenv('MATH_WEIGHT_NEIGHBOR_WRONGS', '0.4')),
-                'diversity': float(os.getenv('MATH_WEIGHT_DIVERSITY', '0.2'))
-            }
-        
-        # English cloze generation parameters
-        if not hasattr(self, 'cloze_generation_params'):
-            self.cloze_generation_params = {
-                'max_retries': int(os.getenv('CLOZE_MAX_RETRIES', '3')),
-                'self_repair_attempts': int(os.getenv('CLOZE_SELF_REPAIR_ATTEMPTS', '2')),
-                'default_difficulty': int(os.getenv('CLOZE_DEFAULT_DIFFICULTY', '3'))
-            }
-        
-        # CEFR assessment parameters
-        if not hasattr(self, 'cefr_assessment_params'):
-            self.cefr_assessment_params = {
-                'max_retries': int(os.getenv('CEFR_MAX_RETRIES', '3')),
-                'strict_validation': os.getenv('CEFR_STRICT_VALIDATION', 'true').lower() == 'true',
-                'confidence_threshold': float(os.getenv('CEFR_CONFIDENCE_THRESHOLD', '0.7'))
-            }
-        
-        # Question Generation parameters
-        if not hasattr(self, 'question_generation_params'):
-            self.question_generation_params = {
-                'use_templates': os.getenv('USE_TEMPLATE_QUESTIONS', 'true').lower() == 'true',
-                'use_gpt': os.getenv('USE_GPT_QUESTIONS', 'true').lower() == 'true',
-                'template_fallback': os.getenv('TEMPLATE_FALLBACK', 'true').lower() == 'true',
-                'max_gpt_questions_per_day': int(os.getenv('MAX_GPT_QUESTIONS_PER_DAY', '100')),
-                'gpt_creativity': float(os.getenv('GPT_CREATIVITY', '0.7')),
-                'question_diversity_threshold': float(os.getenv('QUESTION_DIVERSITY_THRESHOLD', '0.8'))
-            }
+                print("Warning: No LLM API keys configured - some features may not work")
         
         if critical_errors:
             error_message = "Critical configuration errors:\n" + "\n".join(f"- {error}" for error in critical_errors)
@@ -351,10 +407,15 @@ class Settings(BaseSettings):
             "prometheus_enabled": self.prometheus_enabled,
             "prometheus_port": self.prometheus_port,
             "prometheus_path": self.prometheus_path,
-            "log_level": self.log_level,
+            "log_level": self.llm_log_level,
             "log_format": self.log_format,
             "log_file": self.log_file
         }
+
+    @property
+    def llm_log_level(self) -> str:
+        """Return log level for LLM operations"""
+        return self.log_level.value if hasattr(self.log_level, 'value') else str(self.log_level)
 
 
 settings = Settings()
