@@ -50,7 +50,8 @@ class HybridRetriever:
         
         try:
             # Generate query embedding
-            query_embedding = await embedding_service.get_embedding(query)
+            query_embeddings = await embedding_service.embed_texts([query])
+            query_embedding = query_embeddings[0] if query_embeddings else []
             
             # Perform vector search
             vector_results = await self._vector_search(
@@ -373,6 +374,68 @@ class HybridRetriever:
             logger.error(f"Fallback search also failed: {e}")
             return []
     
+    async def retrieve_grammar_rules(self, pattern: str) -> List[str]:
+        """Retrieve grammar rules related to a given error pattern."""
+        try:
+            # Use the main retrieve method to find relevant "grammar rule" questions
+            # Assuming grammar rules are stored as questions with specific tags or topics
+            query = f"grammar rules for {pattern}"
+            # We might need a dedicated subject or tag for grammar rules if they are not questions
+            # For now, let's search within English subject and look for "grammar" in topic/tags
+            results = await self.retrieve(
+                query=query,
+                user=User(id="system", username="system"), # Use a system user for knowledge retrieval
+                subject=Subject.ENGLISH,
+                topic="grammar", # Assuming a "grammar" topic exists for rules
+                limit=5,
+                exclude_attempted=False # Don't exclude, as these are knowledge, not practice questions
+            )
+            
+            # Extract explanations or content as grammar rules
+            grammar_rules = [r.get("explanation", r.get("content", "")) for r in results if r.get("explanation") or r.get("content")]
+            return grammar_rules
+        except Exception as e:
+            logger.error(f"Error retrieving grammar rules for pattern {pattern}: {e}")
+            return []
+
+    async def retrieve_vocabulary_context(self, error_patterns: List[str]) -> Optional[str]:
+        """Retrieve vocabulary context related to given error patterns."""
+        try:
+            # Combine error patterns into a single query for vocabulary
+            query = f"vocabulary related to {', '.join(error_patterns)}"
+            results = await self.retrieve(
+                query=query,
+                user=User(id="system", username="system"),
+                subject=Subject.ENGLISH,
+                topic="vocabulary", # Assuming a "vocabulary" topic exists
+                limit=3,
+                exclude_attempted=False
+            )
+            
+            # Concatenate relevant content/explanations
+            vocabulary_context = " ".join([r.get("explanation", r.get("content", "")) for r in results if r.get("explanation") or r.get("content")])
+            return vocabulary_context if vocabulary_context else None
+        except Exception as e:
+            logger.error(f"Error retrieving vocabulary context for patterns {error_patterns}: {e}")
+            return None
+
+    async def retrieve_topic_context(self, error_patterns: List[str]) -> Optional[str]:
+        """Retrieve broader topic context related to given error patterns."""
+        try:
+            query = f"topics related to {', '.join(error_patterns)}"
+            results = await self.retrieve(
+                query=query,
+                user=User(id="system", username="system"),
+                subject=Subject.ENGLISH,
+                limit=2, # Broader topics, fewer results needed
+                exclude_attempted=False
+            )
+            topic_context = " ".join([r.get("topic", r.get("content", "")) for r in results if r.get("topic") or r.get("content")])
+            return topic_context if topic_context else None
+        except Exception as e:
+            logger.error(f"Error retrieving topic context for patterns {error_patterns}: {e}")
+            return None
+
     async def get_similar_questions(
         self,
         question_id: str,
