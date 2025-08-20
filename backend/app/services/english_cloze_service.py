@@ -4,15 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError, TypeAdapter
 import json
 import re
+from datetime import datetime
 
 from app.services.llm_gateway import llm_gateway
 from app.services.question_generator import question_generator
 from app.repositories.question_repository import QuestionRepository
-# --- YENİ EKLENENLER ---
-# Embedding ve Vector Index entegrasyonu
 from app.services.embedding_service import embedding_service
 from app.services.vector_index_manager import vector_index_manager
-# --- BİTİŞ ---
 from app.services.llm_context.builders.cloze_question_context_builder import ClozeQuestionContextBuilder
 from app.services.llm_context.schemas.cloze_question_context import ClozeQuestionGenerationContext
 from app.models.question import Question, Subject, QuestionType, SourceType
@@ -31,6 +29,15 @@ class EnglishClozeService:
         self.llm_gateway = llm_gateway_service
         self.context_builder = context_builder
         self.question_repo = question_repo
+        
+        # Error recording and analysis settings
+        self.error_analysis_config = {
+            "max_recent_errors": 5,
+            "similarity_threshold": 0.7,
+            "min_errors_for_personalization": 3,
+            "error_embedding_namespace": "english_errors",
+            "question_embedding_namespace": "english_questions"
+        }
 
     def _repair_json_response(self, llm_response: str, max_repair_attempts: int = 3) -> Optional[List[Dict[str, Any]]]:
         """JSON response'u onarmaya çalışır"""
@@ -247,6 +254,110 @@ class EnglishClozeService:
             logger.error(f"Error in EnglishClozeService: {e}", exc_info=True)
             return []
 
+    async def record_student_error(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        error_text: str,
+        error_type: str,
+        error_context: str = "",
+        question_id: Optional[str] = None,
+        student_answer: str = ""
+    ) -> Dict[str, Any]:
+        """Record student error with real-time embedding and vector DB storage"""
+        try:
+            logger.info(f"Recording error for user {user_id}: {error_type}")
+            
+            # 1. Generate error embedding
+            error_embedding = await embedding_service.get_embedding(
+                text=error_text,
+                domain="english",
+                content_type="error_pattern"
+            )
+            
+            # 2. Create error pattern record
+            error_pattern = ErrorPattern(
+                user_id=user_id,
+                error_type=error_type,
+                error_context=error_context,
+                error_text=error_text,
+                student_answer=student_answer,
+                question_id=question_id,
+                embedding=error_embedding,
+                created_at=datetime.utcnow()
+            )
+            
+            # 3. Save to database
+            session.add(error_pattern)
+            await session.commit()
+            await session.refresh(error_pattern)
+            
+            # 4. Store in vector DB for real-time similarity search
+            await self._store_error_embedding_in_vector_db(
+                error_pattern_id=str(error_pattern.id),
+                user_id=user_id,
+                error_text=error_text,
+                error_type=error_type,
+                error_context=error_context,
+                embedding=error_embedding,
+                metadata={
+                    "question_id": question_id,
+                    "student_answer": student_answer,
+                    "timestamp": error_pattern.created_at.isoformat()
+                }
+            )
+            
+            logger.info(f"✅ Error recorded and embedded for user {user_id}")
+            
+            return {
+                "success": True,
+                "error_pattern_id": str(error_pattern.id),
+                "embedding_generated": True,
+                "vector_db_stored": True
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error recording failed for user {user_id}: {e}")
+            await session.rollback()
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def _store_error_embedding_in_vector_db(
+        self,
+        error_pattern_id: str,
+        user_id: str,
+        error_text: str,
+        error_type: str,
+        error_context: str,
+        embedding: List[float],
+        metadata: Dict[str, Any]
+    ):
+        """Store error embedding in vector DB for real-time similarity search"""
+        try:
+            # Store in english_errors namespace
+            await vector_index_manager.upsert_embedding(
+                obj_ref=error_pattern_id,
+                namespace=self.error_analysis_config["error_embedding_namespace"],
+                embedding=embedding,
+                metadata={
+                    "domain": "english",
+                    "content_type": "error_pattern",
+                    "user_id": user_id,
+                    "error_type": error_type,
+                    "error_context": error_context,
+                    "error_text": error_text,
+                    "created_at": datetime.utcnow().isoformat(),
+                    **metadata
+                }
+            )
+            
+            logger.info(f"✅ Error embedding stored in vector DB: {error_pattern_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to store error embedding in vector DB: {e}")
+
     async def generate_personalized_cloze_questions(
         self,
         session: AsyncSession,
@@ -254,26 +365,26 @@ class EnglishClozeService:
         num_questions: int = 3,
         error_context: Optional[str] = None
     ) -> List[Question]:
-        """Generate personalized cloze questions based on user's error patterns using embeddings"""
+        """Generate personalized cloze questions based on student's error patterns"""
         try:
-            logger.info(f"Generating personalized cloze questions for user {user_id}")
+            logger.info(f"🎯 Generating personalized cloze questions for user {user_id}")
             
-            # 1. Get user's recent error patterns with embeddings
-            user_error_patterns = await self._get_user_error_patterns_with_embeddings(session, user_id)
+            # 1. Get recent student errors with embeddings
+            recent_errors = await self._get_recent_student_errors(session, user_id)
             
-            if not user_error_patterns:
-                logger.info(f"No error patterns found for user {user_id}, generating generic questions")
+            if len(recent_errors) < self.error_analysis_config["min_errors_for_personalization"]:
+                logger.info(f"Not enough errors for personalization ({len(recent_errors)}), generating generic questions")
                 return await self._generate_generic_cloze_questions(session, num_questions)
             
             # 2. Find similar error patterns using semantic search
-            similar_patterns = await self._find_similar_error_patterns(user_error_patterns)
+            similar_patterns = await self._find_similar_error_patterns_enhanced(recent_errors)
             
             # 3. Generate cloze questions for each error type
             generated_questions = []
             for pattern in similar_patterns[:num_questions]:
                 try:
-                    cloze_question = await self._generate_cloze_for_error_type(
-                        session, pattern, user_id
+                    cloze_question = await self._generate_cloze_for_error_type_enhanced(
+                        session, pattern, user_id, recent_errors
                     )
                     if cloze_question:
                         generated_questions.append(cloze_question)
@@ -287,111 +398,185 @@ class EnglishClozeService:
                 generic_questions = await self._generate_generic_cloze_questions(session, remaining_count)
                 generated_questions.extend(generic_questions)
             
-            logger.info(f"Successfully generated {len(generated_questions)} personalized cloze questions")
+            logger.info(f"✅ Successfully generated {len(generated_questions)} personalized cloze questions")
             return generated_questions
             
         except Exception as e:
-            logger.error(f"Error in personalized cloze generation: {e}", exc_info=True)
+            logger.error(f"❌ Error in personalized cloze generation: {e}", exc_info=True)
             # Fallback to generic generation
             return await self._generate_generic_cloze_questions(session, num_questions)
 
-    async def _get_user_error_patterns_with_embeddings(
+    async def _get_recent_student_errors(
         self, 
         session: AsyncSession, 
         user_id: str
     ) -> List[Dict[str, Any]]:
-        """Get user's error patterns and generate embeddings if missing"""
+        """Get recent student errors with embeddings"""
         try:
-            # Get error patterns from database
-            error_patterns = await self.context_builder.retriever.error_pattern_repo.get_by_user_id(
-                session, user_id, limit=10
+            # Get recent errors from database
+            recent_errors = await session.execute(
+                """
+                SELECT ep.*, q.content as question_content, q.difficulty_level
+                FROM error_patterns ep
+                LEFT JOIN questions q ON ep.question_id = q.id
+                WHERE ep.user_id = :user_id
+                ORDER BY ep.created_at DESC
+                LIMIT :limit
+                """,
+                {
+                    "user_id": user_id,
+                    "limit": self.error_analysis_config["max_recent_errors"]
+                }
             )
             
-            patterns_with_embeddings = []
-            for pattern in error_patterns:
-                # Generate embedding if missing
-                if not pattern.embedding:
-                    pattern_text = f"{pattern.error_type}: {pattern.error_context or ''}"
-                    embedding = await embedding_service.get_embedding(pattern_text)
-                    
-                    # Update pattern with embedding
-                    pattern.embedding = embedding
-                    await session.commit()
+            errors_with_embeddings = []
+            for row in recent_errors:
+                error_data = dict(row)
                 
-                patterns_with_embeddings.append({
-                    "id": str(pattern.id),
-                    "error_type": pattern.error_type,
-                    "error_context": pattern.error_context,
-                    "embedding": pattern.embedding,
-                    "error_count": pattern.error_count
-                })
+                # Generate embedding if missing
+                if not error_data.get("embedding"):
+                    error_text = f"{error_data['error_type']}: {error_data['error_text']}"
+                    embedding = await embedding_service.get_embedding(
+                        text=error_text,
+                        domain="english",
+                        content_type="error_pattern"
+                    )
+                    
+                    # Update error pattern with embedding
+                    await session.execute(
+                        "UPDATE error_patterns SET embedding = :embedding WHERE id = :id",
+                        {"embedding": embedding, "id": error_data["id"]}
+                    )
+                    error_data["embedding"] = embedding
+                
+                errors_with_embeddings.append(error_data)
             
-            return patterns_with_embeddings
+            await session.commit()
+            return errors_with_embeddings
             
         except Exception as e:
-            logger.error(f"Error getting user error patterns: {e}")
+            logger.error(f"Error getting recent student errors: {e}")
             return []
 
-    async def _find_similar_error_patterns(
+    async def _find_similar_error_patterns_enhanced(
         self, 
-        user_patterns: List[Dict[str, Any]]
+        user_errors: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Find similar error patterns using semantic search"""
+        """Find similar error patterns using enhanced semantic search"""
         try:
             similar_patterns = []
             
-            for user_pattern in user_patterns:
-                if not user_pattern.get("embedding"):
+            for user_error in user_errors:
+                if not user_error.get("embedding"):
                     continue
                 
                 # Search for similar patterns in the system
                 similar_results = await vector_index_manager.search_similar_content(
-                    user_pattern["embedding"],
-                    namespace="english_error_patterns",
-                    similarity_threshold=0.7,
-                    limit=5
+                    user_error["embedding"],
+                    namespace=self.error_analysis_config["error_embedding_namespace"],
+                    similarity_threshold=self.error_analysis_config["similarity_threshold"],
+                    limit=10,
+                    metadata_filters={
+                        "domain": "english",
+                        "content_type": "error_pattern"
+                    }
                 )
                 
                 for result in similar_results:
+                    # Calculate enhanced similarity score
+                    enhanced_score = self._calculate_enhanced_similarity_score(
+                        result, user_error
+                    )
+                    
                     similar_patterns.append({
-                        "error_type": result.get("error_type", user_pattern["error_type"]),
-                        "similarity_score": result.get("similarity", 0.0),
-                        "pattern_context": result.get("context", ""),
-                        "user_pattern": user_pattern
+                        "error_type": result.get("metadata", {}).get("error_type", user_error["error_type"]),
+                        "similarity_score": enhanced_score,
+                        "pattern_context": result.get("metadata", {}).get("error_context", ""),
+                        "user_pattern": user_error,
+                        "vector_result": result
                     })
             
-            # Sort by similarity score and remove duplicates
+            # Sort by enhanced similarity score and remove duplicates
             unique_patterns = {}
             for pattern in similar_patterns:
                 key = pattern["error_type"]
                 if key not in unique_patterns or pattern["similarity_score"] > unique_patterns[key]["similarity_score"]:
                     unique_patterns[key] = pattern
             
-            return sorted(unique_patterns.values(), key=lambda x: x["similarity_score"], reverse=True)
+            # Return top patterns sorted by score
+            sorted_patterns = sorted(
+                unique_patterns.values(),
+                key=lambda x: x["similarity_score"],
+                reverse=True
+            )
+            
+            logger.info(f"Found {len(sorted_patterns)} similar error patterns")
+            return sorted_patterns
             
         except Exception as e:
             logger.error(f"Error finding similar error patterns: {e}")
-            return user_patterns  # Fallback to user patterns
+            return user_errors
 
-    async def _generate_cloze_for_error_type(
+    def _calculate_enhanced_similarity_score(
+        self,
+        vector_result: Dict[str, Any],
+        user_error: Dict[str, Any]
+    ) -> float:
+        """Calculate enhanced similarity score considering multiple factors"""
+        try:
+            base_similarity = vector_result.get("similarity", 0.0)
+            
+            # Get metadata from vector result
+            metadata = vector_result.get("metadata", {})
+            
+            # Error type match bonus
+            type_match_bonus = 0.0
+            if metadata.get("error_type") == user_error.get("error_type"):
+                type_match_bonus = 0.1
+            
+            # Difficulty level similarity bonus
+            difficulty_bonus = 0.0
+            user_difficulty = user_error.get("difficulty_level", 3)
+            pattern_difficulty = metadata.get("difficulty_level", 3)
+            if abs(user_difficulty - pattern_difficulty) <= 1:
+                difficulty_bonus = 0.05
+            
+            # Context relevance bonus
+            context_bonus = 0.0
+            if metadata.get("error_context") and user_error.get("error_context"):
+                if any(word in metadata["error_context"].lower() 
+                       for word in user_error["error_context"].lower().split()):
+                    context_bonus = 0.05
+            
+            # Calculate final enhanced score
+            enhanced_score = min(1.0, base_similarity + type_match_bonus + difficulty_bonus + context_bonus)
+            
+            return enhanced_score
+            
+        except Exception as e:
+            logger.error(f"Error calculating enhanced similarity score: {e}")
+            return vector_result.get("similarity", 0.0)
+
+    async def _generate_cloze_for_error_type_enhanced(
         self,
         session: AsyncSession,
         error_pattern: Dict[str, Any],
-        user_id: str
+        user_id: str,
+        recent_errors: List[Dict[str, Any]]
     ) -> Optional[Question]:
-        """Generate a cloze question for a specific error type"""
+        """Generate enhanced cloze question for specific error type"""
         try:
-            # Build context for the specific error type
+            # Build enhanced context
             context = await self.context_builder.build_context(
                 user_id=user_id,
                 error_type=error_pattern["error_type"],
                 error_context=error_pattern.get("pattern_context", ""),
-                num_recent_errors=3
+                num_recent_errors=len(recent_errors)
             )
             
-            # Generate cloze question using the context
-            prompt = self._build_error_specific_prompt(error_pattern, context)
-            system_prompt = self._get_cloze_system_prompt()
+            # Generate cloze question using enhanced prompt
+            prompt = self._build_enhanced_error_specific_prompt(error_pattern, context, recent_errors)
+            system_prompt = self._get_enhanced_cloze_system_prompt()
             
             # Use LLM to generate cloze question
             llm_response = await self.llm_gateway.generate_json(
@@ -427,54 +612,94 @@ class EnglishClozeService:
                     "rule_context": validated_q.rule_context,
                     "error_type": error_pattern["error_type"],
                     "similarity_score": error_pattern.get("similarity_score", 0.0),
-                    "generation_method": "embedding_based"
+                    "generation_method": "enhanced_embedding_based",
+                    "user_id": user_id,
+                    "error_pattern_id": error_pattern.get("user_pattern", {}).get("id"),
+                    "generated_at": datetime.utcnow().isoformat()
                 }
             )
             
             # Save to database
             db_question = await self.question_repo.create(session, question_create)
             
-            # Update embedding for the generated question
+            # Generate and store question embedding
             question_text = f"{validated_q.cloze_sentence} {validated_q.rule_context}"
-            question_embedding = await embedding_service.get_embedding(question_text)
+            question_embedding = await embedding_service.get_embedding(
+                text=question_text,
+                domain="english",
+                content_type="cloze_question"
+            )
             
-            # Store embedding in vector index
+            # Store in vector DB
             await vector_index_manager.upsert_embedding(
                 obj_ref=str(db_question.id),
-                namespace="english_cloze_questions",
+                namespace=self.error_analysis_config["question_embedding_namespace"],
                 embedding=question_embedding,
                 metadata={
+                    "domain": "english",
+                    "content_type": "cloze_question",
                     "error_type": error_pattern["error_type"],
                     "difficulty_level": validated_q.difficulty_level,
-                    "user_id": user_id
+                    "user_id": user_id,
+                    "error_pattern_id": error_pattern.get("user_pattern", {}).get("id"),
+                    "generation_method": "enhanced_embedding_based",
+                    "created_at": datetime.utcnow().isoformat()
                 }
             )
             
+            logger.info(f"✅ Enhanced cloze question generated and stored: {db_question.id}")
             return db_question
             
         except Exception as e:
-            logger.error(f"Error generating cloze for error type: {e}")
+            logger.error(f"❌ Error generating enhanced cloze: {e}")
             return None
 
-    def _build_error_specific_prompt(
+    def _build_enhanced_error_specific_prompt(
         self, 
         error_pattern: Dict[str, Any], 
-        context: ClozeQuestionGenerationContext
+        context: ClozeQuestionGenerationContext,
+        recent_errors: List[Dict[str, Any]]
     ) -> str:
-        """Build a prompt specific to the error type"""
+        """Build enhanced prompt with detailed error analysis"""
+        
+        # Build error analysis section
+        error_analysis = "Recent Error Analysis:\n"
+        for i, error in enumerate(recent_errors[:3], 1):
+            error_analysis += f"{i}. {error['error_type']}: {error['error_text'][:100]}...\n"
+        
         return f"""
-        Generate a cloze question specifically for the error type: {error_pattern['error_type']}
+        Generate a personalized cloze question specifically for the error type: {error_pattern['error_type']}
         
         Error Context: {error_pattern.get('pattern_context', '')}
-        User's Recent Errors: {context.recent_errors}
+        Similarity Score: {error_pattern.get('similarity_score', 0.0):.2f}
+        
+        {error_analysis}
+        
+        User's Learning Context: {context.recent_errors}
         
         Create a cloze question that:
-        1. Addresses the specific error type: {error_pattern['error_type']}
+        1. Directly addresses the specific error type: {error_pattern['error_type']}
         2. Uses appropriate difficulty level based on user's performance
         3. Includes clear distractors that test understanding of the rule
         4. Provides helpful rule context for learning
+        5. Incorporates patterns from similar errors to prevent repetition
         
-        Focus on making this question directly relevant to the user's learning needs.
+        Focus on making this question directly relevant to the user's learning needs and error patterns.
+        """
+
+    def _get_enhanced_cloze_system_prompt(self) -> str:
+        """Enhanced system prompt for cloze generation"""
+        return """
+        You are an expert English language teacher specializing in cloze question generation.
+        
+        Your task is to create personalized cloze questions that:
+        - Address specific grammar/vocabulary errors
+        - Are appropriate for the student's current level
+        - Include realistic distractors
+        - Provide clear learning context
+        
+        Always respond in the exact JSON schema format provided.
+        Focus on creating questions that help students learn from their mistakes.
         """
 
     async def _generate_generic_cloze_questions(

@@ -980,6 +980,503 @@ class VectorIndexManager:
             logger.error(f"Error getting domain statistics: {e}")
             return {"error": str(e)}
 
+    async def create_domain_specific_indexes(self) -> Dict[str, Any]:
+        """Create optimized indexes for different domains"""
+        try:
+            logger.info("🔧 Creating domain-specific vector indexes...")
+            
+            # Domain-specific namespace configurations
+            domain_configs = {
+                "english": {
+                    "namespaces": [
+                        "english_errors",
+                        "english_questions", 
+                        "english_cloze_questions",
+                        "english_grammar_rules",
+                        "english_vocabulary",
+                        "cefr_rubrics",
+                        "cefr_examples",
+                        "user_assessments"
+                    ],
+                    "similarity_threshold": 0.7,
+                    "index_type": "ivfflat",
+                    "lists": 100
+                },
+                "math": {
+                    "namespaces": [
+                        "math_errors",
+                        "math_questions",
+                        "math_concepts", 
+                        "math_solutions",
+                        "math_placement_tests"
+                    ],
+                    "similarity_threshold": 0.8,
+                    "index_type": "ivfflat",
+                    "lists": 150
+                },
+                "cefr": {
+                    "namespaces": [
+                        "cefr_rubrics",
+                        "cefr_examples",
+                        "user_assessments"
+                    ],
+                    "similarity_threshold": 0.6,
+                    "index_type": "ivfflat",
+                    "lists": 50
+                }
+            }
+            
+            created_indexes = {}
+            
+            for domain, config in domain_configs.items():
+                domain_indexes = {}
+                
+                for namespace in config["namespaces"]:
+                    try:
+                        # Create namespace-specific index
+                        index_name = f"ix_{namespace}_embedding"
+                        
+                        # Check if index already exists
+                        if not await self._check_index_exists(index_name):
+                            # Create optimized index
+                            await self._create_optimized_index(
+                                index_name, 
+                                config["index_type"], 
+                                config["lists"]
+                            )
+                            domain_indexes[namespace] = {
+                                "status": "created",
+                                "index_type": config["index_type"],
+                                "similarity_threshold": config["similarity_threshold"]
+                            }
+                        else:
+                            domain_indexes[namespace] = {
+                                "status": "exists",
+                                "index_type": config["index_type"],
+                                "similarity_threshold": config["similarity_threshold"]
+                            }
+                            
+                    except Exception as e:
+                        logger.error(f"Error creating index for {namespace}: {e}")
+                        domain_indexes[namespace] = {"status": "error", "error": str(e)}
+                
+                created_indexes[domain] = domain_indexes
+            
+            logger.info("✅ Domain-specific indexes created successfully")
+            return created_indexes
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating domain-specific indexes: {e}")
+            return {"error": str(e)}
+
+    async def _create_optimized_index(
+        self, 
+        index_name: str, 
+        index_type: str = "ivfflat", 
+        lists: int = 100
+    ):
+        """Create an optimized vector index"""
+        try:
+            # Create index with optimized parameters
+            create_index_sql = f"""
+            CREATE INDEX IF NOT EXISTS {index_name}
+            ON embeddings USING {index_type} (embedding vector_cosine_ops)
+            WITH (lists = {lists});
+            """
+            
+            await database.execute(create_index_sql)
+            logger.info(f"✅ Created optimized index: {index_name} (type: {index_type}, lists: {lists})")
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating optimized index {index_name}: {e}")
+            raise
+
+    async def batch_upsert_domain_embeddings_enhanced(
+        self,
+        domain: str,
+        content_type: str,
+        items: List[Dict[str, Any]],
+        batch_size: int = 100
+    ) -> Dict[str, Any]:
+        """Enhanced batch upsert with performance optimizations"""
+        try:
+            if not items:
+                return {"success": True, "processed": 0, "errors": []}
+            
+            # Map to appropriate namespace
+            namespace_mapping = self._get_domain_namespace_mapping()
+            
+            if domain not in namespace_mapping or content_type not in namespace_mapping[domain]:
+                raise ValueError(f"Unknown domain/content_type: {domain}/{content_type}")
+            
+            namespace = namespace_mapping[domain][content_type]
+            active_slot = await self._get_active_slot(namespace)
+            
+            # Process in batches for better performance
+            total_processed = 0
+            errors = []
+            
+            for i in range(0, len(items), batch_size):
+                batch = items[i:i + batch_size]
+                
+                try:
+                    # Prepare batch data with enhanced metadata
+                    batch_data = await self._prepare_batch_data_enhanced(
+                        batch, domain, content_type, namespace, active_slot
+                    )
+                    
+                    # Batch upsert with optimized SQL
+                    await self._execute_batch_upsert_optimized(batch_data)
+                    
+                    total_processed += len(batch)
+                    logger.info(f"✅ Processed batch {i//batch_size + 1}: {len(batch)} items")
+                    
+                except Exception as e:
+                    batch_error = f"Batch {i//batch_size + 1} failed: {e}"
+                    errors.append(batch_error)
+                    logger.error(f"❌ {batch_error}")
+                    continue
+            
+            # Update namespace statistics
+            await self._update_namespace_statistics(namespace, total_processed)
+            
+            return {
+                "success": len(errors) == 0,
+                "processed": total_processed,
+                "errors": errors,
+                "namespace": namespace,
+                "domain": domain,
+                "content_type": content_type,
+                "batch_size_used": batch_size
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error in enhanced batch domain upsert: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "domain": domain,
+                "content_type": content_type
+            }
+
+    def _get_domain_namespace_mapping(self) -> Dict[str, Dict[str, str]]:
+        """Get comprehensive domain namespace mapping"""
+        return {
+            "english": {
+                "error_patterns": "english_errors",
+                "cloze_questions": "english_cloze_questions",
+                "grammar_rules": "english_grammar_rules",
+                "vocabulary": "english_vocabulary",
+                "questions": "english_questions"
+            },
+            "math": {
+                "error_patterns": "math_errors",
+                "questions": "math_questions",
+                "concepts": "math_concepts",
+                "solutions": "math_solutions",
+                "placement_tests": "math_placement_tests"
+            },
+            "cefr": {
+                "rubrics": "cefr_rubrics",
+                "examples": "cefr_examples",
+                "assessments": "user_assessments"
+            }
+        }
+
+    async def _prepare_batch_data_enhanced(
+        self,
+        batch: List[Dict[str, Any]],
+        domain: str,
+        content_type: str,
+        namespace: str,
+        active_slot: int
+    ) -> List[Dict[str, Any]]:
+        """Prepare enhanced batch data with standardized metadata"""
+        try:
+            batch_data = []
+            
+            for item in batch:
+                obj_ref = item.get('obj_ref', str(item.get('id', '')))
+                content = item.get('content', '')
+                
+                # Generate embedding if not provided
+                if not item.get('embedding'):
+                    embedding = await self._generate_embedding(content)
+                else:
+                    embedding = item['embedding']
+                
+                # Build standardized metadata
+                metadata = self._build_standardized_metadata(
+                    item, domain, content_type, namespace
+                )
+                
+                batch_data.append({
+                    'obj_ref': obj_ref,
+                    'namespace': namespace,
+                    'slot': active_slot,
+                    'embedding': embedding,
+                    'embedding_dim': self.embedding_dimension,
+                    'metadata': metadata
+                })
+            
+            return batch_data
+            
+        except Exception as e:
+            logger.error(f"Error preparing enhanced batch data: {e}")
+            raise
+
+    def _build_standardized_metadata(
+        self,
+        item: Dict[str, Any],
+        domain: str,
+        content_type: str,
+        namespace: str
+    ) -> Dict[str, Any]:
+        """Build standardized metadata schema"""
+        try:
+            # Base metadata
+            metadata = {
+                "domain": domain,
+                "content_type": content_type,
+                "namespace": namespace,
+                "created_at": item.get('created_at', datetime.utcnow().isoformat()),
+                "updated_at": datetime.utcnow().isoformat(),
+                "version": "1.0"
+            }
+            
+            # Domain-specific metadata
+            if domain == "english":
+                metadata.update({
+                    "error_type": item.get('error_type', ''),
+                    "grammar_rule": item.get('grammar_rule', ''),
+                    "cefr_level": item.get('cefr_level', ''),
+                    "difficulty_level": item.get('difficulty_level', 3),
+                    "topic_category": item.get('topic_category', ''),
+                    "question_type": item.get('question_type', ''),
+                    "source": item.get('source', ''),
+                    "user_id": item.get('user_id', ''),
+                    "confidence_score": item.get('confidence_score', 0.0)
+                })
+            elif domain == "math":
+                metadata.update({
+                    "math_topic": item.get('math_topic', ''),
+                    "concept_type": item.get('concept_type', ''),
+                    "difficulty_level": item.get('difficulty_level', 3),
+                    "problem_type": item.get('problem_type', ''),
+                    "solution_method": item.get('solution_method', ''),
+                    "user_id": item.get('user_id', ''),
+                    "placement_level": item.get('placement_level', ''),
+                    "confidence_score": item.get('confidence_score', 0.0)
+                })
+            elif domain == "cefr":
+                metadata.update({
+                    "cefr_level": item.get('cefr_level', ''),
+                    "skill_type": item.get('skill_type', ''),
+                    "assessment_type": item.get('assessment_type', ''),
+                    "rubric_category": item.get('rubric_category', ''),
+                    "user_id": item.get('user_id', ''),
+                    "confidence_score": item.get('confidence_score', 0.0)
+                })
+            
+            # Common metadata fields
+            metadata.update({
+                "tags": item.get('tags', []),
+                "language": item.get('language', 'en'),
+                "quality_score": item.get('quality_score', 0.0),
+                "usage_count": item.get('usage_count', 0),
+                "last_used": item.get('last_used', ''),
+                "is_active": item.get('is_active', True)
+            })
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"Error building standardized metadata: {e}")
+            return {"domain": domain, "content_type": content_type, "error": str(e)}
+
+    async def _execute_batch_upsert_optimized(self, batch_data: List[Dict[str, Any]]):
+        """Execute optimized batch upsert"""
+        try:
+            # Use COPY command for better performance on large batches
+            if len(batch_data) > 1000:
+                await self._execute_copy_batch_upsert(batch_data)
+            else:
+                await self._execute_regular_batch_upsert(batch_data)
+                
+        except Exception as e:
+            logger.error(f"Error executing batch upsert: {e}")
+            raise
+
+    async def _execute_regular_batch_upsert(self, batch_data: List[Dict[str, Any]]):
+        """Execute regular batch upsert"""
+        sql = """
+        INSERT INTO embeddings (obj_ref, namespace, slot, embedding, embedding_dim, meta, is_active, updated_at)
+        VALUES (:obj_ref, :namespace, :slot, :embedding, :embedding_dim, :metadata, true, NOW())
+        ON CONFLICT (obj_ref, namespace, slot)
+        DO UPDATE SET 
+            embedding = EXCLUDED.embedding,
+            embedding_dim = EXCLUDED.embedding_dim,
+            meta = EXCLUDED.metadata,
+            is_active = true,
+            deactivated_at = NULL,
+            updated_at = NOW()
+        """
+        
+        await database.execute_many(sql, batch_data)
+
+    async def _execute_copy_batch_upsert(self, batch_data: List[Dict[str, Any]]):
+        """Execute batch upsert using COPY for large datasets"""
+        try:
+            # Create temporary table
+            await database.execute("""
+                CREATE TEMP TABLE temp_embeddings (
+                    obj_ref TEXT,
+                    namespace TEXT,
+                    slot INTEGER,
+                    embedding vector,
+                    embedding_dim INTEGER,
+                    meta JSONB,
+                    is_active BOOLEAN,
+                    updated_at TIMESTAMP
+                )
+            """)
+            
+            # Prepare data for COPY
+            copy_data = []
+            for item in batch_data:
+                copy_data.append([
+                    item['obj_ref'],
+                    item['namespace'],
+                    item['slot'],
+                    item['embedding'],
+                    item['embedding_dim'],
+                    json.dumps(item['metadata']),
+                    True,
+                    datetime.utcnow()
+                ])
+            
+            # Use COPY for fast insertion
+            await database.execute("""
+                COPY temp_embeddings FROM STDIN
+            """, copy_data)
+            
+            # Upsert from temp table
+            await database.execute("""
+                INSERT INTO embeddings (obj_ref, namespace, slot, embedding, embedding_dim, meta, is_active, updated_at)
+                SELECT obj_ref, namespace, slot, embedding, embedding_dim, meta, is_active, updated_at
+                FROM temp_embeddings
+                ON CONFLICT (obj_ref, namespace, slot)
+                DO UPDATE SET 
+                    embedding = EXCLUDED.embedding,
+                    embedding_dim = EXCLUDED.embedding_dim,
+                    meta = EXCLUDED.metadata,
+                    is_active = true,
+                    deactivated_at = NULL,
+                    updated_at = NOW()
+            """)
+            
+            # Clean up
+            await database.execute("DROP TABLE temp_embeddings")
+            
+        except Exception as e:
+            logger.error(f"Error in COPY batch upsert: {e}")
+            # Fallback to regular upsert
+            await self._execute_regular_batch_upsert(batch_data)
+
+    async def _update_namespace_statistics(self, namespace: str, processed_count: int):
+        """Update namespace statistics after batch operations"""
+        try:
+            # Update namespace stats table if it exists
+            await database.execute("""
+                INSERT INTO namespace_statistics (namespace, total_embeddings, last_updated, last_batch_size)
+                VALUES (:namespace, :count, NOW(), :batch_size)
+                ON CONFLICT (namespace)
+                DO UPDATE SET 
+                    total_embeddings = namespace_statistics.total_embeddings + :count,
+                    last_updated = NOW(),
+                    last_batch_size = :batch_size
+            """, {
+                "namespace": namespace,
+                "count": processed_count,
+                "batch_size": processed_count
+            })
+            
+        except Exception as e:
+            # Table might not exist, ignore
+            logger.debug(f"Could not update namespace statistics: {e}")
+
+    async def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get performance metrics for vector operations"""
+        try:
+            metrics = {}
+            
+            # Get index performance stats
+            index_stats = await database.fetch_all("""
+                SELECT 
+                    schemaname,
+                    tablename,
+                    indexname,
+                    idx_scan,
+                    idx_tup_read,
+                    idx_tup_fetch
+                FROM pg_stat_user_indexes
+                WHERE indexname LIKE 'ix_%_embedding'
+                ORDER BY idx_scan DESC
+            """)
+            
+            metrics["index_performance"] = [
+                {
+                    "index_name": row["indexname"],
+                    "scans": row["idx_scan"],
+                    "tuples_read": row["idx_tup_read"],
+                    "tuples_fetched": row["idx_tup_fetch"]
+                }
+                for row in index_stats
+            ]
+            
+            # Get embedding table stats
+            table_stats = await database.fetch_one("""
+                SELECT 
+                    COUNT(*) as total_embeddings,
+                    COUNT(DISTINCT namespace) as total_namespaces,
+                    AVG(array_length(embedding, 1)) as avg_embedding_dim
+                FROM embeddings
+                WHERE is_active = true
+            """)
+            
+            metrics["table_statistics"] = {
+                "total_embeddings": table_stats["total_embeddings"],
+                "total_namespaces": table_stats["total_namespaces"],
+                "avg_embedding_dim": table_stats["avg_embedding_dim"]
+            }
+            
+            # Get namespace distribution
+            namespace_dist = await database.fetch_all("""
+                SELECT 
+                    namespace,
+                    COUNT(*) as embedding_count,
+                    AVG(array_length(embedding, 1)) as avg_dim
+                FROM embeddings
+                WHERE is_active = true
+                GROUP BY namespace
+                ORDER BY embedding_count DESC
+            """)
+            
+            metrics["namespace_distribution"] = [
+                {
+                    "namespace": row["namespace"],
+                    "count": row["embedding_count"],
+                    "avg_dim": row["avg_dim"]
+                }
+                for row in namespace_dist
+            ]
+            
+            return metrics
+            
+        except Exception as e:
+            logger.error(f"Error getting performance metrics: {e}")
+            return {"error": str(e)}
+
 
 # Global instance
 vector_index_manager = VectorIndexManager()
