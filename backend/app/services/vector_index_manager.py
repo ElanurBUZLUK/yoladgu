@@ -697,6 +697,289 @@ class VectorIndexManager:
             logger.error(f"❌ Error cleaning up orphaned embeddings: {e}")
             return False
 
+    async def search_similar_content(
+        self,
+        query_embedding: List[float],
+        namespace: str,
+        similarity_threshold: float = 0.7,
+        limit: int = 10,
+        metadata_filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Search for similar content using embeddings with domain-specific namespaces"""
+        try:
+            # Validate embedding dimension
+            if len(query_embedding) != self.embedding_dimension:
+                logger.error(f"Query embedding dimension mismatch: expected {self.embedding_dimension}, got {len(query_embedding)}")
+                return []
+            
+            # Get active slot for namespace
+            active_slot = await self._get_active_slot(namespace)
+            
+            # Build base query
+            base_query = """
+                SELECT obj_ref, meta, 1 - (embedding <=> $1::vector) as similarity
+                FROM embeddings
+                WHERE namespace = $2 AND slot = $3 AND is_active = true
+            """
+            
+            # Add metadata filters if provided
+            filter_conditions = []
+            filter_params = [query_embedding, namespace, active_slot]
+            param_count = 3
+            
+            if metadata_filters:
+                for key, value in metadata_filters.items():
+                    if isinstance(value, (str, int, float)):
+                        filter_conditions.append(f"meta->>'{key}' = ${param_count + 1}")
+                        filter_params.append(str(value))
+                        param_count += 1
+                    elif isinstance(value, list):
+                        filter_conditions.append(f"meta->>'{key}' = ANY(${param_count + 1})")
+                        filter_params.append(value)
+                        param_count += 1
+            
+            if filter_conditions:
+                base_query += " AND " + " AND ".join(filter_conditions)
+            
+            # Add similarity threshold and ordering
+            base_query += f"""
+                AND 1 - (embedding <=> $1::vector) > ${param_count + 1}
+                ORDER BY embedding <=> $1::vector
+                LIMIT ${param_count + 2}
+            """
+            
+            filter_params.extend([similarity_threshold, limit])
+            
+            # Execute query
+            results = await database.fetch_all(base_query, *filter_params)
+            
+            # Process results
+            processed_results = []
+            for row in results:
+                processed_results.append({
+                    "obj_ref": row["obj_ref"],
+                    "similarity": float(row["similarity"]),
+                    "metadata": row["meta"] or {},
+                    "namespace": namespace
+                })
+            
+            logger.info(f"Found {len(processed_results)} similar items in namespace {namespace}")
+            return processed_results
+            
+        except Exception as e:
+            logger.error(f"Error in semantic search: {e}")
+            return []
+
+    async def search_domain_specific(
+        self,
+        query_embedding: List[float],
+        domain: str,
+        content_type: str,
+        similarity_threshold: float = 0.7,
+        limit: int = 10,
+        additional_filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Domain-specific search with optimized namespaces"""
+        try:
+            # Map domain and content type to namespace
+            namespace_mapping = {
+                "english": {
+                    "error_patterns": "english_error_patterns",
+                    "cloze_questions": "english_cloze_questions",
+                    "grammar_rules": "english_grammar_rules",
+                    "vocabulary": "english_vocabulary"
+                },
+                "math": {
+                    "error_patterns": "math_error_patterns",
+                    "questions": "math_questions",
+                    "concepts": "math_concepts",
+                    "solutions": "math_solutions"
+                },
+                "cefr": {
+                    "rubrics": "cefr_rubrics",
+                    "examples": "cefr_examples",
+                    "assessments": "user_assessments"
+                }
+            }
+            
+            if domain not in namespace_mapping or content_type not in namespace_mapping[domain]:
+                logger.warning(f"Unknown domain/content_type: {domain}/{content_type}")
+                return []
+            
+            namespace = namespace_mapping[domain][content_type]
+            
+            # Build domain-specific filters
+            domain_filters = additional_filters or {}
+            
+            # Add domain-specific metadata
+            if domain == "english":
+                domain_filters["domain"] = "english"
+                domain_filters["content_type"] = content_type
+            elif domain == "math":
+                domain_filters["domain"] = "math"
+                domain_filters["content_type"] = content_type
+            elif domain == "cefr":
+                domain_filters["assessment_type"] = content_type
+            
+            # Perform search
+            return await self.search_similar_content(
+                query_embedding=query_embedding,
+                namespace=namespace,
+                similarity_threshold=similarity_threshold,
+                limit=limit,
+                metadata_filters=domain_filters
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in domain-specific search: {e}")
+            return []
+
+    async def batch_upsert_domain_embeddings(
+        self,
+        domain: str,
+        content_type: str,
+        items: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Batch upsert embeddings for specific domain and content type"""
+        try:
+            if not items:
+                return {"success": True, "processed": 0, "errors": []}
+            
+            # Map to appropriate namespace
+            namespace_mapping = {
+                "english": {
+                    "error_patterns": "english_error_patterns",
+                    "cloze_questions": "english_cloze_questions",
+                    "grammar_rules": "english_grammar_rules"
+                },
+                "math": {
+                    "error_patterns": "math_error_patterns",
+                    "questions": "math_questions",
+                    "concepts": "math_concepts"
+                }
+            }
+            
+            if domain not in namespace_mapping or content_type not in namespace_mapping[domain]:
+                raise ValueError(f"Unknown domain/content_type: {domain}/{content_type}")
+            
+            namespace = namespace_mapping[domain][content_type]
+            active_slot = await self._get_active_slot(namespace)
+            
+            # Prepare batch data
+            batch_data = []
+            for item in items:
+                obj_ref = item.get('obj_ref', str(item.get('id', '')))
+                content = item.get('content', '')
+                
+                # Generate embedding
+                embedding = await self._generate_embedding(content)
+                
+                # Build metadata
+                metadata = {
+                    "domain": domain,
+                    "content_type": content_type,
+                    "created_at": item.get('created_at', ''),
+                    "user_id": item.get('user_id', ''),
+                    "difficulty_level": item.get('difficulty_level', 3),
+                    "topic_category": item.get('topic_category', ''),
+                    "error_type": item.get('error_type', ''),
+                    **item.get('metadata', {})
+                }
+                
+                batch_data.append({
+                    'obj_ref': obj_ref,
+                    'namespace': namespace,
+                    'slot': active_slot,
+                    'embedding': embedding,
+                    'embedding_dim': self.embedding_dimension,
+                    'metadata': metadata
+                })
+            
+            # Batch upsert
+            sql = """
+            INSERT INTO embeddings (obj_ref, namespace, slot, embedding, embedding_dim, meta, is_active, updated_at)
+            VALUES (:obj_ref, :namespace, :slot, :embedding, :embedding_dim, :metadata, true, NOW())
+            ON CONFLICT (obj_ref, namespace, slot)
+            DO UPDATE SET 
+                embedding = EXCLUDED.embedding,
+                embedding_dim = EXCLUDED.embedding_dim,
+                meta = EXCLUDED.metadata,
+                is_active = true,
+                deactivated_at = NULL,
+                updated_at = NOW()
+            """
+            
+            await database.execute_many(sql, batch_data)
+            
+            logger.info(f"✅ Batch upserted {len(batch_data)} embeddings for {domain}/{content_type}")
+            
+            return {
+                "success": True,
+                "processed": len(batch_data),
+                "namespace": namespace,
+                "domain": domain,
+                "content_type": content_type
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error in batch domain upsert: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "domain": domain,
+                "content_type": content_type
+            }
+
+    async def get_domain_statistics(self, domain: str) -> Dict[str, Any]:
+        """Get statistics for a specific domain"""
+        try:
+            # Get domain namespaces
+            domain_namespaces = {
+                "english": ["english_error_patterns", "english_cloze_questions", "english_grammar_rules"],
+                "math": ["math_error_patterns", "math_questions", "math_concepts"],
+                "cefr": ["cefr_rubrics", "user_assessments"]
+            }
+            
+            if domain not in domain_namespaces:
+                return {"error": f"Unknown domain: {domain}"}
+            
+            namespace_stats = {}
+            total_embeddings = 0
+            
+            for namespace in domain_namespaces[domain]:
+                try:
+                    # Get active slot
+                    active_slot = await self._get_active_slot(namespace)
+                    
+                    # Count embeddings
+                    count_result = await database.fetch_one("""
+                        SELECT COUNT(*) as count
+                        FROM embeddings
+                        WHERE namespace = $1 AND slot = $2 AND is_active = true
+                    """, namespace, active_slot)
+                    
+                    count = count_result["count"] if count_result else 0
+                    namespace_stats[namespace] = {
+                        "embedding_count": count,
+                        "active_slot": active_slot
+                    }
+                    total_embeddings += count
+                    
+                except Exception as e:
+                    logger.warning(f"Error getting stats for namespace {namespace}: {e}")
+                    namespace_stats[namespace] = {"error": str(e)}
+            
+            return {
+                "domain": domain,
+                "total_embeddings": total_embeddings,
+                "namespaces": namespace_stats,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting domain statistics: {e}")
+            return {"error": str(e)}
+
 
 # Global instance
 vector_index_manager = VectorIndexManager()
