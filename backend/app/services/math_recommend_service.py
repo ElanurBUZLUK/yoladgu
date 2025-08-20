@@ -15,6 +15,7 @@ from app.core.config import settings
 # --- YENİ EKLENENLER ---
 from app.services.embedding_service import embedding_service
 from app.services.vector_index_manager import vector_index_manager
+from app.services.metadata_schema_service import metadata_schema_service, ContentType, Domain
 # --- BİTİŞ ---
 
 logger = logging.getLogger(__name__)
@@ -733,24 +734,20 @@ class MathRecommendService:
         test_results: Dict[str, Any],
         math_profile: MathProfile
     ):
-        """Store placement test embedding in vector database"""
+        """Store placement test embedding in vector database using standardized metadata"""
         try:
-            # Prepare metadata
-            metadata = {
-                "domain": "math",
-                "content_type": "placement_test",
-                "user_id": user_id,
-                "test_score": test_results.get('score', 0),
-                "test_accuracy": test_results.get('accuracy', 0.0),
-                "skill_level": math_profile.global_skill,
-                "test_date": datetime.utcnow().isoformat(),
-                "total_questions": test_results.get('total_questions', 0),
-                "difficulty_level": test_results.get('difficulty_level', 'unknown'),
-                "topics_covered": list(set(q.get('topic', 'unknown') for q in test_results.get('test_questions', [])))
-            }
+            # Use standardized metadata schema
+            metadata = metadata_schema_service.build_placement_test_metadata(
+                domain=Domain.MATH.value,
+                obj_ref=f"placement_test_{user_id}_{datetime.utcnow().timestamp()}",
+                user_id=user_id,
+                test_score=test_results.get('score', 0),
+                test_accuracy=test_results.get('accuracy', 0.0),
+                skill_level=math_profile.global_skill,
+                difficulty_level=test_results.get('difficulty_level', 'unknown'),
+                topics_covered=list(set(q.get('topic', 'unknown') for q in test_results.get('test_questions', [])))
             
-            # Store in vector DB
-            await vector_index_manager.batch_upsert_domain_embeddings_enhanced(
+            await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
                 domain="math",
                 content_type="placement_tests",
                 items=[{
@@ -762,7 +759,7 @@ class MathRecommendService:
                 batch_size=1
             )
             
-            logger.info(f"✅ Stored placement test embedding for user {user_id}")
+            logger.info(f"✅ Stored placement test embedding for user {user_id} with standardized metadata")
             
         except Exception as e:
             logger.error(f"❌ Error storing placement test embedding: {e}")
@@ -1137,17 +1134,18 @@ class MathRecommendService:
         error_pattern, 
         embedding: List[float]
     ):
-        """Store error pattern embedding in vector database"""
+        """Store error pattern embedding in vector database using standardized metadata"""
         try:
-            metadata = {
-                "domain": "math",
-                "content_type": "error_pattern",
-                "error_type": error_pattern.error_type,
-                "topic_category": error_pattern.topic_category,
-                "error_count": error_pattern.error_count,
-                "user_id": str(error_pattern.user_id),
-                "created_at": error_pattern.created_at.isoformat() if error_pattern.created_at else None
-            }
+            # Use standardized metadata schema
+            metadata = metadata_schema_service.build_error_pattern_metadata(
+                domain=Domain.MATH.value,
+                error_type=error_pattern.error_type,
+                obj_ref=str(error_pattern.id),
+                user_id=str(error_pattern.user_id) if hasattr(error_pattern, 'user_id') else None,
+                topic_category=error_pattern.topic_category,
+                skill_tag=getattr(error_pattern, 'skill_tag', None),
+                error_count=error_pattern.error_count
+            )
             
             await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
                 domain="math",
@@ -1161,7 +1159,7 @@ class MathRecommendService:
                 batch_size=1
             )
             
-            logger.info(f"✅ Stored error pattern embedding for {error_pattern.id}")
+            logger.info(f"✅ Stored error pattern embedding for {error_pattern.id} with standardized metadata")
             
         except Exception as e:
             logger.error(f"❌ Error storing error pattern embedding: {e}")

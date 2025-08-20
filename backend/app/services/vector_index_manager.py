@@ -16,6 +16,7 @@ from app.core.cache import cache_service
 from app.core.config import settings
 from app.utils.distlock_idem import RedisLock, lock_decorator, IdempotencyConfig, idempotency_decorator
 from redis.asyncio import Redis
+from app.services.metadata_schema_service import metadata_schema_service
 
 logger = logging.getLogger(__name__)
 
@@ -1198,101 +1199,61 @@ class VectorIndexManager:
             for item in batch:
                 obj_ref = item.get('obj_ref', str(item.get('id', '')))
                 content = item.get('content', '')
+                embedding = item.get('embedding', [])
                 
-                # Generate embedding if not provided
-                if not item.get('embedding'):
-                    embedding = await self._generate_embedding(content)
-                else:
-                    embedding = item['embedding']
+                # Validate and standardize metadata
+                raw_metadata = item.get('metadata', {})
+                standardized_metadata = metadata_schema_service.validate_existing_metadata(raw_metadata)
                 
-                # Build standardized metadata
-                metadata = self._build_standardized_metadata(
-                    item, domain, content_type, namespace
-                )
+                # Ensure required fields are present
+                if 'domain' not in standardized_metadata:
+                    standardized_metadata['domain'] = domain
+                if 'content_type' not in standardized_metadata:
+                    standardized_metadata['content_type'] = content_type
+                if 'obj_ref' not in standardized_metadata:
+                    standardized_metadata['obj_ref'] = obj_ref
                 
                 batch_data.append({
                     'obj_ref': obj_ref,
+                    'content': content,
+                    'embedding': embedding,
+                    'metadata': standardized_metadata,
                     'namespace': namespace,
                     'slot': active_slot,
-                    'embedding': embedding,
-                    'embedding_dim': self.embedding_dimension,
-                    'metadata': metadata
+                    'is_active': True
                 })
             
             return batch_data
             
         except Exception as e:
-            logger.error(f"Error preparing enhanced batch data: {e}")
+            logger.error(f"Error preparing batch data: {e}")
             raise
 
-    def _build_standardized_metadata(
-        self,
-        item: Dict[str, Any],
-        domain: str,
-        content_type: str,
-        namespace: str
+    async def _build_standardized_metadata(
+        self, 
+        domain: str, 
+        content_type: str, 
+        obj_ref: str, 
+        **kwargs
     ) -> Dict[str, Any]:
-        """Build standardized metadata schema"""
+        """Build standardized metadata using metadata schema service"""
         try:
-            # Base metadata
-            metadata = {
-                "domain": domain,
-                "content_type": content_type,
-                "namespace": namespace,
-                "created_at": item.get('created_at', datetime.utcnow().isoformat()),
-                "updated_at": datetime.utcnow().isoformat(),
-                "version": "1.0"
-            }
-            
-            # Domain-specific metadata
-            if domain == "english":
-                metadata.update({
-                    "error_type": item.get('error_type', ''),
-                    "grammar_rule": item.get('grammar_rule', ''),
-                    "cefr_level": item.get('cefr_level', ''),
-                    "difficulty_level": item.get('difficulty_level', 3),
-                    "topic_category": item.get('topic_category', ''),
-                    "question_type": item.get('question_type', ''),
-                    "source": item.get('source', ''),
-                    "user_id": item.get('user_id', ''),
-                    "confidence_score": item.get('confidence_score', 0.0)
-                })
-            elif domain == "math":
-                metadata.update({
-                    "math_topic": item.get('math_topic', ''),
-                    "concept_type": item.get('concept_type', ''),
-                    "difficulty_level": item.get('difficulty_level', 3),
-                    "problem_type": item.get('problem_type', ''),
-                    "solution_method": item.get('solution_method', ''),
-                    "user_id": item.get('user_id', ''),
-                    "placement_level": item.get('placement_level', ''),
-                    "confidence_score": item.get('confidence_score', 0.0)
-                })
-            elif domain == "cefr":
-                metadata.update({
-                    "cefr_level": item.get('cefr_level', ''),
-                    "skill_type": item.get('skill_type', ''),
-                    "assessment_type": item.get('assessment_type', ''),
-                    "rubric_category": item.get('rubric_category', ''),
-                    "user_id": item.get('user_id', ''),
-                    "confidence_score": item.get('confidence_score', 0.0)
-                })
-            
-            # Common metadata fields
-            metadata.update({
-                "tags": item.get('tags', []),
-                "language": item.get('language', 'en'),
-                "quality_score": item.get('quality_score', 0.0),
-                "usage_count": item.get('usage_count', 0),
-                "last_used": item.get('last_used', ''),
-                "is_active": item.get('is_active', True)
-            })
-            
-            return metadata
-            
+            return metadata_schema_service.build_standard_metadata(
+                domain=domain,
+                content_type=content_type,
+                obj_ref=obj_ref,
+                **kwargs
+            )
         except Exception as e:
             logger.error(f"Error building standardized metadata: {e}")
-            return {"domain": domain, "content_type": content_type, "error": str(e)}
+            # Fallback to basic metadata
+            return {
+                "domain": domain,
+                "content_type": content_type,
+                "obj_ref": str(obj_ref),
+                "created_at": datetime.utcnow().isoformat(),
+                "metadata_version": "2.0.0"
+            }
 
     async def _execute_batch_upsert_optimized(self, batch_data: List[Dict[str, Any]]):
         """Execute optimized batch upsert"""

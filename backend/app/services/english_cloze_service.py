@@ -16,6 +16,7 @@ from app.services.llm_context.schemas.cloze_question_context import ClozeQuestio
 from app.models.question import Question, Subject, QuestionType, SourceType
 from app.schemas.question import ClozeQuestionSchema, QuestionCreate
 from app.models.error_pattern import ErrorPattern
+from app.services.metadata_schema_service import metadata_schema_service, ContentType, Domain
 
 logger = logging.getLogger(__name__)
 
@@ -232,17 +233,7 @@ class EnglishClozeService:
             
             # 4. Store in vector DB for real-time similarity search
             await self._store_error_embedding_in_vector_db(
-                error_pattern_id=str(error_pattern.id),
-                user_id=user_id,
-                error_text=error_text,
-                error_type=error_type,
-                error_context=error_context,
-                embedding=error_embedding,
-                metadata={
-                    "question_id": question_id,
-                    "student_answer": student_answer,
-                    "timestamp": error_pattern.created_at.isoformat()
-                }
+                error_pattern, error_embedding
             )
             
             logger.info(f"✅ Error recorded and embedded for user {user_id}")
@@ -263,38 +254,39 @@ class EnglishClozeService:
             }
 
     async def _store_error_embedding_in_vector_db(
-        self,
-        error_pattern_id: str,
-        user_id: str,
-        error_text: str,
-        error_type: str,
-        error_context: str,
-        embedding: List[float],
-        metadata: Dict[str, Any]
+        self, 
+        error_pattern, 
+        embedding: List[float]
     ):
-        """Store error embedding in vector DB for real-time similarity search"""
+        """Store error pattern embedding in vector database using standardized metadata"""
         try:
-            # Store in english_errors namespace
-            await vector_index_manager.upsert_embedding(
-                obj_ref=error_pattern_id,
-                namespace=self.error_analysis_config["error_embedding_namespace"],
-                embedding=embedding,
-                metadata={
-                    "domain": "english",
-                    "content_type": "error_pattern",
-                    "user_id": user_id,
-                    "error_type": error_type,
-                    "error_context": error_context,
-                    "error_text": error_text,
-                    "created_at": datetime.utcnow().isoformat(),
-                    **metadata
-                }
+            # Use standardized metadata schema
+            metadata = metadata_schema_service.build_error_pattern_metadata(
+                domain=Domain.ENGLISH.value,
+                error_type=error_pattern.error_type,
+                obj_ref=str(error_pattern.id),
+                user_id=str(error_pattern.user_id) if hasattr(error_pattern, 'user_id') else None,
+                topic_category=getattr(error_pattern, 'topic_category', None),
+                skill_tag=error_pattern.skill_tag,
+                error_count=getattr(error_pattern, 'error_count', 1)
             )
             
-            logger.info(f"✅ Error embedding stored in vector DB: {error_pattern_id}")
+            await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
+                domain="english",
+                content_type="error_patterns",
+                items=[{
+                    "obj_ref": str(error_pattern.id),
+                    "content": f"{error_pattern.error_type}: {error_pattern.error_text}",
+                    "embedding": embedding,
+                    "metadata": metadata
+                }],
+                batch_size=1
+            )
+            
+            logger.info(f"✅ Stored error pattern embedding for {error_pattern.id} with standardized metadata")
             
         except Exception as e:
-            logger.error(f"❌ Failed to store error embedding in vector DB: {e}")
+            logger.error(f"❌ Error storing error pattern embedding: {e}")
 
     async def generate_personalized_cloze_questions(
         self,
@@ -691,20 +683,20 @@ class EnglishClozeService:
         question: Question, 
         embedding: List[float]
     ):
-        """Store individual question embedding in vector database"""
+        """Store individual question embedding in vector database using standardized metadata"""
         try:
-            metadata = {
-                "domain": "english",
-                "content_type": "cloze_question",
-                "question_id": str(question.id),
-                "question_type": question.question_type,
-                "difficulty_level": question.difficulty_level,
-                "subject": question.subject.value,
-                "generation_method": question.metadata.get("generation_method", "unknown"),
-                "error_type_addressed": question.metadata.get("error_type_addressed", "unknown"),
-                "skill_tag": question.metadata.get("skill_tag", "unknown"),
-                "created_at": question.created_at.isoformat() if question.created_at else None
-            }
+            # Use standardized metadata schema
+            metadata = metadata_schema_service.build_cloze_question_metadata(
+                domain=Domain.ENGLISH.value,
+                obj_ref=str(question.id),
+                error_type_addressed=question.metadata.get("error_type_addressed", "unknown"),
+                skill_tag=question.metadata.get("skill_tag", "unknown"),
+                difficulty_level=question.difficulty_level,
+                generation_method=question.metadata.get("generation_method", "unknown"),
+                question_id=str(question.id),
+                question_type=question.question_type,
+                subject=question.subject.value
+            )
             
             await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
                 domain="english",
@@ -718,7 +710,7 @@ class EnglishClozeService:
                 batch_size=1
             )
             
-            logger.info(f"✅ Stored question embedding for question {question.id}")
+            logger.info(f"✅ Stored question embedding for question {question.id} with standardized metadata")
             
         except Exception as e:
             logger.error(f"❌ Error storing question embedding: {e}")
