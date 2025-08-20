@@ -132,127 +132,65 @@ class EnglishClozeService:
         """Generates cloze questions based on user's recent errors and relevant rules.
         """
         try:
-            # 1. Get last N errors for the user
-            # 1. Yapısal bağlamı oluşturmak için ContextBuilder'ı kullan (Görev 2 & 4)
-            context: ClozeQuestionGenerationContext = await self.context_builder.build(
-                session=session,
-                user_id=user_id,
-                num_questions=num_questions,
-                last_n_errors=last_n_errors
-            )
-
-            # 2. Bağlam nesnesinden prompt ve sistem mesajını al (Görev 3)
-            # Bu metodlar, Jinja2 şablonunu context verileriyle doldurur.
-            prompt = context.to_prompt()
-            system_prompt = context.to_system_prompt()
-
-            # 3. MCP üzerinden LLM çağır
-            from app.core.mcp_utils import mcp_utils
+            # 1. Get last N errors for the user with embeddings
+            recent_errors = await self._get_recent_student_errors(session, user_id, last_n_errors)
             
-            llm_response = None
-            try:
-                if mcp_utils.is_initialized:
-                    mcp_response = await mcp_utils.call_tool(
-                        tool_name="generate_english_cloze",
-                        arguments={
-                            "student_id": user_id,
-                            "num_recent_errors": last_n_errors,
-                            "difficulty_level": 3,  # Default level
-                            "question_type": "cloze",
-                            "prompt": prompt,
-                            "system_prompt": system_prompt,
-                            "schema": TypeAdapter(List[ClozeQuestionSchema]).json_schema(),
-                            "num_questions": num_questions
-                        }
-                    )
-                    
-                    if mcp_response["success"]:
-                        llm_response = mcp_response["data"]
-                    else:
-                        logger.warning(f"MCP cloze generation failed: {mcp_response.get('error')}")
-                        # Fallback to direct LLM
-                        llm_response = await self.llm_gateway.generate_json(
-                            prompt=prompt,
-                            system_prompt=system_prompt,
-                            schema=TypeAdapter(List[ClozeQuestionSchema]).json_schema(),
-                            max_retries=3
-                        )
-                else:
-                    logger.warning("MCP not initialized, using direct LLM")
-                    # Fallback to direct LLM
-                    llm_response = await self.llm_gateway.generate_json(
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        schema=TypeAdapter(List[ClozeQuestionSchema]).json_schema(),
-                        max_retries=3
-                    )
-            except Exception as e:
-                logger.warning(f"MCP cloze generation failed, using fallback: {e}")
-                # Fallback to direct LLM
-                llm_response = await self.llm_gateway.generate_json(
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    schema=TypeAdapter(List[ClozeQuestionSchema]).json_schema(),
-                    max_retries=3
-                )
-
-            if not llm_response or not llm_response.get("success", False):
-                logger.error(f"LLM Gateway failed to generate cloze questions: {llm_response}")
-                return []
-
-            # 4. JSON response'u parse et ve onar
-            raw_response = llm_response.get("parsed_json") or llm_response.get("data") or llm_response.get("response")
-            if not raw_response:
-                logger.error("No response data found in LLM response")
-                return []
-
-            # JSON repair
-            generated_cloze_data = self._repair_json_response(raw_response)
-            if not generated_cloze_data:
-                logger.error("Failed to parse or repair JSON response")
-                return []
-
-            created_questions = []
-
-            for q_data in generated_cloze_data:
+            if not recent_errors:
+                logger.info(f"No recent errors found for user {user_id}, generating generic cloze questions")
+                return await self._generate_generic_cloze_questions(session, num_questions)
+            
+            # 2. Find similar error patterns using embeddings
+            similar_error_patterns = await self._find_similar_error_patterns_enhanced(recent_errors)
+            
+            # 3. Generate personalized cloze questions based on error patterns
+            personalized_questions = []
+            
+            for error in recent_errors[:num_questions]:
                 try:
-                    # Validate and repair individual question data
-                    repaired_q_data = self._validate_and_repair_question_data(q_data)
-                    if not repaired_q_data:
-                        logger.warning(f"Skipping invalid question data: {q_data}")
-                        continue
-
-                    # Validate each generated question against the schema
-                    validated_q = ClozeQuestionSchema(**repaired_q_data)
+                    # Generate embedding for the error
+                    error_text = f"{error.get('error_text', '')} {error.get('error_type', '')}"
+                    error_embedding = await self.embedding_service.get_embedding(error_text, domain="english")
                     
-                    # Create QuestionCreate schema for database insertion
-                    question_create = QuestionCreate(
-                        subject=Subject.ENGLISH,
-                        content=validated_q.cloze_sentence,
-                        question_type=QuestionType.FILL_BLANK,
-                        difficulty_level=validated_q.difficulty_level,
-                        topic_category=validated_q.error_type_addressed, # Using error type as topic
-                        correct_answer=validated_q.correct_answer,
-                        options=validated_q.distractors + [validated_q.correct_answer], # Combine for options
-                        source_type=SourceType.GENERATED,
-                        question_metadata={
-                            "original_sentence": validated_q.original_sentence,
-                            "rule_context": validated_q.rule_context
-                        }
+                    if not error_embedding:
+                        logger.warning(f"Failed to generate embedding for error: {error_text}")
+                        continue
+                    
+                    # Find similar error patterns in vector DB
+                    similar_patterns = await self.vector_index_manager.search_similar_content(
+                        error_embedding,
+                        namespace="english_errors",
+                        similarity_threshold=0.7,
+                        limit=3
                     )
-                    db_question = await self.question_repo.create(session, question_create)
-                    created_questions.append(db_question)
-                except ValidationError as e:
-                    logger.error(f"Validation error for generated cloze question: {e.errors()}")
+                    
+                    # Generate cloze question using enhanced prompt with similar patterns
+                    cloze_question = await self._generate_cloze_for_error_type_enhanced(
+                        session, error, similar_patterns, error_embedding
+                    )
+                    
+                    if cloze_question:
+                        personalized_questions.append(cloze_question)
+                        
                 except Exception as e:
-                    logger.error(f"Error saving generated cloze question to DB: {e}")
-
-            logger.info(f"Successfully generated and saved {len(created_questions)} cloze questions.")
-            return created_questions
-
+                    logger.error(f"Error generating personalized question for error {error.get('id')}: {e}")
+                    continue
+            
+            # 4. If we don't have enough personalized questions, generate generic ones
+            if len(personalized_questions) < num_questions:
+                remaining_count = num_questions - len(personalized_questions)
+                generic_questions = await self._generate_generic_cloze_questions(session, remaining_count)
+                personalized_questions.extend(generic_questions)
+            
+            # 5. Store question embeddings in vector DB
+            await self._store_question_embeddings_in_vector_db(personalized_questions, user_id)
+            
+            logger.info(f"✅ Generated {len(personalized_questions)} personalized cloze questions for user {user_id}")
+            return personalized_questions[:num_questions]
+            
         except Exception as e:
-            logger.error(f"Error in EnglishClozeService: {e}", exc_info=True)
-            return []
+            logger.error(f"❌ Error generating cloze questions: {e}", exc_info=True)
+            # Fallback to generic questions
+            return await self._generate_generic_cloze_questions(session, num_questions)
 
     async def record_student_error(
         self,
@@ -409,49 +347,48 @@ class EnglishClozeService:
     async def _get_recent_student_errors(
         self, 
         session: AsyncSession, 
-        user_id: str
+        user_id: str, 
+        limit: int = 5
     ) -> List[Dict[str, Any]]:
         """Get recent student errors with embeddings"""
         try:
             # Get recent errors from database
-            recent_errors = await session.execute(
-                """
-                SELECT ep.*, q.content as question_content, q.difficulty_level
-                FROM error_patterns ep
-                LEFT JOIN questions q ON ep.question_id = q.id
-                WHERE ep.user_id = :user_id
-                ORDER BY ep.created_at DESC
-                LIMIT :limit
-                """,
-                {
-                    "user_id": user_id,
-                    "limit": self.error_analysis_config["max_recent_errors"]
-                }
+            recent_errors = await self.question_repo.get_recent_errors_with_embeddings(
+                session, user_id, limit=limit
             )
             
             errors_with_embeddings = []
-            for row in recent_errors:
-                error_data = dict(row)
+            
+            for error in recent_errors:
+                error_data = {
+                    "id": error.id,
+                    "error_text": error.error_text,
+                    "error_type": error.error_type,
+                    "skill_tag": error.skill_tag,
+                    "created_at": error.created_at,
+                    "embedding": None
+                }
                 
-                # Generate embedding if missing
-                if not error_data.get("embedding"):
-                    error_text = f"{error_data['error_type']}: {error_data['error_text']}"
-                    embedding = await embedding_service.get_embedding(
-                        text=error_text,
-                        domain="english",
-                        content_type="error_pattern"
-                    )
-                    
-                    # Update error pattern with embedding
-                    await session.execute(
-                        "UPDATE error_patterns SET embedding = :embedding WHERE id = :id",
-                        {"embedding": embedding, "id": error_data["id"]}
-                    )
-                    error_data["embedding"] = embedding
+                # Check if embedding already exists
+                if hasattr(error, 'embedding') and error.embedding:
+                    error_data["embedding"] = error.embedding
+                else:
+                    # Generate embedding if missing
+                    try:
+                        error_text = f"{error.error_text} {error.error_type} {error.skill_tag or ''}"
+                        embedding = await self.embedding_service.get_embedding(error_text, domain="english")
+                        
+                        if embedding:
+                            error_data["embedding"] = embedding
+                            
+                            # Store embedding in vector DB
+                            await self._store_error_embedding_in_vector_db(error, embedding)
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embedding for error {error.id}: {e}")
                 
                 errors_with_embeddings.append(error_data)
             
-            await session.commit()
             return errors_with_embeddings
             
         except Exception as e:
@@ -460,62 +397,49 @@ class EnglishClozeService:
 
     async def _find_similar_error_patterns_enhanced(
         self, 
-        user_errors: List[Dict[str, Any]]
+        recent_errors: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Find similar error patterns using enhanced semantic search"""
+        """Find similar error patterns using enhanced embedding search"""
         try:
             similar_patterns = []
             
-            for user_error in user_errors:
-                if not user_error.get("embedding"):
+            for error in recent_errors:
+                if not error.get("embedding"):
                     continue
                 
-                # Search for similar patterns in the system
-                similar_results = await vector_index_manager.search_similar_content(
-                    user_error["embedding"],
-                    namespace=self.error_analysis_config["error_embedding_namespace"],
-                    similarity_threshold=self.error_analysis_config["similarity_threshold"],
-                    limit=10,
+                # Search for similar errors in vector DB
+                similar_results = await self.vector_index_manager.search_similar_content(
+                    error["embedding"],
+                    namespace="english_errors",
+                    similarity_threshold=0.7,
+                    limit=5,
                     metadata_filters={
                         "domain": "english",
-                        "content_type": "error_pattern"
+                        "error_type": error.get("error_type", "unknown")
                     }
                 )
                 
                 for result in similar_results:
-                    # Calculate enhanced similarity score
-                    enhanced_score = self._calculate_enhanced_similarity_score(
-                        result, user_error
-                    )
-                    
-                    similar_patterns.append({
-                        "error_type": result.get("metadata", {}).get("error_type", user_error["error_type"]),
-                        "similarity_score": enhanced_score,
-                        "pattern_context": result.get("metadata", {}).get("error_context", ""),
-                        "user_pattern": user_error,
-                        "vector_result": result
-                    })
+                    if result.get("obj_ref") != str(error.get("id")):
+                        similar_patterns.append({
+                            "error_text": result.get("content", ""),
+                            "error_type": result.get("metadata", {}).get("error_type", "unknown"),
+                            "similarity_score": result.get("similarity", 0.0),
+                            "skill_tag": result.get("metadata", {}).get("skill_tag", "unknown")
+                        })
             
-            # Sort by enhanced similarity score and remove duplicates
+            # Remove duplicates and sort by similarity
             unique_patterns = {}
             for pattern in similar_patterns:
-                key = pattern["error_type"]
-                if key not in unique_patterns or pattern["similarity_score"] > unique_patterns[key]["similarity_score"]:
+                key = f"{pattern['error_type']}_{pattern['skill_tag']}"
+                if key not in unique_patterns or pattern['similarity_score'] > unique_patterns[key]['similarity_score']:
                     unique_patterns[key] = pattern
             
-            # Return top patterns sorted by score
-            sorted_patterns = sorted(
-                unique_patterns.values(),
-                key=lambda x: x["similarity_score"],
-                reverse=True
-            )
-            
-            logger.info(f"Found {len(sorted_patterns)} similar error patterns")
-            return sorted_patterns
+            return sorted(unique_patterns.values(), key=lambda x: x['similarity_score'], reverse=True)
             
         except Exception as e:
             logger.error(f"Error finding similar error patterns: {e}")
-            return user_errors
+            return []
 
     def _calculate_enhanced_similarity_score(
         self,
@@ -560,33 +484,24 @@ class EnglishClozeService:
     async def _generate_cloze_for_error_type_enhanced(
         self,
         session: AsyncSession,
-        error_pattern: Dict[str, Any],
-        user_id: str,
-        recent_errors: List[Dict[str, Any]]
+        error: Dict[str, Any],
+        similar_patterns: List[Dict[str, Any]],
+        error_embedding: List[float]
     ) -> Optional[Question]:
-        """Generate enhanced cloze question for specific error type"""
+        """Generate cloze question using enhanced prompt with similar patterns"""
         try:
-            # Build enhanced context
-            context = await self.context_builder.build_context(
-                user_id=user_id,
-                error_type=error_pattern["error_type"],
-                error_context=error_pattern.get("pattern_context", ""),
-                num_recent_errors=len(recent_errors)
-            )
+            # Build enhanced prompt with similar error patterns
+            enhanced_prompt = self._build_enhanced_error_specific_prompt(error, similar_patterns)
             
-            # Generate cloze question using enhanced prompt
-            prompt = self._build_enhanced_error_specific_prompt(error_pattern, context, recent_errors)
-            system_prompt = self._get_enhanced_cloze_system_prompt()
-            
-            # Use LLM to generate cloze question
+            # Generate question using LLM
             llm_response = await self.llm_gateway.generate_json(
-                prompt=prompt,
-                system_prompt=system_prompt,
+                prompt=enhanced_prompt,
                 schema=TypeAdapter(ClozeQuestionSchema).json_schema(),
                 max_retries=3
             )
             
-            if not llm_response or not llm_response.get("success", False):
+            if not llm_response:
+                logger.warning(f"LLM failed to generate question for error {error.get('id')}")
                 return None
             
             # Parse and validate response
@@ -594,98 +509,96 @@ class EnglishClozeService:
             if not raw_response:
                 return None
             
-            # Validate against schema
-            validated_q = ClozeQuestionSchema(**raw_response)
+            # Validate and repair question data
+            validated_data = self._validate_and_repair_question_data(raw_response)
+            if not validated_data:
+                return None
             
-            # Create question for database
-            question_create = QuestionCreate(
+            # Create Question object
+            question = Question(
                 subject=Subject.ENGLISH,
-                content=validated_q.cloze_sentence,
                 question_type=QuestionType.FILL_BLANK,
-                difficulty_level=validated_q.difficulty_level,
-                topic_category=validated_q.error_type_addressed,
-                correct_answer=validated_q.correct_answer,
-                options=validated_q.distractors + [validated_q.correct_answer],
-                source_type=SourceType.GENERATED,
-                question_metadata={
-                    "original_sentence": validated_q.original_sentence,
-                    "rule_context": validated_q.rule_context,
-                    "error_type": error_pattern["error_type"],
-                    "similarity_score": error_pattern.get("similarity_score", 0.0),
-                    "generation_method": "enhanced_embedding_based",
-                    "user_id": user_id,
-                    "error_pattern_id": error_pattern.get("user_pattern", {}).get("id"),
-                    "generated_at": datetime.utcnow().isoformat()
-                }
-            )
-            
-            # Save to database
-            db_question = await self.question_repo.create(session, question_create)
-            
-            # Generate and store question embedding
-            question_text = f"{validated_q.cloze_sentence} {validated_q.rule_context}"
-            question_embedding = await embedding_service.get_embedding(
-                text=question_text,
-                domain="english",
-                content_type="cloze_question"
-            )
-            
-            # Store in vector DB
-            await vector_index_manager.upsert_embedding(
-                obj_ref=str(db_question.id),
-                namespace=self.error_analysis_config["question_embedding_namespace"],
-                embedding=question_embedding,
+                content=validated_data["cloze_sentence"],
+                correct_answer=validated_data["correct_answer"],
+                options=validated_data["distractors"] + [validated_data["correct_answer"]],
+                difficulty_level=validated_data.get("difficulty_level", 3),
+                explanation=validated_data.get("explanation", ""),
                 metadata={
-                    "domain": "english",
-                    "content_type": "cloze_question",
-                    "error_type": error_pattern["error_type"],
-                    "difficulty_level": validated_q.difficulty_level,
-                    "user_id": user_id,
-                    "error_pattern_id": error_pattern.get("user_pattern", {}).get("id"),
-                    "generation_method": "enhanced_embedding_based",
-                    "created_at": datetime.utcnow().isoformat()
+                    "error_type_addressed": error.get("error_type", "unknown"),
+                    "skill_tag": error.get("skill_tag", "unknown"),
+                    "similarity_score": similar_patterns[0]["similarity_score"] if similar_patterns else 0.0,
+                    "generation_method": "embedding_enhanced",
+                    "error_id": error.get("id")
                 }
             )
             
-            logger.info(f"✅ Enhanced cloze question generated and stored: {db_question.id}")
-            return db_question
+            # Save question to database
+            saved_question = await self.question_repo.create(session, question)
+            
+            # Store question embedding in vector DB
+            question_text = f"{question.content} {question.correct_answer} {' '.join(question.options)}"
+            question_embedding = await self.embedding_service.get_embedding(question_text, domain="english")
+            
+            if question_embedding:
+                await self._store_question_embedding_in_vector_db(saved_question, question_embedding)
+            
+            return saved_question
             
         except Exception as e:
-            logger.error(f"❌ Error generating enhanced cloze: {e}")
+            logger.error(f"Error generating enhanced cloze question: {e}")
             return None
 
     def _build_enhanced_error_specific_prompt(
         self, 
-        error_pattern: Dict[str, Any], 
-        context: ClozeQuestionGenerationContext,
-        recent_errors: List[Dict[str, Any]]
+        error: Dict[str, Any], 
+        similar_patterns: List[Dict[str, Any]]
     ) -> str:
-        """Build enhanced prompt with detailed error analysis"""
-        
-        # Build error analysis section
-        error_analysis = "Recent Error Analysis:\n"
-        for i, error in enumerate(recent_errors[:3], 1):
-            error_analysis += f"{i}. {error['error_type']}: {error['error_text'][:100]}...\n"
-        
-        return f"""
-        Generate a personalized cloze question specifically for the error type: {error_pattern['error_type']}
-        
-        Error Context: {error_pattern.get('pattern_context', '')}
-        Similarity Score: {error_pattern.get('similarity_score', 0.0):.2f}
-        
-        {error_analysis}
-        
-        User's Learning Context: {context.recent_errors}
-        
-        Create a cloze question that:
-        1. Directly addresses the specific error type: {error_pattern['error_type']}
-        2. Uses appropriate difficulty level based on user's performance
-        3. Includes clear distractors that test understanding of the rule
-        4. Provides helpful rule context for learning
-        5. Incorporates patterns from similar errors to prevent repetition
-        
-        Focus on making this question directly relevant to the user's learning needs and error patterns.
-        """
+        """Build enhanced prompt with similar error patterns"""
+        try:
+            base_prompt = self._get_enhanced_cloze_system_prompt()
+            
+            # Add error context
+            error_context = f"""
+            STUDENT ERROR ANALYSIS:
+            - Error Text: {error.get('error_text', 'N/A')}
+            - Error Type: {error.get('error_type', 'N/A')}
+            - Skill Tag: {error.get('skill_tag', 'N/A')}
+            - Error Date: {error.get('created_at', 'N/A')}
+            """
+            
+            # Add similar error patterns
+            similar_context = ""
+            if similar_patterns:
+                similar_context = "\nSIMILAR ERROR PATTERNS FOUND:\n"
+                for i, pattern in enumerate(similar_patterns[:3], 1):
+                    similar_context += f"""
+                    Pattern {i}:
+                    - Error: {pattern.get('error_text', 'N/A')}
+                    - Type: {pattern.get('error_type', 'N/A')}
+                    - Similarity: {pattern.get('similarity_score', 0.0):.2f}
+                    """
+            
+            # Build final prompt
+            final_prompt = f"""
+            {base_prompt}
+            
+            {error_context}
+            
+            {similar_context}
+            
+            INSTRUCTIONS:
+            1. Analyze the student's error and similar patterns
+            2. Generate a cloze question that specifically addresses this error type
+            3. Use the error context to make the question relevant and challenging
+            4. Ensure the distractors are plausible but incorrect
+            5. Provide clear explanation of why the correct answer is right
+            """
+            
+            return final_prompt.strip()
+            
+        except Exception as e:
+            logger.error(f"Error building enhanced prompt: {e}")
+            return self._get_enhanced_cloze_system_prompt()
 
     def _get_enhanced_cloze_system_prompt(self) -> str:
         """Enhanced system prompt for cloze generation"""
@@ -751,6 +664,64 @@ class EnglishClozeService:
         except Exception as e:
             logger.error(f"Error in generic cloze generation: {e}")
             return []
+
+    async def _store_question_embeddings_in_vector_db(
+        self, 
+        questions: List[Question], 
+        user_id: str
+    ):
+        """Store question embeddings in vector database"""
+        try:
+            for question in questions:
+                if not question.content:
+                    continue
+                
+                # Generate question embedding
+                question_text = f"{question.content} {question.correct_answer} {' '.join(question.options)}"
+                question_embedding = await self.embedding_service.get_embedding(question_text, domain="english")
+                
+                if question_embedding:
+                    await self._store_question_embedding_in_vector_db(question, question_embedding)
+                    
+        except Exception as e:
+            logger.error(f"Error storing question embeddings: {e}")
+
+    async def _store_question_embedding_in_vector_db(
+        self, 
+        question: Question, 
+        embedding: List[float]
+    ):
+        """Store individual question embedding in vector database"""
+        try:
+            metadata = {
+                "domain": "english",
+                "content_type": "cloze_question",
+                "question_id": str(question.id),
+                "question_type": question.question_type,
+                "difficulty_level": question.difficulty_level,
+                "subject": question.subject.value,
+                "generation_method": question.metadata.get("generation_method", "unknown"),
+                "error_type_addressed": question.metadata.get("error_type_addressed", "unknown"),
+                "skill_tag": question.metadata.get("skill_tag", "unknown"),
+                "created_at": question.created_at.isoformat() if question.created_at else None
+            }
+            
+            await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
+                domain="english",
+                content_type="cloze_questions",
+                items=[{
+                    "obj_ref": str(question.id),
+                    "content": question.content,
+                    "embedding": embedding,
+                    "metadata": metadata
+                }],
+                batch_size=1
+            )
+            
+            logger.info(f"✅ Stored question embedding for question {question.id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error storing question embedding: {e}")
 
 # Global instance
 from app.services.retriever import HybridRetriever

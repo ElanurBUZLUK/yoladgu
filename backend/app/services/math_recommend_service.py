@@ -98,15 +98,13 @@ class MathRecommendService:
             for pattern in error_patterns:
                 # Generate embedding if missing
                 if not hasattr(pattern, 'embedding') or not pattern.embedding:
-                    pattern_text = f"{pattern.error_type}: {pattern.error_context or ''}"
-                    embedding = await embedding_service.get_embedding(pattern_text)
+                    pattern_text = f"{pattern.error_type}: {pattern.error_context or ''} {pattern.topic_category or ''}"
+                    embedding = await self.embedding_service.get_embedding(pattern_text, domain="math")
                     
-                    # Update pattern with embedding (if possible)
-                    try:
+                    if embedding:
+                        # Store embedding in vector DB
+                        await self._store_error_embedding_in_vector_db(pattern, embedding)
                         pattern.embedding = embedding
-                        await session.commit()
-                    except Exception as e:
-                        logger.warning(f"Could not update pattern embedding: {e}")
                 
                 patterns_with_embeddings.append({
                     "id": str(pattern.id),
@@ -135,28 +133,33 @@ class MathRecommendService:
                 if not user_pattern.get("embedding"):
                     continue
                 
-                # Search for similar patterns in the system
-                similar_results = await vector_index_manager.search_similar_content(
+                # Search for similar patterns in vector DB
+                similar_results = await self.vector_index_manager.search_similar_content(
                     user_pattern["embedding"],
-                    namespace="math_error_patterns",
+                    namespace="math_errors",
                     similarity_threshold=0.7,
-                    limit=5
+                    limit=5,
+                    metadata_filters={
+                        "domain": "math",
+                        "error_type": user_pattern.get("error_type", "unknown")
+                    }
                 )
                 
                 for result in similar_results:
-                    similar_patterns.append({
-                        "error_type": result.get("error_type", user_pattern["error_type"]),
-                        "similarity_score": result.get("similarity", 0.0),
-                        "pattern_context": result.get("context", ""),
-                        "topic_category": result.get("topic_category", user_pattern.get("topic_category")),
-                        "user_pattern": user_pattern
-                    })
+                    if result.get("obj_ref") != str(user_pattern.get("id")):
+                        similar_patterns.append({
+                            "error_type": result.get("metadata", {}).get("error_type", user_pattern["error_type"]),
+                            "similarity_score": result.get("similarity", 0.0),
+                            "pattern_context": result.get("content", ""),
+                            "topic_category": result.get("metadata", {}).get("topic_category", user_pattern.get("topic_category")),
+                            "user_pattern": user_pattern
+                        })
             
             # Sort by similarity score and remove duplicates
             unique_patterns = {}
             for pattern in similar_patterns:
-                key = pattern["error_type"]
-                if key not in unique_patterns or pattern["similarity_score"] > unique_patterns[key]["similarity_score"]:
+                key = f"{pattern['error_type']}_{pattern['topic_category']}"
+                if key not in unique_patterns or pattern['similarity_score'] > unique_patterns[key]['similarity_score']:
                     unique_patterns[key] = pattern
             
             return sorted(unique_patterns.values(), key=lambda x: x["similarity_score"], reverse=True)
@@ -168,34 +171,39 @@ class MathRecommendService:
     async def _get_questions_by_error_patterns(
         self,
         session: AsyncSession,
-        error_patterns: List[Dict[str, Any]],
-        user_profile: MathProfile,
+        similar_patterns: List[Dict[str, Any]],
+        math_profile: MathProfile,
         limit: int
     ) -> List[Question]:
-        """Get questions based on error patterns using semantic search"""
+        """Get questions based on error patterns using embedding similarity"""
         try:
             questions = []
             
-            for pattern in error_patterns[:limit]:
+            for pattern in similar_patterns[:limit]:
                 if not pattern.get("embedding"):
                     continue
                 
-                # Search for questions similar to the error pattern
-                similar_questions = await vector_index_manager.search_similar_content(
+                # Search for questions similar to error pattern
+                similar_questions = await self.vector_index_manager.search_similar_content(
                     pattern["embedding"],
                     namespace="math_questions",
                     similarity_threshold=0.6,
-                    limit=3
+                    limit=3,
+                    metadata_filters={
+                        "domain": "math",
+                        "difficulty_level": math_profile.global_skill,
+                        "topic_category": pattern.get("topic_category", "unknown")
+                    }
                 )
                 
                 for result in similar_questions:
                     question_id = result.get("obj_ref")
                     if question_id:
                         question = await self.question_repo.get_by_id(session, question_id)
-                        if question and question.subject == Subject.MATH:
-                            # Add similarity score to question metadata
+                        if question and question not in questions:
                             question.similarity_score = result.get("similarity", 0.0)
-                            question.error_pattern_match = pattern["error_type"]
+                            question.recommendation_source = "error_pattern"
+                            question.error_pattern_match = pattern.get("error_type")
                             questions.append(question)
             
             return questions[:limit]
@@ -1019,62 +1027,144 @@ class MathRecommendService:
         math_profile: MathProfile,
         limit: int
     ) -> List[Question]:
-        """Get recommendations based on similar students' performance"""
+        """Get recommendations based on similar students' performance using embeddings"""
         try:
-            # Find similar students
-            similar_students = await self.find_similar_students_by_embedding(user_id, limit=3)
+            # Get user's error patterns to find similar students
+            user_error_patterns = await self._get_user_error_patterns_with_embeddings(session, user_id)
+            
+            if not user_error_patterns:
+                return []
+            
+            # Create a combined embedding from user's error patterns
+            combined_error_text = " ".join([
+                f"{p['error_type']} {p['error_context'] or ''} {p['topic_category'] or ''}"
+                for p in user_error_patterns[:3]  # Use top 3 patterns
+            ])
+            
+            user_error_embedding = await self.embedding_service.get_embedding(combined_error_text, domain="math")
+            
+            if not user_error_embedding:
+                return []
+            
+            # Find similar students using embedding similarity
+            similar_students = await self._find_similar_students_by_embedding(user_error_embedding, limit=5)
             
             questions = []
             for student in similar_students:
                 # Get questions that similar students struggled with
-                student_questions = await self._get_student_struggle_questions(
-                    session, student["user_id"], math_profile, limit // len(similar_students)
-                )
+                student_questions = await self._get_student_struggle_questions(session, student["user_id"], limit=2)
                 questions.extend(student_questions)
             
-            return questions[:limit]
+            # Remove duplicates and limit results
+            unique_questions = {}
+            for question in questions:
+                if question.id not in unique_questions:
+                    question.recommendation_source = "similar_student"
+                    unique_questions[question.id] = question
+            
+            return list(unique_questions.values())[:limit]
             
         except Exception as e:
             logger.error(f"Error getting similar student recommendations: {e}")
             return []
 
+    async def _find_similar_students_by_embedding(
+        self, 
+        user_error_embedding: List[float], 
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Find similar students using embedding-based similarity"""
+        try:
+            # Search for similar student profiles in vector DB
+            similar_profiles = await self.vector_index_manager.search_similar_content(
+                user_error_embedding,
+                namespace="math_placement_tests",
+                similarity_threshold=0.6,
+                limit=limit * 2,  # Get more to filter
+                metadata_filters={
+                    "domain": "math",
+                    "content_type": "placement_test"
+                }
+            )
+            
+            similar_students = []
+            for result in similar_profiles:
+                user_id = result.get("metadata", {}).get("user_id")
+                if user_id and user_id not in [s["user_id"] for s in similar_students]:
+                    similar_students.append({
+                        "user_id": user_id,
+                        "similarity_score": result.get("similarity", 0.0),
+                        "skill_level": result.get("metadata", {}).get("skill_level", 0.0),
+                        "test_score": result.get("metadata", {}).get("test_score", 0)
+                    })
+            
+            # Sort by similarity and return top results
+            return sorted(similar_students, key=lambda x: x["similarity_score"], reverse=True)[:limit]
+            
+        except Exception as e:
+            logger.error(f"Error finding similar students by embedding: {e}")
+            return []
+
     async def _get_student_struggle_questions(
-        self,
-        session: AsyncSession,
-        student_id: str,
-        math_profile: MathProfile,
-        limit: int
+        self, 
+        session: AsyncSession, 
+        student_id: str, 
+        limit: int = 2
     ) -> List[Question]:
         """Get questions that a student struggled with"""
         try:
-            # Get questions with low success rate for the student
-            struggle_questions = await session.execute(
-                """
-                SELECT q.*, sa.success_rate
-                FROM questions q
-                JOIN student_attempts sa ON q.id = sa.question_id
-                WHERE sa.user_id = :student_id 
-                AND sa.success_rate < 0.5
-                AND q.subject = 'MATH'
-                ORDER BY sa.success_rate ASC
-                LIMIT :limit
-                """,
-                {"student_id": student_id, "limit": limit}
+            # Get student's incorrect attempts
+            incorrect_attempts = await self.student_attempt_repo.get_incorrect_attempts_by_user(
+                session, student_id, Subject.MATH, limit=limit * 2
             )
             
             questions = []
-            for row in struggle_questions:
-                question_data = dict(row)
-                question = Question(**question_data)
-                question.similarity_score = 0.5  # Default for struggle questions
-                question.recommendation_source = "similar_student_struggle"
-                questions.append(question)
+            for attempt in incorrect_attempts:
+                if attempt.question_id and attempt.question_id not in [q.id for q in questions]:
+                    question = await self.question_repo.get_by_id(session, attempt.question_id)
+                    if question:
+                        question.similarity_score = 0.5  # Default similarity for struggle questions
+                        questions.append(question)
             
-            return questions
+            return questions[:limit]
             
         except Exception as e:
             logger.error(f"Error getting student struggle questions: {e}")
             return []
+
+    async def _store_error_embedding_in_vector_db(
+        self, 
+        error_pattern, 
+        embedding: List[float]
+    ):
+        """Store error pattern embedding in vector database"""
+        try:
+            metadata = {
+                "domain": "math",
+                "content_type": "error_pattern",
+                "error_type": error_pattern.error_type,
+                "topic_category": error_pattern.topic_category,
+                "error_count": error_pattern.error_count,
+                "user_id": str(error_pattern.user_id),
+                "created_at": error_pattern.created_at.isoformat() if error_pattern.created_at else None
+            }
+            
+            await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
+                domain="math",
+                content_type="error_patterns",
+                items=[{
+                    "obj_ref": str(error_pattern.id),
+                    "content": f"{error_pattern.error_type}: {error_pattern.error_context or ''}",
+                    "embedding": embedding,
+                    "metadata": metadata
+                }],
+                batch_size=1
+            )
+            
+            logger.info(f"✅ Stored error pattern embedding for {error_pattern.id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error storing error pattern embedding: {e}")
 
     async def _combine_and_rank_recommendations_enhanced(
         self,
