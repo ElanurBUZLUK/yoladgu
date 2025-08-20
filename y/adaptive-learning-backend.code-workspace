@@ -1,0 +1,73 @@
+{
+    "folders": [
+        {
+            "name": "Backend",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "./.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "python.analysis.extraPaths": [
+            "./.venv/lib/python3.12/site-packages",
+            "./app",
+            ".",
+            "./typings"
+        ],
+        "python.analysis.typeCheckingMode": "off",
+        "python.analysis.autoImportCompletions": true,
+        "python.analysis.autoSearchPaths": true,
+        "python.analysis.diagnosticMode": "workspace",
+        "python.analysis.stubPath": "./typings",
+        "python.analysis.useLibraryCodeForTypes": true,
+        "python.analysis.include": [
+            "app/**/*.py"
+        ],
+        "python.analysis.exclude": [
+            "**/node_modules",
+            "**/__pycache__",
+            "**/venv",
+            "**/.venv",
+            "**/tests",
+            "**/test_*"
+        ],
+        "python.linting.enabled": false,
+        "python.linting.pylintEnabled": false,
+        "python.linting.flake8Enabled": false,
+        "python.linting.mypyEnabled": false,
+        "python.formatting.provider": "black",
+        "python.sortImports.args": ["--profile", "black"],
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true
+        },
+        "files.associations": {
+            "*.py": "python"
+        },
+        "python.envFile": "${workspaceFolder}/.env",
+        "python.analysis.ignore": [
+            "**/node_modules",
+            "**/__pycache__",
+            "**/venv",
+            "**/.venv"
+        ],
+        "python.analysis.diagnosticSeverityOverrides": {
+            "reportMissingImports": "none",
+            "reportMissingTypeStubs": "none",
+            "reportUnusedImport": "none",
+            "reportUnusedClass": "none",
+            "reportUnusedFunction": "none",
+            "reportUnusedVariable": "none"
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.black-formatter",
+            "ms-python.isort",
+            "ms-python.flake8",
+            "ms-python.mypy-type-checker",
+            "ms-python.pylint"
+        ]
+    }
+}

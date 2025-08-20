@@ -184,6 +184,30 @@ Once the application is running, visit:
 - **ReDoc**: http://localhost:8000/redoc
 - **Health Check**: http://localhost:8000/health
 
+## 🤖 Model Context Protocol (MCP)
+
+This project integrates with the Model Context Protocol (MCP) to allow external AI agents (like IDEs or other LLMs) to interact with the backend's core functionalities via a standardized JSON-RPC interface.
+
+### Running the MCP Server
+
+The MCP server runs as a separate process and communicates via standard input/output (stdio). To start the MCP server:
+
+```bash
+python backend/app/mcp/server.py
+```
+
+Once running, an MCP client can connect to this process's stdio to send JSON-RPC requests (e.g., `list_tools`, `call_tool`) and receive responses.
+
+### Available MCP Tools
+
+The MCP server exposes the following tools:
+
+-   **`recommend_math(student_id: str)`**: Suggests math questions based on student performance and preferences.
+-   **`generate_english_cloze(student_id: str)`**: Generates personalized English cloze questions from student error logs.
+-   **`assess_cefr(student_id: str, text: str)`**: Estimates the CEFR level of provided text for a given student.
+
+For detailed tool manifests and argument structures, an MCP client can call the `list_tools` method on the running MCP server.
+
 ## 🔍 Key Endpoints
 
 ### Authentication

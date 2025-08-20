@@ -1,0 +1,42 @@
+{{ task_definition }}
+
+Kullanıcı Bilgileri:
+- Kullanıcı ID: {{ user_id }}
+- Seviye: {{ user_level or "Belirlenmemiş" }}
+- Hata Yaptığı Alanlar: {{ ", ".join(user_error_patterns) if user_error_patterns else "Genel grammar" }}
+
+{% if grammar_rules %}
+İlgili Grammar Kuralları:
+{% for rule in grammar_rules %}
+- {{ rule }}
+{% endfor %}
+{% endif %}
+
+{% if vocabulary_context %}
+Kelime Bilgisi Bağlamı:
+{{ vocabulary_context }}
+{% endif %}
+
+{% if topic_context %}
+Konu Bağlamı:
+{{ topic_context }}
+{% endif %}
+
+Soru Özellikleri:
+- Soru Sayısı: {{ num_questions }}
+- Zorluk Seviyesi: {{ difficulty_level }}/5
+
+{% if output_format_context %}
+{{ output_format_context }}
+{% endif %}
+
+Lütfen {{ num_questions }} adet cloze sorusu oluştur ve JSON formatında döndür.
+
+Her soru için şu bilgileri sağla:
+- original_sentence: Orijinal cümle
+- cloze_sentence: Boşluklu cümle (___ ile boşlukları göster)
+- correct_answer: Doğru cevap
+- distractors: Yanlış şıklar (en az 3 tane)
+- explanation: Sorunun açıklaması
+- difficulty_level: Zorluk seviyesi (1-5)
+- error_type_addressed: Odaklanılan hata türü

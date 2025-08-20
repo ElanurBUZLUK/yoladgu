@@ -1,0 +1,103 @@
+{
+  "name": "education-mcp",
+  "version": "1.0.0",
+  "description": "Educational MCP server with English cloze generation and Math recommendations",
+  "tools": [
+    {
+      "name": "english_cloze.generate",
+      "description": "Generate English cloze questions based on student's recent errors",
+      "args_schema": {
+        "type": "object",
+        "properties": {
+          "student_id": {
+            "type": "string",
+            "description": "Student ID",
+            "minLength": 1
+          },
+          "num_recent_errors": {
+            "type": "integer",
+            "description": "Number of recent errors to consider",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "difficulty_level": {
+            "type": "integer",
+            "description": "Target difficulty level (1-5)",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "question_type": {
+            "type": "string",
+            "description": "Question type",
+            "default": "cloze",
+            "enum": ["cloze", "multiple_choice", "fill_blank"]
+          }
+        },
+        "required": ["student_id"],
+        "additionalProperties": false
+      },
+      "result_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {"type": "string"},
+            "content": {"type": "string"},
+            "question_type": {"type": "string"},
+            "difficulty_level": {"type": "integer"},
+            "correct_answer": {"type": "string"},
+            "options": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
+          },
+          "required": ["id", "content", "question_type", "difficulty_level", "correct_answer", "options"]
+        }
+      }
+    },
+    {
+      "name": "math.recommend",
+      "description": "Recommend math questions based on student's level and performance",
+      "args_schema": {
+        "type": "object",
+        "properties": {
+          "student_id": {
+            "type": "string",
+            "description": "Student ID",
+            "minLength": 1
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of recommendations",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 50
+          },
+          "difficulty_range": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "description": "Difficulty range [min, max]",
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": ["student_id"],
+        "additionalProperties": false
+      },
+      "result_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {"type": "string"},
+            "content": {"type": "string"},
+            "difficulty_level": {"type": "integer"},
+            "recommendation_score": {"type": "number"}
+          },
+          "required": ["id", "content", "difficulty_level", "recommendation_score"]
+        }
+      }
+    }
+  ]
+}
