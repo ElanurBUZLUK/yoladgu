@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 from app.services.cefr_assessment_service import cefr_assessment_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/assess", tags=["cefr-assessment"])
+
+class CefrRequest(BaseModel):
+    samples: List[str] = Field(..., description="List of text samples to assess for CEFR level")
+    user_id: Optional[str] = Field(None, description="User ID for personalized assessment")
+    assessment_type: str = Field("general", description="Type of assessment (general, reading, writing, etc.)")
 
 class AssessRequest(BaseModel):
     # Define fields for AssessRequest based on expected input
@@ -21,12 +26,16 @@ class CEFRAssessmentResponse(BaseModel):
     confidence: float
 
 @router.post("/cefr", response_model=CEFRAssessmentResponse)
-async def assess_cefr(req: AssessRequest, svc = Depends(lambda: cefr_assessment_service)):
+async def assess_cefr(req: CefrRequest, svc = Depends(lambda: cefr_assessment_service)):
     """
-    Assesses the CEFR level of the provided text.
+    Assesses the CEFR level of the provided text samples.
     """
     try:
-        assessment_result = await svc.assess(req)
+        assessment_result = await svc.assess_cefr_level(
+            user_id=req.user_id,
+            assessment_text="\n".join(req.samples),
+            assessment_type=req.assessment_type
+        )
         return assessment_result
     except Exception as e:
         logger.exception(f"Error in CEFR assessment: {e}")

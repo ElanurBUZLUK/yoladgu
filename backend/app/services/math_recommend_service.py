@@ -82,8 +82,7 @@ class MathRecommendService:
         final_recommendations = final_recommendations[:limit]
 
         logger.info(f"Recommended {len(final_recommendations)} questions for user {user_id}.")
-        # Convert Question objects to a serializable format (e.g., dict) for caching
-        return [q.to_dict() for q in final_recommendations]
+        return final_recommendations
 
     async def recommend_questions(
         self,
@@ -98,21 +97,42 @@ class MathRecommendService:
         try:
             # Use idempotent_singleflight to ensure only one recommendation process runs per user/limit
             # and to cache the results.
-            recommended_questions_data = await idempotent_singleflight(
+            recommended_questions = await idempotent_singleflight(
                 client=self.redis_client,
                 key=idempotency_key,
                 config=config,
                 worker=lambda: self._recommend_questions_worker(session, user_id, limit)
             )
-            # Convert back from dict to Question objects if necessary, or adjust schema to return dicts
-            # For now, assuming Question.from_dict() exists or similar reconstruction is handled upstream
-            # If Question objects are complex, consider caching only IDs and fetching full objects later.
-            # For simplicity, assuming to_dict() and from_dict() are available for Question model.
-            return [Question(**q_data) for q_data in recommended_questions_data]
+            return recommended_questions
 
         except Exception as e:
             logger.error(f"Error in MathRecommendService for user {user_id}: {e}", exc_info=True)
             return []
+
+    async def recommend(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """API endpoint için recommend metodu - request body'den user_id alır"""
+        try:
+            user_id = request.get("user_id")
+            limit = request.get("limit", 5)
+            
+            if not user_id:
+                raise ValueError("user_id is required")
+            
+            # Bu metod session'ı dışarıdan almalı, şimdilik mock dönelim
+            # Gerçek implementasyonda session dependency injection kullanılmalı
+            return {
+                "status": "success",
+                "message": "Recommendation service is working",
+                "user_id": user_id,
+                "limit": limit,
+                "note": "Full implementation requires session injection"
+            }
+        except Exception as e:
+            logger.error(f"Error in recommend method: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": str(e)
+            }
 
 # Global instance (for dependency injection)
 math_recommend_service = MathRecommendService(

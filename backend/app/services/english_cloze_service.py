@@ -1,9 +1,12 @@
 import logging
-from typing import List
+from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError, TypeAdapter
+import json
+import re
 
 from app.services.llm_gateway import llm_gateway
+from app.services.question_generator import question_generator
 from app.repositories.question_repository import QuestionRepository
 # --- YENİ EKLENENLER ---
 # Bu bileşenlerin oluşturulduğunu varsayıyoruz (Görev 1 & 2)
@@ -26,6 +29,89 @@ class EnglishClozeService:
         self.llm_gateway = llm_gateway_service
         self.context_builder = context_builder
         self.question_repo = question_repo
+
+    def _repair_json_response(self, llm_response: str, max_repair_attempts: int = 3) -> Optional[List[Dict[str, Any]]]:
+        """JSON response'u onarmaya çalışır"""
+        for attempt in range(max_repair_attempts):
+            try:
+                # 1. Temiz JSON parsing dene
+                if isinstance(llm_response, str):
+                    # Markdown code blocks'ları temizle
+                    llm_response = re.sub(r'```json\s*', '', llm_response)
+                    llm_response = re.sub(r'```\s*$', '', llm_response)
+                    llm_response = llm_response.strip()
+                    
+                    parsed = json.loads(llm_response)
+                    
+                    # Array formatını kontrol et
+                    if isinstance(parsed, list):
+                        return parsed
+                    elif isinstance(parsed, dict) and "questions" in parsed:
+                        return parsed["questions"]
+                    elif isinstance(parsed, dict) and "data" in parsed:
+                        return parsed["data"]
+                    else:
+                        return [parsed]  # Tek obje ise array'e çevir
+                
+                elif isinstance(llm_response, list):
+                    return llm_response
+                elif isinstance(llm_response, dict):
+                    if "questions" in llm_response:
+                        return llm_response["questions"]
+                    elif "data" in llm_response:
+                        return llm_response["data"]
+                    else:
+                        return [llm_response]
+                        
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON repair attempt {attempt + 1} failed: {e}")
+                if attempt < max_repair_attempts - 1:
+                    # Basit repair stratejileri
+                    if "```" in llm_response:
+                        # Markdown temizleme
+                        llm_response = re.sub(r'```.*?```', '', llm_response, flags=re.DOTALL)
+                    if llm_response.count('{') != llm_response.count('}'):
+                        # Eksik parantezleri ekle
+                        if llm_response.count('{') > llm_response.count('}'):
+                            llm_response += '}' * (llm_response.count('{') - llm_response.count('}'))
+                        else:
+                            llm_response = '{' * (llm_response.count('}') - llm_response.count('{')) + llm_response
+                    continue
+                else:
+                    logger.error(f"Failed to repair JSON after {max_repair_attempts} attempts")
+                    return None
+        
+        return None
+
+    def _validate_and_repair_question_data(self, q_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Tek bir soru verisini validate eder ve gerekirse onarır"""
+        try:
+            # Zorunlu alanları kontrol et
+            required_fields = ["cloze_sentence", "correct_answer", "distractors", "original_sentence"]
+            for field in required_fields:
+                if field not in q_data or not q_data[field]:
+                    logger.warning(f"Missing required field: {field}")
+                    return None
+            
+            # Distractors array kontrolü
+            if not isinstance(q_data.get("distractors"), list) or len(q_data["distractors"]) < 2:
+                logger.warning("Invalid distractors array")
+                return None
+            
+            # Correct answer distractors'da olmamalı
+            if q_data["correct_answer"] in q_data["distractors"]:
+                logger.warning("Correct answer found in distractors, removing duplicates")
+                q_data["distractors"] = [d for d in q_data["distractors"] if d != q_data["correct_answer"]]
+            
+            # Default değerler
+            q_data.setdefault("difficulty_level", 3)
+            q_data.setdefault("error_type_addressed", "grammar")
+            
+            return q_data
+            
+        except Exception as e:
+            logger.error(f"Error validating question data: {e}")
+            return None
 
     async def generate_cloze_questions(
         self,
@@ -54,6 +140,7 @@ class EnglishClozeService:
             # 3. MCP üzerinden LLM çağır
             from app.core.mcp_utils import mcp_utils
             
+            llm_response = None
             try:
                 if mcp_utils.is_initialized:
                     mcp_response = await mcp_utils.call_tool(
@@ -72,9 +159,6 @@ class EnglishClozeService:
                     
                     if mcp_response["success"]:
                         llm_response = mcp_response["data"]
-                        if isinstance(llm_response, str):
-                            import json
-                            llm_response = json.loads(llm_response)
                     else:
                         logger.warning(f"MCP cloze generation failed: {mcp_response.get('error')}")
                         # Fallback to direct LLM
@@ -103,23 +187,35 @@ class EnglishClozeService:
                     max_retries=3
                 )
 
-            if not llm_response["success"]:
-                logger.error(f"LLM Gateway failed to generate cloze questions: {llm_response.get('error')}")
+            if not llm_response or not llm_response.get("success", False):
+                logger.error(f"LLM Gateway failed to generate cloze questions: {llm_response}")
                 return []
 
-            generated_cloze_data = llm_response["parsed_json"]
+            # 4. JSON response'u parse et ve onar
+            raw_response = llm_response.get("parsed_json") or llm_response.get("data") or llm_response.get("response")
+            if not raw_response:
+                logger.error("No response data found in LLM response")
+                return []
+
+            # JSON repair
+            generated_cloze_data = self._repair_json_response(raw_response)
+            if not generated_cloze_data:
+                logger.error("Failed to parse or repair JSON response")
+                return []
+
             created_questions = []
 
             for q_data in generated_cloze_data:
-                try: # Bu kısım büyük ölçüde aynı kalır
-                    # Validate each generated question against the schema
-                    validated_q = ClozeQuestionSchema(**q_data)
-                    
-                    # Basic validation: correct answer not in distractors
-                    if validated_q.correct_answer in validated_q.distractors:
-                        logger.warning(f"Generated cloze question has correct answer in distractors. Skipping: {validated_q.original_sentence}")
+                try:
+                    # Validate and repair individual question data
+                    repaired_q_data = self._validate_and_repair_question_data(q_data)
+                    if not repaired_q_data:
+                        logger.warning(f"Skipping invalid question data: {q_data}")
                         continue
 
+                    # Validate each generated question against the schema
+                    validated_q = ClozeQuestionSchema(**repaired_q_data)
+                    
                     # Create QuestionCreate schema for database insertion
                     question_create = QuestionCreate(
                         subject=Subject.ENGLISH,

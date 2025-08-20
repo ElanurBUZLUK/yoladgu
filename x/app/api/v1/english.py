@@ -18,6 +18,9 @@ from app.schemas.cefr_assessment import CEFRAssessmentRequest, CEFRAssessmentRes
 from app.services.cefr_assessment_service import cefr_assessment_service
 from app.services.english_cloze_service import english_cloze_service # NEW IMPORT
 from app.services.user_service import user_service # ADDED FOR TODO
+from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig
+import hashlib
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,36 @@ class EnglishQuestionResponse(BaseModel):
     difficulty: int
     topic: str
     latency_ms: int
+
+class ClozeGenerationRequest(BaseModel):
+    student_id: str
+    target_error_tag: Optional[str] = Field(None, description="Target error tag for cloze generation")
+    k: int = Field(3, ge=1, le=10, description="Number of cloze questions to generate")
+
+def _cloze_generation_key_builder(*args, **kwargs) -> str:
+    """Build idempotency key for cloze generation"""
+    # Extract parameters from request
+    request = None
+    for arg in args:
+        if isinstance(arg, ClozeGenerationRequest):
+            request = arg
+            break
+    
+    if not request:
+        request = kwargs.get('request')
+    
+    if not request:
+        return "cloze_generation:default"
+    
+    # Create deterministic key based on request parameters
+    key_data = {
+        "student_id": request.student_id,
+        "target_error_tag": request.target_error_tag,
+        "k": request.k
+    }
+    
+    key_string = json.dumps(key_data, sort_keys=True)
+    return f"cloze_generation:{hashlib.md5(key_string.encode()).hexdigest()}"
 
 
 @router.get("/next-question", response_model=EnglishQuestionResponse)
@@ -239,6 +272,39 @@ class GenerateQuestionResponse(BaseModel):
     generation_info: Dict[str, Any]
 
 
+@idempotency_decorator(
+    key_builder=lambda req, user, db, svc: f"cloze_generation:{user.id}:{req.num_recent_errors}",
+    config=IdempotencyConfig(scope="cloze_generation", ttl_seconds=600)
+)
+async def _generate_cloze_internal(
+    req: ClozeGenRequest,
+    user: User,
+    db: AsyncSession,
+    svc
+) -> GenerateQuestionResponse:
+    """Internal function for cloze generation with idempotency"""
+    cloze_question = await svc.generate_cloze_questions(session=db, user_id=str(user.id), num_questions=1, last_n_errors=req.num_recent_errors)
+
+    if not cloze_question:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate cloze question or no questions were returned."
+        )
+
+    # The service returns a list of questions, but this endpoint expects a single question.
+    # Take the first question from the list.
+    first_question = cloze_question[0]
+
+    return GenerateQuestionResponse(
+        success=True,
+        question=first_question.model_dump(), # Convert Pydantic model to dict
+        generation_info={
+            "error_type": first_question.topic_category, # Assuming error_type is stored in topic_category
+            "sub_type": None, # Sub-type is not directly available in Question model
+            "rule_explanation": first_question.question_metadata.get("rule_context") # Assuming rule_context is the explanation
+        }
+    )
+
 @router.post("/questions/generate", response_model=GenerateQuestionResponse, status_code=status.HTTP_200_OK)
 async def generate_cloze(
     req: ClozeGenRequest,
@@ -246,29 +312,9 @@ async def generate_cloze(
     db: AsyncSession = Depends(get_async_session), # Added db dependency
     svc = Depends(lambda: english_cloze_service)
 ):
-    """Generate a personalized English cloze question based on user's recent error patterns."""
+    """Generate a personalized English cloze question based on user's recent error patterns with idempotency."""
     try:
-        cloze_question = await svc.generate_cloze_questions(session=db, user_id=str(user.id), num_questions=1, last_n_errors=req.num_recent_errors) # Updated call
-
-        if not cloze_question:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to generate cloze question or no questions were returned."
-            )
-
-        # The service returns a list of questions, but this endpoint expects a single question.
-        # Take the first question from the list.
-        first_question = cloze_question[0]
-
-        return GenerateQuestionResponse(
-            success=True,
-            question=first_question.model_dump(), # Convert Pydantic model to dict
-            generation_info={
-                "error_type": first_question.topic_category, # Assuming error_type is stored in topic_category
-                "sub_type": None, # Sub-type is not directly available in Question model
-                "rule_explanation": first_question.question_metadata.get("rule_context") # Assuming rule_context is the explanation
-            }
-        )
+        return await _generate_cloze_internal(req, user, db, svc)
     except HTTPException:
         raise
     except Exception as e:

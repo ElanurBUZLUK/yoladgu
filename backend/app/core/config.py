@@ -172,6 +172,9 @@ class Settings(BaseSettings):
 
     def _validate_environment_config(self):
         """Validate configuration based on environment"""
+        # Fail-fast validation for critical settings
+        self._validate_critical_settings()
+        
         if self.environment == Environment.PRODUCTION:
             if self.debug:
                 raise ValueError("Debug mode cannot be enabled in production")
@@ -191,6 +194,78 @@ class Settings(BaseSettings):
             if self.storage_backend == StorageBackend.S3:
                 if not all([self.s3_access_key_id, self.s3_secret_access_key, self.s3_bucket_name]):
                     raise ValueError("S3 configuration incomplete for production")
+
+    def _validate_critical_settings(self):
+        """Fail-fast validation for critical environment variables"""
+        critical_errors = []
+        
+        # Database URL validation
+        if not self.database_url or self.database_url == "postgresql://user:password@localhost:5432/testdb":
+            critical_errors.append("DATABASE_URL must be configured")
+        
+        # Redis URL validation
+        if not self.redis_url or self.redis_url == "redis://localhost:6379/0":
+            critical_errors.append("REDIS_URL must be configured")
+        
+        # LLM API Key validation (at least one required)
+        if not self.openai_api_key and not self.anthropic_api_key:
+            if self.environment == Environment.PRODUCTION:
+                critical_errors.append("At least one LLM API key (OPENAI_API_KEY or ANTHROPIC_API_KEY) must be configured")
+            else:
+                logger.warning("No LLM API keys configured - some features may not work")
+        
+        # Feature flags validation
+        if not hasattr(self, 'enable_llm_fallback'):
+            self.enable_llm_fallback = os.getenv('ENABLE_LLM_FALLBACK', 'true').lower() == 'true'
+        
+        if not hasattr(self, 'fallback_to_templates'):
+            self.fallback_to_templates = os.getenv('FALLBACK_TO_TEMPLATES', 'true').lower() == 'true'
+        
+        # ELO/PFA parameters for LevelUpdateService
+        if not hasattr(self, 'elo_k_factor'):
+            self.elo_k_factor = float(os.getenv('ELO_K_FACTOR', '0.2'))
+        
+        if not hasattr(self, 'elo_tau_factor'):
+            self.elo_tau_factor = float(os.getenv('ELO_TAU_FACTOR', '1.0'))
+        
+        # Math recommendation parameters
+        if not hasattr(self, 'math_recommendation_weights'):
+            self.math_recommendation_weights = {
+                'difficulty_fit': float(os.getenv('MATH_WEIGHT_DIFFICULTY_FIT', '0.4')),
+                'neighbor_wrongs': float(os.getenv('MATH_WEIGHT_NEIGHBOR_WRONGS', '0.4')),
+                'diversity': float(os.getenv('MATH_WEIGHT_DIVERSITY', '0.2'))
+            }
+        
+        # English cloze generation parameters
+        if not hasattr(self, 'cloze_generation_params'):
+            self.cloze_generation_params = {
+                'max_retries': int(os.getenv('CLOZE_MAX_RETRIES', '3')),
+                'self_repair_attempts': int(os.getenv('CLOZE_SELF_REPAIR_ATTEMPTS', '2')),
+                'default_difficulty': int(os.getenv('CLOZE_DEFAULT_DIFFICULTY', '3'))
+            }
+        
+        # CEFR assessment parameters
+        if not hasattr(self, 'cefr_assessment_params'):
+            self.cefr_assessment_params = {
+                'max_retries': int(os.getenv('CEFR_MAX_RETRIES', '3')),
+                'strict_validation': os.getenv('CEFR_STRICT_VALIDATION', 'true').lower() == 'true',
+                'confidence_threshold': float(os.getenv('CEFR_CONFIDENCE_THRESHOLD', '0.7'))
+            }
+        
+        # Question Generation parameters
+        if not hasattr(self, 'question_generation_params'):
+            self.question_generation_params = {
+                'use_templates': os.getenv('USE_TEMPLATE_QUESTIONS', 'true').lower() == 'true',
+                'use_gpt': os.getenv('USE_GPT_QUESTIONS', 'true').lower() == 'true',
+                'template_fallback': os.getenv('TEMPLATE_FALLBACK', 'true').lower() == 'true',
+                'max_gpt_questions_per_day': int(os.getenv('MAX_GPT_QUESTIONS_PER_DAY', '100')),
+                'gpt_creativity': float(os.getenv('GPT_CREATIVITY', '0.7')),
+                'question_diversity_threshold': float(os.getenv('QUESTION_DIVERSITY_THRESHOLD', '0.8'))
+            }
+        
+        if critical_errors:
+            error_message = "Critical configuration errors:\n" + "\n".join(f"- {error}" for error in critical_errors)
+            raise ValueError(error_message)
 
     def _generate_secure_keys_if_needed(self):
         """Generate secure keys for development/testing if not provided"""

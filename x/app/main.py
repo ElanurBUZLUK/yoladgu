@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles # Added for serving static files
 from contextlib import asynccontextmanager
 import structlog
 
@@ -211,7 +212,7 @@ async def cache_health():
 from app.api.v1 import (
     math, english, users, mcp, dashboard, answers, pdf, scheduler, 
     analytics, sample_data, system_init, english_rag, math_rag, 
-    llm_management, vector_management, monitoring, assess
+    llm_management, vector_management, monitoring, assess, system
 )
 from app.api.v1 import mcp_monitoring, mcp_demo
 
@@ -234,6 +235,7 @@ app.include_router(analytics.router)
 app.include_router(sample_data.router)
 app.include_router(system_init.router)
 app.include_router(assess.router) # New assess router
+app.include_router(system.router) # System API (health checks)
 app.include_router(mcp_monitoring.router) # MCP Monitoring API
 app.include_router(mcp_demo.router) # MCP Demo API
 
@@ -249,6 +251,19 @@ async def root():
         "metrics": "/api/v1/monitoring/metrics" if settings.prometheus_enabled else "Metrics disabled"
     }
 
+# Serve static files for the frontend
+# IMPORTANT: The 'directory' path should point to your Angular project's 'dist' folder  
+# after you build it (e.g., by running 'ng build --configuration production' in frontend)
+# The default Angular build output is usually 'dist/<project-name>/'
+
+# Static serving temporarily disabled for testing
+# Uncomment when ready to serve frontend:
+# app.mount(
+#     "/app",
+#     StaticFiles(directory="../frontend/dist/adaptive-question-system-frontend", html=True),
+#     name="frontend_app"
+# )
+
 @app.get("/config", include_in_schema=False)
 async def config_info():
     """Configuration information (non-sensitive)"""
@@ -261,7 +276,7 @@ async def config_info():
         "rate_limit_enabled": settings.rate_limit_enabled,
         "storage_backend": settings.storage_backend.value,
         "content_moderation_enabled": settings.content_moderation_enabled,
-        "cost_monitoring_enabled": settings.cost_monitoring_enabled,
+        "cost_monitoring_enabled": settings.content_monitoring_enabled,
         "llm_providers_available": len(settings.llm_providers_available),
         "cors_origins_count": len(settings.cors_origins_list),
     }

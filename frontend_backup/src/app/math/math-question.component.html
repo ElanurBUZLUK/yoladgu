@@ -1,0 +1,52 @@
+<div class="math-container">
+  <h2>Matematik Soru Çöz</h2>
+
+  <!-- Loading State -->
+  <div *ngIf="loading" class="loading-state">
+    <p>Yükleniyor...</p>
+  </div>
+
+  <!-- Error State -->
+  <div *ngIf="error" class="error-state">
+    <p class="error-message">{{ error }}</p>
+    <button (click)="retry()" class="retry-button">Tekrar Dene</button>
+  </div>
+
+  <!-- Question Display -->
+  <div *ngIf="question && !loading && !error" class="question-container">
+    <div class="question-header">
+      <h3>Soru</h3>
+      <span class="difficulty">Zorluk: {{ question.difficulty_level }}/5</span>
+    </div>
+    
+    <div class="question-content">
+      <p>{{ question.text }}</p>
+    </div>
+
+    <div class="options-container">
+      <h4>Seçenekler:</h4>
+      <div class="options-grid">
+        <button 
+          *ngFor="let option of question.options; let i = index" 
+          (click)="submitAnswer(option)"
+          class="option-button"
+          [disabled]="loading">
+          {{ option }}
+        </button>
+      </div>
+    </div>
+
+    <div *ngIf="question.hint" class="hint-container">
+      <details>
+        <summary>İpucu</summary>
+        <p>{{ question.hint }}</p>
+      </details>
+    </div>
+  </div>
+
+  <!-- No Question State -->
+  <div *ngIf="!question && !loading && !error" class="no-question">
+    <p>Soru bulunamadı.</p>
+    <button (click)="retry()" class="retry-button">Tekrar Dene</button>
+  </div>
+</div>

@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 import logging
+import hashlib
+import json
 
 from app.core.database import get_async_session
 from app.middleware.auth import get_current_student
@@ -15,6 +17,7 @@ from app.schemas.question import (
     GetQuestionsByLevelResponse, GetQuestionPoolResponse, GetMathTopicsResponse,
     GetDifficultyDistributionResponse, GetRandomQuestionResponse
 )
+from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig
 from sqlalchemy import select, and_, func, distinct
 
 logger = logging.getLogger(__name__)
@@ -36,16 +39,39 @@ class QuestionRecommendationRequest(BaseModel):
     limit: int = Field(10, description="Number of questions to recommend")
     exclude_recent: bool = Field(True, description="Exclude recently answered questions")
 
+def _math_recommend_key_builder(*args, **kwargs) -> str:
+    """Build idempotency key for math recommendation"""
+    # Extract user_id and limit from request
+    request = None
+    for arg in args:
+        if isinstance(arg, QuestionRecommendationRequest):
+            request = arg
+            break
+    
+    if not request:
+        # Try to get from kwargs
+        request = kwargs.get('request')
+    
+    if not request:
+        return "math_recommend:default"
+    
+    # Create deterministic key based on request parameters
+    key_data = {
+        "user_id": getattr(request, 'user_id', 'unknown'),
+        "limit": getattr(request, 'limit', 10),
+        "exclude_recent": getattr(request, 'exclude_recent', True)
+    }
+    
+    key_string = json.dumps(key_data, sort_keys=True)
+    return f"math_recommend:{hashlib.md5(key_string.encode()).hexdigest()}"
+
 @recommend_router.post("/recommend")
 async def recommend_math(body: RecommendRequest, svc = Depends(lambda: math_recommend_service)):
     """
     Recommends math content based on the request body.
     """
-    # This is a placeholder for the actual implementation
-    # The service method 'recommend' needs to be implemented in math_recommend_service.py
-    # For now, let's return a dummy response
     try:
-        recommended_content = await svc.recommend(body)
+        recommended_content = await svc.recommend(body.dict())
         return recommended_content
     except Exception as e:
         logger.exception(f"Error in math recommendation: {e}")
@@ -54,11 +80,51 @@ async def recommend_math(body: RecommendRequest, svc = Depends(lambda: math_reco
             detail=f"Math recommendation failed: {str(e)}"
         )
 
-class QuestionSearchResponse(BaseModel):
-    questions: List[QuestionResponse]
-    search_criteria: Dict[str, Any]
-    total_count: int
+# Add the missing /api/v1/math/recommend endpoint
+@router.post("/recommend", response_model=QuestionRecResponse)
+async def recommend_math_questions_api(
+    request: QuestionRecommendationRequest,
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """Math question recommendation endpoint - /api/v1/math/questions/recommend"""
+    try:
+        return await _recommend_math_questions_internal(request, current_user, db)
+    except Exception as e:
+        logger.exception(f"Error in math recommendation API: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Math recommendation failed: {str(e)}"
+        )
 
+@idempotency_decorator(
+    key_builder=_math_recommend_key_builder,
+    config=IdempotencyConfig(scope="math_recommendation", ttl_seconds=300)
+)
+async def _recommend_math_questions_internal(
+    request: QuestionRecommendationRequest,
+    current_user: User,
+    db: AsyncSession
+) -> QuestionRecResponse:
+    """Internal function for math question recommendation with idempotency"""
+    # Use the new MathRecommendService
+    recommended_questions = await math_recommend_service.recommend_questions(
+        user_id=current_user.id,
+        session=db,
+        limit=request.limit
+    )
+    
+    # Fetch the user's math profile to get global_skill for the response
+    profile = await math_profile_manager.get_or_create_profile(db, current_user)
+
+    return QuestionRecResponse(
+        questions=recommended_questions,
+        recommendation_reason="Based on your current math skill level and recommended difficulty.",
+        difficulty_adjustment=None, # Placeholder for now
+        total_available=len(recommended_questions), # Placeholder for now
+        user_level=profile.global_skill, # Use actual global skill
+        next_recommendations=[] # Placeholder for now
+    )
 
 @router.post("/recommend", response_model=QuestionRecResponse)
 async def recommend_math_questions(
@@ -66,32 +132,21 @@ async def recommend_math_questions(
     current_user: User = Depends(get_current_student),
     db: AsyncSession = Depends(get_async_session)
 ):
-    """Recommend math questions based on user level and preferences"""
+    """Recommend math questions based on user level and preferences with idempotency"""
     try:
-        # Use the new MathRecommendService
-        recommended_questions = await math_recommend_service.recommend_questions(
-            user_id=current_user.id,
-            session=db,
-            limit=request.limit
-        )
-        
-        # Fetch the user's math profile to get global_skill for the response
-        profile = await math_profile_manager.get_or_create_profile(db, current_user)
-
-        return QuestionRecResponse(
-            questions=recommended_questions,
-            recommendation_reason="Based on your current math skill level and recommended difficulty.",
-            difficulty_adjustment=None, # Placeholder for now
-            total_available=len(recommended_questions), # Placeholder for now
-            user_level=profile.global_skill, # Use actual global skill
-            next_recommendations=[] # Placeholder for now
-        )
+        return await _recommend_math_questions_internal(request, current_user, db)
     except Exception as e:
         logger.exception(f"Error in question recommendation: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Question recommendation failed: {str(e)}"
         )
+
+class QuestionSearchResponse(BaseModel):
+    questions: List[QuestionResponse]
+    search_criteria: Dict[str, Any]
+    total_count: int
+
 
 @router.get("/search", response_model=QuestionSearchResponse)
 async def search_math_questions(
