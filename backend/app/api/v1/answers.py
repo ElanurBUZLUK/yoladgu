@@ -346,6 +346,9 @@ async def submit_answer(
             db, current_user, submission
         )
         
+        # Update user level based on performance
+        await _update_user_level(db, current_user, evaluation, submission)
+        
         # Automatically schedule spaced repetition review
         spaced_repetition_result = None
         try:
@@ -379,6 +382,54 @@ async def submit_answer(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Answer submission failed: {str(e)}"
         )
+
+async def _update_user_level(db: AsyncSession, user: User, evaluation: AnswerEvaluation, submission: AnswerSubmission):
+    """Update user level based on answer evaluation"""
+    try:
+        # Get the question to determine subject
+        result = await db.execute(
+            select(Question).where(Question.id == submission.question_id)
+        )
+        question = result.scalar_one_or_none()
+        
+        if not question:
+            return
+        
+        # Get recent performance for this subject
+        recent_attempts = await db.execute(
+            select(StudentAttempt)
+            .where(
+                and_(
+                    StudentAttempt.user_id == user.id,
+                    StudentAttempt.subject == question.subject
+                )
+            )
+            .order_by(desc(StudentAttempt.attempt_date))
+            .limit(20)  # Last 20 attempts
+        )
+        
+        attempts = recent_attempts.scalars().all()
+        if len(attempts) >= 10:  # Need at least 10 attempts for level adjustment
+            recent_accuracy = sum(1 for a in attempts if a.is_correct) / len(attempts)
+            
+            # Update level based on performance
+            if question.subject == Subject.MATH:
+                if recent_accuracy > 0.8 and user.current_math_level < 5:
+                    user.current_math_level += 1
+                elif recent_accuracy < 0.3 and user.current_math_level > 1:
+                    user.current_math_level -= 1
+            elif question.subject == Subject.ENGLISH:
+                if recent_accuracy > 0.8 and user.current_english_level < 5:
+                    user.current_english_level += 1
+                elif recent_accuracy < 0.3 and user.current_english_level > 1:
+                    user.current_english_level -= 1
+            
+            await db.commit()
+            logger.info(f"Updated user {user.id} levels: Math={user.current_math_level}, English={user.current_english_level}")
+            
+    except Exception as e:
+        logger.error(f"Error updating user level: {e}")
+        # Don't fail the main submission if level update fails
 
 
 @router.post("/evaluate", response_model=AnswerEvaluation)

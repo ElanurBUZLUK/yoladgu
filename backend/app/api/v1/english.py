@@ -203,21 +203,39 @@ async def _generate_adaptive_question(db: AsyncSession, user: User, session_data
             elif recent_accuracy < 0.4:
                 target_difficulty = max(1, target_difficulty - 1)
         
-        # Get question with target difficulty
-        result = await db.execute(
-            select(Question)
-            .where(
-                and_(
-                    Question.subject == Subject.ENGLISH,
-                    Question.difficulty_level == target_difficulty,
-                    Question.question_type == QuestionType.MULTIPLE_CHOICE
-                )
+        # Consider learning style for question type preference
+        learning_style = user.learning_style if hasattr(user, 'learning_style') else None
+        preferred_question_types = []
+        
+        if learning_style:
+            if learning_style.value == "visual":
+                preferred_question_types = [QuestionType.MULTIPLE_CHOICE, QuestionType.TRUE_FALSE]
+            elif learning_style.value == "auditory":
+                preferred_question_types = [QuestionType.FILL_BLANK, QuestionType.OPEN_ENDED]
+            elif learning_style.value == "kinesthetic":
+                preferred_question_types = [QuestionType.OPEN_ENDED, QuestionType.FILL_BLANK]
+            else:  # mixed
+                preferred_question_types = [QuestionType.MULTIPLE_CHOICE, QuestionType.FILL_BLANK, QuestionType.OPEN_ENDED]
+        
+        # Build query with learning style consideration
+        query = select(Question).where(
+            and_(
+                Question.subject == Subject.ENGLISH,
+                Question.difficulty_level == target_difficulty
             )
-            .order_by(func.random())
-            .limit(1)
         )
         
+        # Add question type filter if learning style is specified
+        if preferred_question_types:
+            query = query.where(Question.question_type.in_(preferred_question_types))
+        else:
+            query = query.where(Question.question_type == QuestionType.MULTIPLE_CHOICE)
+        
+        query = query.order_by(func.random()).limit(1)
+        
+        result = await db.execute(query)
         question = result.scalar_one_or_none()
+        
         if not question:
             # Fallback to any available question
             result = await db.execute(
