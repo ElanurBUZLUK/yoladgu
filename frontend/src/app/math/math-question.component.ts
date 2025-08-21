@@ -56,6 +56,10 @@ export class MathQuestionComponent implements OnInit {
     });
   }
 
+  getOptionLetter(index: number): string {
+    return String.fromCharCode(65 + index); // A, B, C, D...
+  }
+
   retry(): void {
     this.loadQuestion();
   }

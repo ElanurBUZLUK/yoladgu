@@ -31,7 +31,8 @@
           (click)="submitAnswer(option)"
           class="option-button"
           [disabled]="loading">
-          {{ option }}
+          <span class="option-letter">{{ getOptionLetter(i) }}</span>
+          <span class="option-text">{{ option }}</span>
         </button>
       </div>
     </div>

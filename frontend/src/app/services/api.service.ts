@@ -35,15 +35,30 @@ export class ApiService {
         // Backend'ten gelen response'u frontend formatına çevir
         if (response.questions && response.questions.length > 0) {
           const question = response.questions[0];
+          
+          // Options formatını dönüştür (object -> array)
+          let optionsArray = [];
+          if (question.options) {
+            if (Array.isArray(question.options)) {
+              // Eski format: array
+              optionsArray = question.options;
+            } else if (typeof question.options === 'object') {
+              // Yeni format: {A: "1", B: "2", C: "3", D: "4"}
+              optionsArray = Object.values(question.options);
+            }
+          }
+          
           return {
             id: question.id,
             text: question.content,
-            options: question.options || [],
+            options: optionsArray,
+            optionsMap: question.options, // Orijinal options objesi
             correct_answer: question.correct_answer,
             difficulty_level: question.difficulty_level,
-            topic: question.topic,
+            topic: question.topic_category || question.topic,
             hint: question.hint,
-            explanation: question.explanation
+            explanation: question.explanation,
+            question_type: question.question_type
           };
         }
         return null;
