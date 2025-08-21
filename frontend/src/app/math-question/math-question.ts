@@ -40,7 +40,7 @@ export class MathQuestionComponent implements OnInit, OnDestroy {
     this.loading = true;
     
     // For now, try API first but fallback to static questions immediately if it fails
-    this.apiService.getMathQuestions('medium', 5).subscribe({
+    this.apiService.getMathQuestions(1, 5).subscribe({
       next: (response) => {
         console.log('API Response:', response);
         // Try to parse backend response format

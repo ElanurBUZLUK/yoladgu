@@ -48,7 +48,7 @@ export interface AIRecommendation {
   providedIn: 'root'
 })
 export class ApiService {
-  private baseUrl = 'http://localhost:8000/api/v1'; // Backend API URL
+  private baseUrl = 'http://localhost:8000/api/v1'; // Test Backend API URL
 
   constructor(private http: HttpClient) { }
 
@@ -70,19 +70,19 @@ export class ApiService {
     return this.http.get<Question[]>(`${this.baseUrl}/questions/${subject}`, { params });
   }
 
-  getMathQuestions(difficulty: string = 'medium', count: number = 5): Observable<any> {
-    // Use the actual backend endpoint for generating math questions
+  getMathQuestions(student_id: number = 1, k: number = 5): Observable<any> {
+    // Use the real ML/RAG endpoint for math questions
     return this.http.post<any>(`${this.baseUrl}/math/questions/generate`, {
-      user_id: "1", // TODO: Get from auth service
-      k: count
+      user_id: student_id.toString(),
+      k: k
     });
   }
 
-  getEnglishQuestions(difficulty: string = 'medium', count: number = 5): Observable<any> {
-    // Use the actual backend endpoint for generating English questions  
+  getEnglishQuestions(student_id: number = 1, k: number = 5): Observable<any> {
+    // Use the real ML/RAG endpoint for English questions  
     return this.http.post<any>(`${this.baseUrl}/english/questions/generate`, {
-      student_id: "1", // TODO: Get from auth service
-      k: count
+      student_id: student_id.toString(),
+      k: k
     });
   }
 
@@ -108,7 +108,11 @@ export class ApiService {
 
   // Dashboard data
   getDashboardData(userId: number): Observable<any> {
-    return this.http.get(`${this.baseUrl}/dashboard/${userId}`);
+    return this.http.get(`${this.baseUrl}/dashboard/progress?student_id=${userId}`);
+  }
+
+  getDashboardRecommendations(userId: number): Observable<any> {
+    return this.http.get(`${this.baseUrl}/dashboard/recommendations?student_id=${userId}`);
   }
 
   // Question generation

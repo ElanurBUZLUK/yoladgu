@@ -265,6 +265,44 @@ class MathRecommendService:
             logger.error(f"❌ Database operation failed: {e}")
             raise
     
+    async def _get_vector_similar_questions(
+        self,
+        db: AsyncSession,
+        student_id: str,
+        error_patterns: List[str],
+        difficulty_level: float,
+        limit: int = 10
+    ) -> List[Question]:
+        """Get questions similar to student's error patterns using vector DB"""
+        
+        try:
+            if not error_patterns:
+                return []
+            
+            # Create embedding for error patterns
+            error_text = " ".join(error_patterns)
+            error_embedding = await embedding_service.get_embedding(error_text)
+            
+            if not error_embedding:
+                logger.warning(f"⚠️ Could not generate embedding for error patterns")
+                return []
+            
+            # Use vector similarity search
+            similar_questions = await vector_index_manager.find_similar_questions(
+                embedding=error_embedding,
+                subject=Subject.MATH,
+                difficulty_level=difficulty_level,
+                limit=limit,
+                exclude_student_id=student_id
+            )
+            
+            logger.info(f"🔍 Found {len(similar_questions)} vector-similar questions for student {student_id}")
+            return similar_questions
+            
+        except Exception as e:
+            logger.error(f"❌ Vector similarity search failed: {e}")
+            return []
+
     async def _get_recent_error_patterns(
         self,
         db: AsyncSession,

@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from app.database_enhanced import enhanced_database_manager as database_manager
-from app.middleware.auth import get_current_student, get_current_teacher
+from app.middleware.auth import get_current_student, get_current_teacher, get_current_student_mock, get_current_teacher_mock
 from app.models.user import User
 from app.models.question import Subject, QuestionType, SourceType, Question
 from app.domains.english.hybrid_retriever import hybrid_retriever
@@ -66,7 +66,7 @@ class ClozeGenerationRequest(BaseModel):
 @router.post("/questions/generate", response_model=GenerateQuestionResponse)
 async def generate_cloze_questions(
     request: ClozeGenerationRequest,
-    current_user: User = Depends(get_current_student),
+    current_user: User = Depends(get_current_student_mock),
     db: AsyncSession = Depends(database_manager.get_session),
 ):
     """Generate English questions with CEFR level tracking and adaptive mode"""

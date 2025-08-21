@@ -8,29 +8,45 @@ class MCPClientService:
     
     def __init__(self):
         self.is_connected = False
-        # Import tools directly
-        from .tools.question_generator import QuestionGeneratorService
-        from .tools.answer_evaluator import AnswerEvaluatorTool
-        from .tools.analytics import AnalyticsTool
-        from .tools.pdf_parser import PDFParserTool
-        from .tools.pdf_content_reader import PDFContentReaderTool
-        from .tools.question_delivery import QuestionDeliveryTool
-        from .tools.math_generator import MathGeneratorTool
-        from .tools.math_evaluator import MathEvaluatorTool
+        self.tools = {}
         
-        from app.services.llm_gateway import llm_gateway
-        from app.repositories.question_repository import QuestionRepository
-        
-        self.tools = {
-            "question_generator": QuestionGeneratorService(llm_gateway, QuestionRepository()),
-            "answer_evaluator": AnswerEvaluatorTool(),
-            "analytics": AnalyticsTool(),
-            "pdf_parser": PDFParserTool(),
-            "pdf_content_reader": PDFContentReaderTool(),
-            "question_delivery": QuestionDeliveryTool(),
-            "math_generator": MathGeneratorTool(),
-            "math_evaluator": MathEvaluatorTool()
-        }
+        # Try to import tools, fallback to mock if not available
+        try:
+            from .tools.question_generator import QuestionGeneratorService
+            from .tools.answer_evaluator import AnswerEvaluatorTool
+            from .tools.analytics import AnalyticsTool
+            from .tools.pdf_parser import PDFParserTool
+            from .tools.pdf_content_reader import PDFContentReaderTool
+            from .tools.question_delivery import QuestionDeliveryTool
+            from .tools.math_generator import MathGeneratorTool
+            from .tools.math_evaluator import MathEvaluatorTool
+            
+            from app.services.llm_gateway import llm_gateway
+            from app.repositories.question_repository import QuestionRepository
+            
+            self.tools = {
+                "question_generator": QuestionGeneratorService(llm_gateway, QuestionRepository()),
+                "answer_evaluator": AnswerEvaluatorTool(),
+                "analytics": AnalyticsTool(),
+                "pdf_parser": PDFParserTool(),
+                "pdf_content_reader": PDFContentReaderTool(),
+                "question_delivery": QuestionDeliveryTool(),
+                "math_generator": MathGeneratorTool(),
+                "math_evaluator": MathEvaluatorTool()
+            }
+        except ImportError as e:
+            print(f"⚠️ MCP tools import failed: {e}")
+            # Use mock tools
+            self.tools = {
+                "question_generator": MockTool("question_generator"),
+                "answer_evaluator": MockTool("answer_evaluator"),
+                "analytics": MockTool("analytics"),
+                "pdf_parser": MockTool("pdf_parser"),
+                "pdf_content_reader": MockTool("pdf_content_reader"),
+                "question_delivery": MockTool("question_delivery"),
+                "math_generator": MockTool("math_generator"),
+                "math_evaluator": MockTool("math_evaluator")
+            }
     
     async def connect(self, server_command: Optional[List[str]] = None):
         """MCP connection simulation"""
@@ -386,12 +402,55 @@ class MCPClientService:
         return self.is_connected
 
 
-# Global MCP client instance
-mcp_client = MCPClientService()
+# Global MCP client instance - Lazy initialization
+mcp_client = None
 
 
 async def get_mcp_client() -> MCPClientService:
-    """MCP client instance'ını al"""
-    if not mcp_client.is_connected:
-        await mcp_client.connect()
+    """MCP client instance'ını al - Lazy initialization"""
+    global mcp_client
+    if mcp_client is None:
+        try:
+            mcp_client = MCPClientService()
+            await mcp_client.connect()
+        except Exception as e:
+            print(f"⚠️ MCP Client initialization failed: {e}")
+            # Return a mock client if MCP fails
+            mcp_client = MockMCPClient()
     return mcp_client
+
+
+class MockTool:
+    """Mock tool for fallback when MCP tools are not available"""
+    
+    def __init__(self, name: str):
+        self.name = name
+    
+    async def execute(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "error": f"MCP tool {self.name} not available",
+            "fallback": True,
+            "arguments": arguments
+        }
+
+
+class MockMCPClient:
+    """Mock MCP Client for fallback when MCP is not available"""
+    
+    def __init__(self):
+        self.is_connected = True
+    
+    async def connect(self, *args, **kwargs):
+        pass
+    
+    async def disconnect(self):
+        pass
+    
+    async def generate_english_question(self, *args, **kwargs):
+        return {"error": "MCP not available", "fallback": True}
+    
+    async def evaluate_answer(self, *args, **kwargs):
+        return {"error": "MCP not available", "fallback": True}
+    
+    async def health_check(self):
+        return False

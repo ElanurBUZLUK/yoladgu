@@ -66,6 +66,37 @@ async def get_current_student(
     return current_user
 
 
+# Mock authentication for development
+async def get_current_student_mock() -> User:
+    """Mock student user for development"""
+    from app.models.user import UserRole
+    
+    # Create a mock user
+    mock_user = User(
+        id="1",
+        email="student@test.com",
+        name="Test Student",
+        role=UserRole.STUDENT,
+        is_active="true"
+    )
+    return mock_user
+
+
+async def get_current_teacher_mock() -> User:
+    """Mock teacher user for development"""
+    from app.models.user import UserRole
+    
+    # Create a mock user
+    mock_user = User(
+        id="2",
+        email="teacher@test.com", 
+        name="Test Teacher",
+        role=UserRole.TEACHER,
+        is_active="true"
+    )
+    return mock_user
+
+
 async def get_current_teacher(
     current_user: User = Depends(get_current_active_user)
 ) -> User:

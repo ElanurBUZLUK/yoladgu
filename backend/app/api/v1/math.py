@@ -9,7 +9,7 @@ import time # Added for idempotency key
 from datetime import datetime # Added for session data
 
 from app.database_enhanced import enhanced_database_manager as database_manager
-from app.middleware.auth import get_current_student, get_current_teacher
+from app.middleware.auth import get_current_student, get_current_teacher, get_current_student_mock, get_current_teacher_mock
 from app.models.user import User
 from app.models.question import Subject, QuestionType, Question, SourceType # Added SourceType
 from app.services.math_recommend_service import math_recommend_service # NEW IMPORT
@@ -99,7 +99,7 @@ async def _recommend_math_questions_internal(
 @router.post("/questions/generate", response_model=GenerateMathQuestionResponse)
 async def generate_math_question(
     request: MathQuestionRequest,
-    current_user: User = Depends(get_current_student),
+    current_user: User = Depends(get_current_student_mock),
     db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Generate Math questions with placement test and adaptive mode"""

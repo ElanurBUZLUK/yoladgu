@@ -1,7 +1,32 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List
-from mcp.types import Tool, CallToolResult, TextContent
 import json
+
+# Try to import MCP types, fallback to mock if not available
+try:
+    from mcp.types import Tool, CallToolResult, TextContent
+    MCP_AVAILABLE = True
+except ImportError:
+    MCP_AVAILABLE = False
+    # Mock MCP types
+    from dataclasses import dataclass
+    from typing import List as TypeList
+    
+    @dataclass
+    class TextContent:
+        type: str
+        text: str
+    
+    @dataclass
+    class CallToolResult:
+        content: TypeList[TextContent]
+        isError: bool = False
+    
+    @dataclass
+    class Tool:
+        name: str
+        description: str
+        inputSchema: Dict[str, Any]
 
 
 class BaseMCPTool(ABC):
