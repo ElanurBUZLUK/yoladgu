@@ -6,7 +6,7 @@ import logging
 import hashlib
 import json
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager as database_manager
 from app.middleware.auth import get_current_student
 from app.models.user import User
 from app.models.question import Subject, QuestionType, Question
@@ -18,14 +18,13 @@ from app.schemas.question import (
     GetDifficultyDistributionResponse, GetRandomQuestionResponse
 )
 from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig
+from app.core.error_handling import ErrorHandler, ErrorCode, ErrorSeverity
 from sqlalchemy import select, and_, func, distinct
 
 logger = logging.getLogger(__name__)
+error_handler = ErrorHandler()
 
-router = APIRouter(prefix="/api/v1/math/questions", tags=["math-questions"])
-
-# New router for /api/v1/math endpoints
-recommend_router = APIRouter(prefix="/api/v1/math", tags=["math-recommendation"])
+router = APIRouter(prefix="/api/v1/math", tags=["math"])
 
 class RecommendRequest(BaseModel):
     # Assuming a simple request for now, adjust as needed
@@ -36,6 +35,7 @@ class RecommendRequest(BaseModel):
     # desired_difficulty: Optional[int] = None
 
 class QuestionRecommendationRequest(BaseModel):
+    user_id: str = Field(..., description="User ID for recommendation")
     limit: int = Field(10, description="Number of questions to recommend")
     exclude_recent: bool = Field(True, description="Exclude recently answered questions")
 
@@ -65,37 +65,7 @@ def _math_recommend_key_builder(*args, **kwargs) -> str:
     key_string = json.dumps(key_data, sort_keys=True)
     return f"math_recommend:{hashlib.md5(key_string.encode()).hexdigest()}"
 
-@recommend_router.post("/recommend")
-async def recommend_math(body: RecommendRequest, svc = Depends(lambda: math_recommend_service)):
-    """
-    Recommends math content based on the request body.
-    """
-    try:
-        recommended_content = await svc.recommend(body.dict())
-        return recommended_content
-    except Exception as e:
-        logger.exception(f"Error in math recommendation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Math recommendation failed: {str(e)}"
-        )
-
-# Add the missing /api/v1/math/recommend endpoint
-@router.post("/recommend", response_model=QuestionRecResponse)
-async def recommend_math_questions_api(
-    request: QuestionRecommendationRequest,
-    current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
-):
-    """Math question recommendation endpoint - /api/v1/math/questions/recommend"""
-    try:
-        return await _recommend_math_questions_internal(request, current_user, db)
-    except Exception as e:
-        logger.exception(f"Error in math recommendation API: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Math recommendation failed: {str(e)}"
-        )
+# Removed duplicate /recommend endpoints
 
 @idempotency_decorator(
     key_builder=_math_recommend_key_builder,
@@ -109,9 +79,9 @@ async def _recommend_math_questions_internal(
     """Internal function for math question recommendation with idempotency"""
     # Use the new MathRecommendService
     recommended_questions = await math_recommend_service.recommend_questions(
-        user_id=current_user.id,
+        user_id=request.user_id,
         session=db,
-        limit=request.limit
+        num_questions=request.limit
     )
     
     # Fetch the user's math profile to get global_skill for the response
@@ -130,16 +100,22 @@ async def _recommend_math_questions_internal(
 async def recommend_math_questions(
     request: QuestionRecommendationRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Recommend math questions based on user level and preferences with idempotency"""
     try:
         return await _recommend_math_questions_internal(request, current_user, db)
     except Exception as e:
-        logger.exception(f"Error in question recommendation: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Question recommendation failed: {str(e)}"
+        return error_handler.handle_error(
+            error=e,
+            error_code=ErrorCode.LLM_SERVICE_ERROR,
+            message="Math question recommendation failed",
+            severity=ErrorSeverity.MEDIUM,
+            context={
+                "user_id": str(current_user.id),
+                "limit": request.limit,
+                "exclude_recent": request.exclude_recent
+            }
         )
 
 class QuestionSearchResponse(BaseModel):
@@ -148,14 +124,14 @@ class QuestionSearchResponse(BaseModel):
     total_count: int
 
 
-@router.get("/search", response_model=QuestionSearchResponse)
+@router.get("/questions/search", response_model=QuestionSearchResponse)
 async def search_math_questions(
     difficulty_level: Optional[int] = Query(None, description="Difficulty level filter"),
     topic_category: Optional[str] = Query(None, description="Topic category filter"),
     question_type: Optional[str] = Query(None, description="Question type filter"),
     limit: int = Query(10, description="Number of questions to return"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Search math questions with filters"""
     try:
@@ -188,12 +164,12 @@ async def search_math_questions(
         )
 
 
-@router.get("/by-level/{level}", response_model=GetQuestionsByLevelResponse)
+@router.get("/questions/by-level/{level}", response_model=GetQuestionsByLevelResponse)
 async def get_questions_by_level(
     level: int,
     limit: int = Query(10, description="Number of questions to return"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get math questions by difficulty level"""
     try:
@@ -223,11 +199,11 @@ async def get_questions_by_level(
         )
 
 
-@router.get("/pool", response_model=GetQuestionPoolResponse)
+@router.get("/questions/pool", response_model=GetQuestionPoolResponse)
 async def get_question_pool(
     difficulty_level: Optional[int] = Query(None, description="Difficulty level filter"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get question pool statistics"""
     try:
@@ -253,10 +229,10 @@ async def get_question_pool(
         )
 
 
-@router.get("/topics", response_model=GetMathTopicsResponse)
+@router.get("/questions/topics", response_model=GetMathTopicsResponse)
 async def get_math_topics(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get all math topics organized by level"""
     try:
@@ -290,10 +266,10 @@ async def get_math_topics(
         )
 
 
-@router.get("/difficulty-distribution", response_model=GetDifficultyDistributionResponse)
+@router.get("/questions/difficulty-distribution", response_model=GetDifficultyDistributionResponse)
 async def get_difficulty_distribution(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get difficulty distribution of math questions"""
     try:
@@ -333,11 +309,11 @@ async def get_difficulty_distribution(
         )
 
 
-@router.get("/random/{level}", response_model=GetRandomQuestionResponse)
+@router.get("/questions/random/{level}", response_model=GetRandomQuestionResponse)
 async def get_random_question(
     level: int,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get a random math question by level"""
     try:
@@ -370,11 +346,11 @@ async def get_random_question(
         )
 
 
-@router.get("/{question_id}", response_model=QuestionResponse)
+@router.get("/questions/{question_id}", response_model=QuestionResponse)
 async def get_question_by_id(
     question_id: str,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get a specific math question by ID"""
     try:

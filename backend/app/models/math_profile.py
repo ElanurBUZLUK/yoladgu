@@ -6,7 +6,7 @@ import uuid
 from collections import deque
 import json
 
-from app.core.database import Base
+from app.database import Base
 
 
 class MathProfile(Base):

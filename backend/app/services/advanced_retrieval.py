@@ -8,7 +8,7 @@ import numpy as np
 
 from app.core.cache import cache_service
 from app.services.embedding_service import embedding_service
-from app.core.database import database, get_async_session
+from app.database import database_manager
 from app.repositories.user_repository import user_repository
 from app.services.vector_index_manager import vector_index_manager
 

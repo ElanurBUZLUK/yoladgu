@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 import json # Added for hashing request body
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from app.middleware.auth import get_current_teacher, get_current_student
 from app.models.user import User
 from app.services.vector_index_manager import vector_index_manager
@@ -75,7 +75,7 @@ class LockStatusResponse(BaseModel):
 )
 async def batch_upsert_embeddings(
     request: BatchUpsertRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Batch upsert embeddings with distributed lock protection"""
@@ -103,7 +103,7 @@ async def batch_upsert_embeddings(
 )
 async def rebuild_vector_index(
     request: RebuildIndexRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Rebuild vector index for a namespace (idempotent operation)"""
@@ -133,7 +133,7 @@ async def rebuild_vector_index(
 )
 async def cleanup_old_slots(
     request: CleanupRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Clean up old slots, keeping only the most recent ones"""
@@ -161,7 +161,7 @@ async def cleanup_old_slots(
 
 @router.get("/statistics", response_model=GetVectorStatisticsResponse, status_code=status.HTTP_200_OK)
 async def get_vector_statistics(
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Get vector index statistics"""
@@ -180,7 +180,7 @@ async def get_vector_statistics(
 @router.get("/lock-status/{lock_key}", response_model=LockStatusResponse, status_code=status.HTTP_200_OK)
 async def check_lock_status(
     lock_key: str,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Check if a specific lock is currently held"""
@@ -213,7 +213,7 @@ async def check_lock_status(
 @router.delete("/lock/{lock_key}", response_model=ForceReleaseLockResponse, status_code=status.HTTP_200_OK)
 async def force_release_lock(
     lock_key: str,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Force release a lock (admin only)"""
@@ -245,7 +245,7 @@ async def force_release_lock(
 )
 async def rebuild_index_manual(
     namespace: str,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Manual rebuild using context manager (example)"""
@@ -280,7 +280,7 @@ async def rebuild_index_manual(
 # Health Check Endpoint
 @router.get("/health", response_model=VectorHealthCheckResponse, status_code=status.HTTP_200_OK)
 async def vector_health_check(
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Vector system health check"""

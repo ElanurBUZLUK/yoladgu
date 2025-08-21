@@ -5,7 +5,7 @@ from typing import Dict, Any, List
 import logging
 import time
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.core.config import settings
 from app.services.vector_index_manager import vector_index_manager
 from redis.asyncio import Redis
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
 
 @router.get("/readyz")
-async def health_check(db: AsyncSession = Depends(get_async_session)) -> Dict[str, Any]:
+async def health_check(db: AsyncSession = Depends(database_manager.get_session)) -> Dict[str, Any]:
     """
     Deep health check endpoint that verifies all critical system components.
     

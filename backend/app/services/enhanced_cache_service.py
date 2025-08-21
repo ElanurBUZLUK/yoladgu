@@ -112,7 +112,11 @@ class EnhancedCacheService:
         self.eviction_policy = "lru_priority"  # lru, lfu, lru_priority, random
         self.compression_threshold = 1024  # Compress items larger than 1KB
         
-        # Start cleanup task
+        # Start cleanup task - will be called during initialization
+        # self._start_cleanup_task()
+    
+    async def initialize(self):
+        """Initialize the cache service with background tasks"""
         self._start_cleanup_task()
     
     async def get(self, key: str, default: Any = None) -> Any:

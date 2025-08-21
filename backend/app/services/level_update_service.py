@@ -6,7 +6,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.math_profile_repository import MathProfileRepository
 from app.repositories.student_attempt_repository import StudentAttemptRepository
 from app.schemas.math_profile import MathProfileCreate
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 import math
@@ -272,7 +272,7 @@ class LevelUpdateService:
             logger.error(f"Error calculating expected outcome: {e}")
             return 0.5
 
-async def get_level_update_service(session: AsyncSession = Depends(get_async_session)) -> LevelUpdateService:
+async def get_level_update_service(session: AsyncSession = Depends(enhanced_database_manager.get_session)) -> LevelUpdateService:
     return LevelUpdateService(
         user_repository=UserRepository(), 
         math_profile_repository=MathProfileRepository(),

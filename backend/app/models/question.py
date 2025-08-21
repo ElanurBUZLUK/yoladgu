@@ -1,9 +1,40 @@
 from sqlalchemy import Column, String, Integer, Text, DateTime, Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, TSVECTOR
 from sqlalchemy.sql import func
+from sqlalchemy.types import UserDefinedType
 import uuid
 import enum
-from app.core.database import Base
+from app.database import Base
+
+
+class VECTOR(UserDefinedType):
+    """Custom PostgreSQL VECTOR type for pgvector"""
+    
+    def __init__(self, dimension=1536):
+        self.dimension = dimension
+    
+    def get_col_spec(self, **kw):
+        return f"VECTOR({self.dimension})"
+    
+    def bind_processor(self, dialect):
+        def process(value):
+            if value is None:
+                return value
+            # Convert list to string format for PostgreSQL
+            return '[' + ','.join(map(str, value)) + ']'
+        return process
+    
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if value is None:
+                return value
+            # Convert string back to list
+            if isinstance(value, str):
+                # Remove brackets and split by comma
+                value = value.strip('[]')
+                return [float(x.strip()) for x in value.split(',') if x.strip()]
+            return value
+        return process
 
 
 class Subject(str, enum.Enum):
@@ -53,6 +84,15 @@ class Question(Base):
     freshness_score = Column(Integer, nullable=True)  # 0-1; yeni/az görülmüş sorulara +
     last_seen_at = Column(DateTime(timezone=True), nullable=True)  # Son görülme zamanı
     quality_flags = Column(JSONB, nullable=True)  # {ambiguous: False, reviewed: True}
+    
+    # RAG System - Embedding columns
+    embedding = Column(VECTOR(1536), nullable=True)  # Question embedding vector
+    embedding_model = Column(String(100), nullable=True)  # Model used for embedding
+    embedding_generated_at = Column(DateTime(timezone=True), nullable=True)  # When embedding was generated
+    
+    # Enhanced metadata and search
+    question_metadata = Column(JSONB, nullable=True)  # Rich metadata for search
+    search_vector = Column(TSVECTOR, nullable=True)  # Full-text search vector
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

@@ -4,7 +4,7 @@ from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from app.services.answer_evaluation_service import answer_evaluation_service
 from app.services.error_pattern_service import error_pattern_service
 from app.services.level_adjustment_service import level_adjustment_service
@@ -337,7 +337,7 @@ class ClassPerformanceAnalyticsResponse(BaseModel):
 async def submit_answer(
     submission: AnswerSubmission,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Submit and evaluate a student answer"""
     
@@ -385,7 +385,7 @@ async def submit_answer(
 async def evaluate_answer(
     evaluation_request: AnswerEvaluationRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Evaluate an answer without saving to database (for practice/preview)"""
     
@@ -413,7 +413,7 @@ async def get_performance_metrics(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get comprehensive performance metrics for the current user"""
     
@@ -428,7 +428,7 @@ async def get_performance_metrics(
 async def get_error_analysis(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get detailed error analysis for the current user"""
     
@@ -443,7 +443,7 @@ async def get_error_analysis(
 async def get_detailed_error_analysis(
     subject: Subject,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get detailed subject-specific error analysis"""
     
@@ -458,7 +458,7 @@ async def get_detailed_error_analysis(
 async def get_level_adjustment_recommendation(
     subject: Subject,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get level adjustment recommendation for a subject"""
     
@@ -490,7 +490,7 @@ async def apply_level_adjustment(
     new_level: int = Query(..., ge=1, le=5, description="New level (1-5)"),
     reason: str = Query(..., description="Reason for adjustment"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Apply level adjustment for a subject"""
     
@@ -516,7 +516,7 @@ async def get_level_adjustment_history(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     limit: int = Query(20, ge=1, le=100, description="Number of adjustments to return"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get level adjustment history for the current user"""
     
@@ -536,7 +536,7 @@ async def get_level_adjustment_history(
 async def get_level_progression_prediction(
     subject: Subject,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get level progression prediction for a subject"""
     
@@ -556,7 +556,7 @@ async def get_level_progression_prediction(
 async def get_level_statistics(
     subject: Subject,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get level distribution statistics for a subject"""
     
@@ -574,7 +574,7 @@ async def get_user_attempts(
     limit: int = Query(20, ge=1, le=100, description="Number of attempts to return"),
     skip: int = Query(0, ge=0, description="Number of attempts to skip"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get user's answer attempts with pagination"""
     
@@ -627,7 +627,7 @@ async def get_user_attempts(
 async def get_attempt_details(
     attempt_id: str,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get detailed information about a specific attempt"""
     
@@ -708,7 +708,7 @@ async def get_attempt_details(
 async def get_personalized_feedback(
     question_id: str,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get personalized feedback for a question (based on latest attempt)"""
     
@@ -761,7 +761,7 @@ async def get_personalized_feedback(
 @router.get("/statistics/summary", response_model=StatisticsSummaryResponse)
 async def get_statistics_summary(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get a summary of user's answer statistics"""
     
@@ -823,7 +823,7 @@ async def get_user_performance_metrics_admin(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get performance metrics for any user (Teacher/Admin only)"""
     
@@ -839,7 +839,7 @@ async def get_user_error_analysis_admin(
     user_id: str,
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get error analysis for any user (Teacher/Admin only)"""
     
@@ -855,7 +855,7 @@ async def get_class_performance_analytics(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get class-wide performance analytics (Teacher/Admin only)"""
     
@@ -933,7 +933,7 @@ async def get_similar_students(
     subject: Subject,
     limit: int = Query(10, ge=1, le=50, description="Number of similar students to return"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Find students with similar error patterns"""
     
@@ -954,7 +954,7 @@ async def get_error_trend_analysis(
     subject: Subject,
     days: int = Query(30, ge=7, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get error trend analysis for a subject"""
     
@@ -969,7 +969,7 @@ async def get_error_trend_analysis(
 async def get_intervention_recommendations(
     subject: Subject,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get personalized intervention recommendations"""
     
@@ -993,7 +993,7 @@ async def get_intervention_recommendations(
 async def track_error_pattern(
     error_data: dict,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Manually track an error pattern (for testing/admin purposes)"""
     
@@ -1043,7 +1043,7 @@ async def get_class_error_analytics(
     days: int = Query(30, ge=7, le=365, description="Number of days to analyze"),
     min_students: int = Query(3, ge=1, le=20, description="Minimum students affected for significance"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get class-wide error analytics (Teacher/Admin only)"""
     
@@ -1060,7 +1060,7 @@ async def get_user_error_patterns_admin(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     limit: int = Query(20, ge=1, le=100, description="Number of patterns to return"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get error patterns for any user (Teacher/Admin only)"""
     
@@ -1080,7 +1080,7 @@ async def get_user_error_patterns_admin(
 async def get_error_analytics_overview(
     days: int = Query(30, ge=7, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get overview of error analytics across all subjects (Teacher/Admin only)"""
     
@@ -1151,7 +1151,7 @@ async def batch_evaluate_level_adjustments(
     subject: Subject,
     min_attempts: int = Query(10, ge=5, le=50, description="Minimum attempts required"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Batch evaluate level adjustments for all users (Teacher/Admin only)"""
     
@@ -1179,7 +1179,7 @@ async def admin_apply_level_adjustment(
     new_level: int = Query(..., ge=1, le=5, description="New level (1-5)"),
     reason: str = Query(..., description="Reason for adjustment"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Apply level adjustment for any user (Teacher/Admin only)"""
     
@@ -1221,7 +1221,7 @@ async def get_user_level_history_admin(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     limit: int = Query(20, ge=1, le=100, description="Number of adjustments to return"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get level adjustment history for any user (Teacher/Admin only)"""
     
@@ -1241,7 +1241,7 @@ async def get_user_level_history_admin(
 @router.get("/admin/level-analytics", response_model=LevelAnalyticsOverviewResponse)
 async def get_level_analytics_overview(
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get comprehensive level analytics overview (Teacher/Admin only)"""
     
@@ -1288,7 +1288,7 @@ async def get_due_reviews(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     limit: int = Query(20, ge=1, le=100, description="Number of reviews to return"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get questions due for review"""
     
@@ -1307,7 +1307,7 @@ async def get_due_reviews(
 async def schedule_review(
     request: ScheduleReviewRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Schedule next review for a question"""
     
@@ -1322,7 +1322,7 @@ async def schedule_review(
 async def get_review_statistics(
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get review statistics for the current user"""
     
@@ -1337,7 +1337,7 @@ async def get_review_statistics(
 async def get_review_calendar(
     days_ahead: int = Query(30, ge=1, le=90, description="Number of days ahead to show"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get review calendar for upcoming days"""
     
@@ -1357,7 +1357,7 @@ async def get_review_calendar(
 async def get_learning_progress(
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get learning progress based on spaced repetition data"""
     
@@ -1376,7 +1376,7 @@ async def get_learning_progress(
 async def reset_question_progress(
     question_id: str,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Reset spaced repetition progress for a question"""
     
@@ -1395,7 +1395,7 @@ async def reset_question_progress(
 async def bulk_schedule_reviews(
     request: BulkReviewRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Bulk schedule reviews for multiple questions"""
     
@@ -1417,7 +1417,7 @@ async def process_answer_for_review(
     response_time: Optional[int] = Query(None, ge=0, description="Response time in seconds"),
     expected_time: int = Query(60, ge=1, description="Expected response time in seconds"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Process an answer and automatically schedule next review"""
     
@@ -1434,7 +1434,7 @@ async def get_user_review_statistics_admin(
     user_id: str,
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get review statistics for any user (Teacher/Admin only)"""
     
@@ -1454,7 +1454,7 @@ async def get_user_learning_progress_admin(
     user_id: str,
     subject: Optional[Subject] = Query(None, description="Filter by subject"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get learning progress for any user (Teacher/Admin only)"""
     
@@ -1478,7 +1478,7 @@ async def reset_user_question_progress_admin(
     user_id: str,
     question_id: str,
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Reset spaced repetition progress for any user's question (Teacher/Admin only)"""
     
@@ -1498,7 +1498,7 @@ async def reset_user_question_progress_admin(
 async def get_performance_based_recommendations(
     subject: Subject,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get performance-based recommendations for a subject"""
     
@@ -1653,7 +1653,7 @@ async def get_study_plan_recommendations(
     subject: Subject,
     days_ahead: int = Query(7, ge=1, le=30, description="Number of days to plan ahead"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get personalized study plan recommendations"""
     
@@ -1743,7 +1743,7 @@ async def get_study_plan_recommendations(
 async def get_adaptive_recommendations(
     subject: Subject,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get adaptive recommendations based on real-time performance"""
     

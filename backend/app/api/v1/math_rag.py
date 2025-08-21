@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import logging
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from app.middleware.auth import get_current_student, get_current_teacher
 from app.models.user import User
 from app.models.question import QuestionType
@@ -64,7 +64,7 @@ async def health():
 )
 async def generate_questions(
     body: GenerateRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     schema = {
@@ -192,7 +192,7 @@ async def generate_questions(
 )
 async def solve_problem(
     body: SolveRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_student),
 ):
     schema = {
@@ -288,7 +288,7 @@ async def solve_problem(
 @router.post("/check", response_model=CheckResponse, status_code=status.HTTP_200_OK)
 async def check_answer(
     body: CheckRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_student),
 ):
     schema = {
@@ -341,7 +341,7 @@ class HintResponse(BaseModel):
 @router.post("/hint", response_model=HintResponse, status_code=status.HTTP_200_OK)
 async def get_hint(
     body: HintRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_student),
 ):
     schema = {

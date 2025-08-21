@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from jose import jwt, JWTError
 from redis.asyncio import Redis # Changed from redis import Redis
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 ALGO = "HS256"
 JWT_SECRET = os.getenv("JWT_SECRET", "change-me")

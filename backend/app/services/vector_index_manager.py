@@ -11,7 +11,7 @@ from sqlalchemy.orm import joinedload
 
 from app.models.question import Question, Subject, DifficultyLevel
 from app.models.error_pattern import ErrorPattern
-from app.core.database import database
+from app.database import database_manager
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.utils.distlock_idem import RedisLock, lock_decorator, IdempotencyConfig, idempotency_decorator

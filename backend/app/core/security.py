@@ -7,7 +7,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
 from app.models.user import User
 
-from app.repositories.user_repository import UserRepository
+if TYPE_CHECKING:
+    from app.repositories.user_repository import UserRepository
 
 
 # Password hashing context
@@ -93,9 +94,13 @@ def verify_token(token: str) -> dict:
     return security_service.verify_token(token)
 
 
+def get_user_repository():
+    from app.repositories.user_repository import UserRepository
+    return UserRepository()
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    user_repo: UserRepository = Depends()
+    user_repo = Depends(get_user_repository)
 ) -> User:
     """Get current user from JWT token"""
     token = credentials.credentials

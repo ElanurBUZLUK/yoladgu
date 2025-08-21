@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import logging
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from app.middleware.auth import get_current_student
 from app.models.user import User
 from app.services.llm_gateway import llm_gateway
@@ -41,7 +41,7 @@ class AnswerResponse(BaseModel):
 @router.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve(
     body: RetrieveRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_student),
 ):
     sql = text("""
@@ -68,7 +68,7 @@ async def retrieve(
 )
 async def answer(
     body: AnswerRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_student),
 ):
     ret = await retrieve(RetrieveRequest(query=body.query, namespace=body.namespace, slot=body.slot, k=body.k), db, user)

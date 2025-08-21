@@ -9,7 +9,7 @@ import asyncio
 
 from app.core.cache import cache_service
 from app.services.embedding_service import embedding_service
-from app.core.database import database
+from app.database import database_manager
 
 logger = logging.getLogger(__name__)
 

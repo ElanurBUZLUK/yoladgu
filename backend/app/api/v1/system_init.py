@@ -11,7 +11,7 @@ from app.schemas.user import UserResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/system",
+    prefix="/api/v1/system",
     tags=["System Initialization"]
 )
 

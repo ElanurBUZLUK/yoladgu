@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError, DisconnectionError
 
 from app.core.config import settings
-from app.core.database import get_async_session
+from app.database import database_manager
 
 logger = logging.getLogger(__name__)
 

@@ -148,7 +148,7 @@ class EmbeddingService:
             return [0.0] * dimension
     
     async def _get_embedding_with_fallback(
-        self, 
+        self,
         text: str, 
         domain: str, 
         content_type: str

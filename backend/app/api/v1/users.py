@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from datetime import timedelta
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.core.security import security_service
 from app.services.user_service import user_service
 from app.schemas.auth import (
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register_user(
     user_data: UserCreate,
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Register a new user"""
     user = await user_service.create_user(db, user_data)
@@ -45,7 +45,7 @@ async def register_user(
 @router.post("/login", response_model=Token)
 async def login_user(
     user_credentials: UserLogin,
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Login user and return JWT tokens"""
     
@@ -83,7 +83,7 @@ async def login_user(
 @router.post("/refresh", response_model=Token)
 async def refresh_token(
     refresh_token: str,
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Refresh access token using refresh token"""
     
@@ -147,7 +147,7 @@ async def get_current_user_info(
 async def update_current_user(
     user_update: UserUpdate,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Update current user information"""
     
@@ -177,7 +177,7 @@ async def update_current_user(
 async def change_password(
     password_data: ChangePassword,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Change user password"""
     
@@ -201,7 +201,7 @@ async def update_user_levels(
     math_level: int = None,
     english_level: int = None,
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Update user subject levels"""
     
@@ -229,7 +229,7 @@ async def get_users(
     limit: int = 100,
     role: UserRole = None,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get list of users (Admin only)"""
     
@@ -256,7 +256,7 @@ async def get_users(
 async def get_user_by_id(
     user_id: str,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get user by ID (Admin only)"""
     
@@ -286,7 +286,7 @@ async def get_user_by_id(
 async def deactivate_user(
     user_id: str,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Deactivate user (Admin only)"""
     
@@ -305,7 +305,7 @@ async def deactivate_user(
 async def activate_user(
     user_id: str,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Activate user (Admin only)"""
     
@@ -324,7 +324,7 @@ async def activate_user(
 @router.post("/password-reset")
 async def request_password_reset(
     reset_data: PasswordReset,
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Request password reset token"""
     
@@ -345,7 +345,7 @@ async def request_password_reset(
 @router.post("/password-reset/confirm")
 async def confirm_password_reset(
     reset_confirm: PasswordResetConfirm,
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Confirm password reset with token"""
     
@@ -366,7 +366,7 @@ async def confirm_password_reset(
 @router.get("/me/stats", response_model=UserStats)
 async def get_current_user_stats(
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get current user statistics"""
     
@@ -393,7 +393,7 @@ async def search_users(
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Advanced user search (Admin only)"""
     
@@ -419,7 +419,7 @@ async def search_users(
 @router.get("/stats/summary")
 async def get_user_stats_summary(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get user statistics summary (Admin only)"""
     
@@ -431,7 +431,7 @@ async def get_user_stats_summary(
 async def get_user_stats(
     user_id: str,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get user statistics by ID (Admin only)"""
     
@@ -461,7 +461,7 @@ async def get_user_stats(
 async def bulk_user_operation(
     operation_data: BulkUserOperation,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Perform bulk operations on users (Admin only)"""
     

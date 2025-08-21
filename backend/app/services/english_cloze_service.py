@@ -30,6 +30,8 @@ class EnglishClozeService:
         self.llm_gateway = llm_gateway_service
         self.context_builder = context_builder
         self.question_repo = question_repo
+        self.embedding_service = embedding_service
+        self.vector_index_manager = vector_index_manager
         
         # Error recording and analysis settings
         self.error_analysis_config = {
@@ -329,12 +331,59 @@ class EnglishClozeService:
                 generated_questions.extend(generic_questions)
             
             logger.info(f"✅ Successfully generated {len(generated_questions)} personalized cloze questions")
+            
+            # Update user level based on error patterns and performance
+            await self._update_user_level_based_on_errors(session, user_id, recent_errors)
+            
             return generated_questions
             
         except Exception as e:
             logger.error(f"❌ Error in personalized cloze generation: {e}", exc_info=True)
             # Fallback to generic generation
             return await self._generate_generic_cloze_questions(session, num_questions)
+
+    async def _update_user_level_based_on_errors(
+        self, 
+        session: AsyncSession, 
+        user_id: str, 
+        recent_errors: List[Dict[str, Any]]
+    ):
+        """Update user level based on error patterns and performance"""
+        try:
+            if not recent_errors:
+                return
+            
+            # Calculate error rate and pattern analysis
+            total_errors = len(recent_errors)
+            error_types = {}
+            skill_tags = {}
+            
+            for error in recent_errors:
+                error_type = error.get('error_type', 'unknown')
+                skill_tag = error.get('skill_tag', 'unknown')
+                
+                error_types[error_type] = error_types.get(error_type, 0) + 1
+                skill_tags[skill_tag] = skill_tags.get(skill_tag, 0) + 1
+            
+            # Determine level adjustment based on error patterns
+            level_adjustment = 0
+            
+            # If user has many different error types, they might be struggling
+            if len(error_types) > 3:
+                level_adjustment = -0.1  # Slight decrease
+            elif len(error_types) == 1 and total_errors > 3:
+                level_adjustment = -0.2  # More significant decrease for repeated errors
+            elif total_errors <= 1:
+                level_adjustment = 0.1  # Slight increase for good performance
+            
+            # Apply level adjustment (this would integrate with user profile service)
+            logger.info(f"Level adjustment for user {user_id}: {level_adjustment}")
+            
+            # TODO: Integrate with user profile service for actual level updates
+            # await user_profile_service.update_english_level(user_id, level_adjustment)
+            
+        except Exception as e:
+            logger.error(f"Error updating user level: {e}")
 
     async def _get_recent_student_errors(
         self, 
@@ -491,7 +540,7 @@ class EnglishClozeService:
                 schema=TypeAdapter(ClozeQuestionSchema).json_schema(),
                 max_retries=3
             )
-            
+
             if not llm_response:
                 logger.warning(f"LLM failed to generate question for error {error.get('id')}")
                 return None
@@ -505,6 +554,17 @@ class EnglishClozeService:
             validated_data = self._validate_and_repair_question_data(raw_response)
             if not validated_data:
                 return None
+            
+            # Ensure distractor validation
+            if 'distractors' in validated_data and 'correct_answer' in validated_data:
+                # Remove any distractors that match the correct answer
+                validated_data['distractors'] = [
+                    d for d in validated_data['distractors'] 
+                    if d != validated_data['correct_answer']
+                ]
+                # Ensure we have at least 3 distractors
+                while len(validated_data['distractors']) < 3:
+                    validated_data['distractors'].append(f"option_{len(validated_data['distractors'])+1}")
             
             # Create Question object
             question = Question(
@@ -624,7 +684,7 @@ class EnglishClozeService:
             
             if not generic_questions:
                 return []
-            
+
             # Convert to Question objects and save
             saved_questions = []
             for q_data in generic_questions[:num_questions]:
@@ -650,9 +710,9 @@ class EnglishClozeService:
                 except Exception as e:
                     logger.error(f"Error saving generic question: {e}")
                     continue
-            
+
             return saved_questions
-            
+
         except Exception as e:
             logger.error(f"Error in generic cloze generation: {e}")
             return []
@@ -689,10 +749,10 @@ class EnglishClozeService:
             metadata = metadata_schema_service.build_cloze_question_metadata(
                 domain=Domain.ENGLISH.value,
                 obj_ref=str(question.id),
-                error_type_addressed=question.metadata.get("error_type_addressed", "unknown"),
-                skill_tag=question.metadata.get("skill_tag", "unknown"),
+                error_type_addressed=question.question_metadata.get("error_type_addressed", "unknown"),
+                skill_tag=question.question_metadata.get("skill_tag", "unknown"),
                 difficulty_level=question.difficulty_level,
-                generation_method=question.metadata.get("generation_method", "unknown"),
+                generation_method=question.question_metadata.get("generation_method", "unknown"),
                 question_id=str(question.id),
                 question_type=question.question_type,
                 subject=question.subject.value

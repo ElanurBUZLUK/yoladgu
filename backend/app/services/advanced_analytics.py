@@ -8,7 +8,7 @@ import statistics
 import random
 
 from app.core.cache import cache_service
-from app.core.database import database
+from app.database import database_manager
 
 logger = logging.getLogger(__name__)
 

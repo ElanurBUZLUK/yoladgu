@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Callable, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.models.pdf_upload import PDFUpload, ProcessingStatus
 from app.services.pdf_processing_service import pdf_processing_service
 from app.services.vector_index_manager import vector_index_manager
@@ -89,7 +89,7 @@ class BackgroundScheduler:
     async def _process_pending_pdfs(self):
         """Bekleyen PDF'leri işle"""
         
-        async for db in get_async_session():
+        async with database_manager.get_session() as db:
             try:
                 # Pending durumundaki PDF'leri bul
                 result = await db.execute(
@@ -119,11 +119,8 @@ class BackgroundScheduler:
                         }
                         await db.commit()
                 
-                break  # Session'ı kapat
-                
             except Exception as e:
                 logger.error(f"Database error in PDF processing: {e}")
-                break
     
     async def _database_cleanup_worker(self):
         """Veritabanı temizleme worker'ı"""
@@ -143,7 +140,7 @@ class BackgroundScheduler:
     async def _cleanup_old_data(self):
         """Eski verileri temizle"""
         
-        async for db in get_async_session():
+        async with database_manager.get_session() as db:
             try:
                 # 30 günden eski failed upload'ları temizle
                 cutoff_date = datetime.utcnow() - timedelta(days=30)
@@ -158,19 +155,15 @@ class BackgroundScheduler:
                 )
                 old_failed_uploads = result.scalars().all()
                 
-                for upload in old_failed_uploads:
-                    await db.delete(upload)
-                
-                await db.commit()
-                
                 if old_failed_uploads:
+                    for upload in old_failed_uploads:
+                        await db.delete(upload)
+                    
+                    await db.commit()
                     logger.info(f"Cleaned up {len(old_failed_uploads)} old failed uploads")
-                
-                break
                 
             except Exception as e:
                 logger.error(f"Database cleanup error: {e}")
-                break
     
     async def _health_check_worker(self):
         """Sağlık kontrolü worker'ı"""
@@ -190,7 +183,7 @@ class BackgroundScheduler:
     async def _check_system_health(self):
         """Sistem sağlığını kontrol et"""
         
-        async for db in get_async_session():
+        async with database_manager.get_session() as db:
             try:
                 # Processing durumundaki PDF'leri kontrol et
                 result = await db.execute(
@@ -223,11 +216,8 @@ class BackgroundScheduler:
                 if stuck_uploads:
                     logger.info(f"Reset {len(stuck_uploads)} stuck uploads")
                 
-                break
-                
             except Exception as e:
                 logger.error(f"Health check error: {e}")
-                break
     
     async def schedule_task(
         self,

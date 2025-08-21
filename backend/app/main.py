@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import structlog
 
 from app.core.config import settings
-from app.core.database import connect_to_db, close_db_connection
+from app.database_enhanced import enhanced_database_manager as database_manager
 from app.services.cache_service import cache_service
 
 # Import middleware
@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
                 version=settings.version,
                 debug=settings.debug)
     
-    await connect_to_db()
+    await database_manager.initialize()
     await cache_service.connect()
     
     # Background scheduler'ı başlat
@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"MCP cleanup error: {e}")
     
     await background_scheduler.stop()
-    await close_db_connection()
+    await database_manager.close()
     await cache_service.close()
     logger.info("Application shutdown completed")
 
@@ -151,7 +151,7 @@ async def healthz():
 @app.get("/readyz", include_in_schema=False)
 async def readyz():
     """Readiness check (DB/Redis/pgvector)"""
-    from app.core.database import get_async_session
+    from app.database import database_manager
     from redis.asyncio import Redis
     from app.core.config import settings
     from app.services.system_initialization_service import system_initialization_service
@@ -162,10 +162,9 @@ async def readyz():
     
     try:
         # Database check
-        async for db in get_async_session():
+        async with database_manager.get_session() as db:
             await db.execute("SELECT 1")
             db_status = "ok"
-            break
     except Exception as e:
         logger.error(f"Readiness check failed: Database - {e}")
 
@@ -180,9 +179,8 @@ async def readyz():
 
     try:
         # PgVector check
-        async for db in get_async_session():
+        async with database_manager.get_session() as db:
             pgvector_status = await system_initialization_service.run_all(db)
-            break
     except Exception as e:
         logger.error(f"Readiness check failed: PgVector - {e}")
 
@@ -212,13 +210,12 @@ async def cache_health():
 from app.api.v1 import (
     math, english, users, mcp, dashboard, answers, pdf, scheduler, 
     analytics, sample_data, system_init, english_rag, math_rag, 
-    llm_management, vector_management, monitoring, assess, system, question_generation
+    llm_management, vector_management, monitoring, assess, system, question_generation, rag, llm_enhanced, mcp_enhanced, database_enhanced
 )
 from app.api.v1 import mcp_monitoring, mcp_demo
 
 # Add routers
 app.include_router(math.router)
-app.include_router(math.recommend_router) # New math router
 app.include_router(english.router)
 app.include_router(english_rag.router)  # English RAG API
 app.include_router(math_rag.router)     # Math RAG API
@@ -237,6 +234,10 @@ app.include_router(system_init.router)
 app.include_router(assess.router) # New assess router
 app.include_router(system.router) # System API (health checks)
 app.include_router(question_generation.router) # Question Generation API
+app.include_router(rag.router) # RAG API
+app.include_router(llm_enhanced.router) # Enhanced LLM API
+app.include_router(mcp_enhanced.router) # Enhanced MCP API
+app.include_router(database_enhanced.router) # Enhanced Database API
 app.include_router(mcp_monitoring.router) # MCP Monitoring API
 app.include_router(mcp_demo.router) # MCP Demo API
 

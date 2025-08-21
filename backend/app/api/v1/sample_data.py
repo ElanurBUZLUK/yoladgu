@@ -2,18 +2,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 
-from app.core.database import get_async_session
+from app.database import database_manager
 # from app.core.auth import get_current_admin  # Temporarily disabled
 from app.models.user import User
 from app.services.sample_data_service import sample_data_service
 
-router = APIRouter(prefix="/sample-data", tags=["Sample Data"])
+router = APIRouter(prefix="/api/v1/sample-data", tags=["Sample Data"])
 
 
 @router.post("/create", response_model=Dict[str, Any])
 async def create_sample_data(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sample data oluştur (sadece admin kullanıcılar)"""
     
@@ -43,7 +43,7 @@ async def create_sample_data(
 @router.post("/users", response_model=Dict[str, Any])
 async def create_sample_users(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sadece sample users oluştur"""
     
@@ -66,7 +66,7 @@ async def create_sample_users(
 @router.post("/questions", response_model=Dict[str, Any])
 async def create_sample_questions(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sadece sample questions oluştur"""
     
@@ -89,7 +89,7 @@ async def create_sample_questions(
 @router.post("/attempts", response_model=Dict[str, Any])
 async def create_sample_attempts(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sadece sample attempts oluştur (users ve questions gerekli)"""
     
@@ -158,7 +158,7 @@ async def create_sample_attempts(
 @router.post("/error-patterns", response_model=Dict[str, Any])
 async def create_sample_error_patterns(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sadece sample error patterns oluştur (users gerekli)"""
     
@@ -210,7 +210,7 @@ async def create_sample_error_patterns(
 @router.post("/pdf-uploads", response_model=Dict[str, Any])
 async def create_sample_pdf_uploads(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sadece sample PDF uploads oluştur (users gerekli)"""
     
@@ -259,7 +259,7 @@ async def create_sample_pdf_uploads(
 @router.delete("/clear", response_model=Dict[str, Any])
 async def clear_sample_data(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sample data'yı temizle (sadece admin kullanıcılar)"""
     
@@ -282,7 +282,7 @@ async def clear_sample_data(
 @router.get("/status", response_model=Dict[str, Any])
 async def get_sample_data_status(
     # current_user: User = Depends(get_current_admin),  # Temporarily disabled
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sample data durumunu kontrol et"""
     

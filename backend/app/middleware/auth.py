@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 from app.core.security import security_service
 from app.models.user import User, UserRole
-from app.core.database import get_async_session
+from app.database import database_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -13,7 +13,7 @@ security = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ) -> User:
     """Get current authenticated user"""
     
@@ -105,7 +105,7 @@ def require_roles(*allowed_roles: UserRole):
 # Optional authentication (for public endpoints that can benefit from user context)
 async def get_optional_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ) -> Optional[User]:
     """Get current user if authenticated, otherwise return None"""
     

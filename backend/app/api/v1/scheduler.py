@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List
 from pydantic import BaseModel
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from app.services.background_scheduler import background_scheduler
 from app.middleware.auth import get_current_admin
 from app.models.user import User
@@ -28,7 +28,7 @@ class TaskStatusResponse(BaseModel):
 @router.get("/status", response_model=TaskStatusResponse)
 async def get_scheduler_status(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get background scheduler status"""
     
@@ -46,7 +46,7 @@ async def get_scheduler_status(
 @router.post("/start")
 async def start_scheduler(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Start background scheduler"""
     
@@ -68,7 +68,7 @@ async def start_scheduler(
 @router.post("/stop")
 async def stop_scheduler(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Stop background scheduler"""
     
@@ -91,7 +91,7 @@ async def stop_scheduler(
 async def schedule_task(
     request: TaskScheduleRequest,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Schedule a new background task"""
     
@@ -125,7 +125,7 @@ async def schedule_task(
 async def cancel_task(
     task_id: str,
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Cancel a scheduled task"""
     
@@ -147,7 +147,7 @@ async def cancel_task(
 @router.get("/tasks")
 async def list_scheduled_tasks(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """List all scheduled tasks"""
     
@@ -177,7 +177,7 @@ async def list_scheduled_tasks(
 @router.post("/tasks/health-check")
 async def trigger_health_check(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Manually trigger health check"""
     
@@ -205,7 +205,7 @@ async def trigger_health_check(
 @router.post("/tasks/cleanup")
 async def trigger_cleanup(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Manually trigger database cleanup"""
     

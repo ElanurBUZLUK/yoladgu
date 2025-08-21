@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 from pydantic import BaseModel
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.services.analytics_service import analytics_service
 from app.middleware.auth import get_current_student, get_current_teacher, get_current_admin
 from app.models.user import User
@@ -31,7 +31,7 @@ class TrendAnalysisRequest(BaseModel):
 async def analyze_student_performance(
     request: PerformanceAnalysisRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Öğrenci performans analizi"""
     
@@ -56,7 +56,7 @@ async def analyze_student_performance(
 async def find_similar_students(
     request: SimilarStudentsRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Benzer öğrencileri bul"""
     
@@ -82,7 +82,7 @@ async def find_similar_students(
 async def calculate_performance_trends(
     request: TrendAnalysisRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Performans trendlerini hesapla"""
     
@@ -107,7 +107,7 @@ async def calculate_performance_trends(
 async def identify_strengths_weaknesses(
     request: PerformanceAnalysisRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Güçlü ve zayıf yönleri belirle"""
     
@@ -133,7 +133,7 @@ async def get_performance_summary(
     subject: Subject,
     days: int = Query(30, ge=1, le=365),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Performans özeti al"""
     
@@ -178,7 +178,7 @@ async def get_student_performance_teacher(
     subject: Subject = Query(...),
     days: int = Query(30, ge=1, le=365),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Öğretmen için öğrenci performans analizi"""
     
@@ -222,7 +222,7 @@ async def get_class_performance_comparison(
     subject: Subject = Query(...),
     days: int = Query(30, ge=1, le=365),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sınıf performans karşılaştırması"""
     
@@ -295,7 +295,7 @@ async def get_class_performance_comparison(
 @router.get("/admin/system/overview")
 async def get_system_analytics_overview(
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Sistem analitik genel bakış (admin)"""
     
@@ -380,7 +380,7 @@ async def get_performance_leaderboard(
     days: int = Query(30, ge=1, le=365),
     limit: int = Query(10, ge=1, le=50),
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Performans liderlik tablosu (admin)"""
     

@@ -8,7 +8,7 @@ from sqlalchemy import select, and_, or_, func, desc
 from sqlalchemy.orm import selectinload
 import random
 
-from app.models.student import Student
+from app.models.user import User as Student
 from app.models.math_profile import MathProfile
 from app.models.question import Question, Subject, DifficultyLevel
 from app.models.student_attempt import StudentAttempt
@@ -133,8 +133,8 @@ class MathRecommendService:
     
     async def recommend_questions(
         self,
-        db: AsyncSession,
-        student_id: str,
+        user_id: str,
+        session: AsyncSession,
         num_questions: int = 5,
         difficulty_adjustment: float = 0.0,
         include_recent_errors: bool = True,
@@ -145,33 +145,33 @@ class MathRecommendService:
         start_time = time.time()
         
         try:
-            logger.info(f"🚀 Starting math recommendation for student {student_id}")
+            logger.info(f"🚀 Starting math recommendation for student {user_id}")
             
             # Acquire profile lock to prevent race conditions
-            profile_lock = await self.profile_lock_manager.acquire_lock(student_id)
+            profile_lock = await self.profile_lock_manager.acquire_lock(user_id)
             
             async with profile_lock:
                 # Get student profile with optimistic locking
-                profile = await self._get_student_profile_safe(db, student_id)
+                profile = await self._get_student_profile_safe(session, user_id)
                 
                 if not profile:
-                    raise ValueError(f"Student profile not found for {student_id}")
+                    raise ValueError(f"Student profile not found for {user_id}")
                 
                 # Get recent error patterns if requested
                 recent_errors = []
                 if include_recent_errors:
-                    recent_errors = await self._get_recent_error_patterns(db, student_id)
+                    recent_errors = await self._get_recent_error_patterns(session, user_id)
                 
                 # Generate recommendations using embedding-based approach
                 if use_embeddings and recent_errors:
                     recommendations = await self._generate_embedding_based_recommendations(
-                        db, profile, recent_errors, num_questions, difficulty_adjustment
+                        session, profile, recent_errors, num_questions, difficulty_adjustment
                     )
                     self.performance_metrics["embedding_based_recommendations"] += 1
                 else:
                     # Fallback to traditional recommendation
                     recommendations = await self._generate_traditional_recommendations(
-                        db, profile, num_questions, difficulty_adjustment
+                        session, profile, num_questions, difficulty_adjustment
                     )
                     self.performance_metrics["fallback_recommendations"] += 1
                 
@@ -179,11 +179,11 @@ class MathRecommendService:
                 response_time = time.time() - start_time
                 self._update_performance_metrics(response_time, True)
                 
-                logger.info(f"✅ Math recommendation completed for student {student_id}: {len(recommendations)} questions")
+                logger.info(f"✅ Math recommendation completed for student {user_id}: {len(recommendations)} questions")
                 
                 return {
                     "success": True,
-                    "student_id": student_id,
+                    "student_id": user_id,
                     "recommendations": recommendations,
                     "profile": {
                         "current_skill": profile.global_skill,
@@ -248,6 +248,7 @@ class MathRecommendService:
                 select(MathProfile)
                 .where(MathProfile.student_id == student_id)
                 .options(selectinload(MathProfile.student))
+            )
             
             profile = result.scalar_one_or_none()
             
@@ -309,7 +310,7 @@ class MathRecommendService:
         except Exception as e:
             logger.error(f"❌ Failed to get recent error patterns: {e}")
             return []
-    
+
     async def _generate_embedding_based_recommendations(
         self,
         db: AsyncSession,
@@ -414,7 +415,7 @@ class MathRecommendService:
         except Exception as e:
             logger.error(f"❌ Failed to extract math keywords: {e}")
             return []
-    
+
     async def _filter_and_rank_questions(
         self,
         db: AsyncSession,
@@ -456,7 +457,9 @@ class MathRecommendService:
             
             # Sort by score and select top questions
             scored_questions.sort(key=lambda x: x["score"], reverse=True)
-            selected_questions = scored_questions[:num_questions]
+            
+            # Apply topic diversity to prevent spam
+            selected_questions = self._apply_topic_diversity(scored_questions, num_questions)
             
             # Convert to response format
             recommendations = []
@@ -476,11 +479,48 @@ class MathRecommendService:
                 })
             
             return recommendations
-            
+
         except Exception as e:
             logger.error(f"❌ Failed to filter and rank questions: {e}")
             return []
-    
+
+    def _apply_topic_diversity(self, scored_questions: List[Dict[str, Any]], num_questions: int) -> List[Dict[str, Any]]:
+        """Apply topic diversity to prevent spam and ensure variety"""
+        try:
+            if len(scored_questions) <= num_questions:
+                return scored_questions[:num_questions]
+            
+            selected = []
+            used_topics = set()
+            
+            # First pass: select high-scoring questions with different topics
+            for item in scored_questions:
+                if len(selected) >= num_questions:
+                    break
+                
+                question = item["question"]
+                topic = question.topic_category
+                
+                # If we haven't seen this topic yet, add it
+                if topic not in used_topics:
+                    selected.append(item)
+                    used_topics.add(topic)
+            
+            # Second pass: fill remaining slots with best remaining questions
+            remaining_slots = num_questions - len(selected)
+            if remaining_slots > 0:
+                for item in scored_questions:
+                    if len(selected) >= num_questions:
+                        break
+                    if item not in selected:
+                        selected.append(item)
+            
+            return selected[:num_questions]
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to apply topic diversity: {e}")
+            return scored_questions[:num_questions]
+
     def _calculate_question_score(
         self,
         question: Question,
@@ -638,11 +678,11 @@ class MathRecommendService:
                 })
             
             return recommendations
-            
+
         except Exception as e:
             logger.error(f"❌ Traditional recommendation failed: {e}")
             return []
-    
+
     async def update_student_profile(
         self,
         db: AsyncSession,

@@ -6,7 +6,7 @@ import logging
 import time
 from datetime import datetime
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager as database_manager
 from app.middleware.auth import get_current_student, get_current_teacher
 from app.models.user import User
 from app.models.question import Subject, QuestionType
@@ -19,10 +19,12 @@ from app.services.cefr_assessment_service import cefr_assessment_service
 from app.services.english_cloze_service import english_cloze_service # NEW IMPORT
 from app.services.user_service import user_service # ADDED FOR TODO
 from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig
+from app.core.error_handling import ErrorHandler, ErrorCode, ErrorSeverity
 import hashlib
 import json
 
 logger = logging.getLogger(__name__)
+error_handler = ErrorHandler()
 
 router = APIRouter(prefix="/api/v1/english", tags=["english"])
 
@@ -45,6 +47,48 @@ class ClozeGenerationRequest(BaseModel):
     student_id: str
     target_error_tag: Optional[str] = Field(None, description="Target error tag for cloze generation")
     k: int = Field(3, ge=1, le=10, description="Number of cloze questions to generate")
+
+
+@router.post("/questions/generate", response_model=List[Dict[str, Any]])
+async def generate_cloze_questions(
+    request: ClozeGenerationRequest,
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(database_manager.get_session)
+):
+    """Generate cloze questions using EnglishClozeService"""
+    try:
+        questions = await english_cloze_service.generate_cloze_questions(
+            session=db,
+            user_id=request.student_id,
+            num_questions=request.k,
+            last_n_errors=5
+        )
+        
+        # Validate and ensure distractor != answer
+        validated_questions = []
+        for q in questions:
+            q_dict = q.to_dict()
+            # Ensure distractor validation
+            if 'distractors' in q_dict and 'correct_answer' in q_dict:
+                # Remove any distractors that match the correct answer
+                q_dict['distractors'] = [
+                    d for d in q_dict['distractors'] 
+                    if d != q_dict['correct_answer']
+                ]
+                # Ensure we have at least 3 distractors
+                while len(q_dict['distractors']) < 3:
+                    q_dict['distractors'].append(f"option_{len(q_dict['distractors'])+1}")
+            validated_questions.append(q_dict)
+        
+        return validated_questions
+    except Exception as e:
+        return error_handler.handle_error(
+            error=e,
+            error_code=ErrorCode.ENGLISH_CLOZE_ERROR,
+            message="Cloze generation failed",
+            severity=ErrorSeverity.MEDIUM,
+            context={"student_id": request.student_id, "k": request.k}
+        )
 
 def _cloze_generation_key_builder(*args, **kwargs) -> str:
     """Build idempotency key for cloze generation"""
@@ -76,7 +120,7 @@ def _cloze_generation_key_builder(*args, **kwargs) -> str:
 async def next_english_question(
     request: EnglishQuestionRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get next English question using hybrid retrieval"""
     
@@ -228,7 +272,7 @@ async def next_english_question(
 async def assess_cefr_level(
     request: CEFRAssessmentRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(database_manager.get_session),
     user_service_instance: user_service = Depends(lambda: user_service)
 ):
     """Assesss the user's CEFR level based on provided text and updates their profile."""
@@ -309,7 +353,7 @@ async def _generate_cloze_internal(
 async def generate_cloze(
     req: ClozeGenRequest,
     user: User = Depends(get_current_student), # Added user dependency
-    db: AsyncSession = Depends(get_async_session), # Added db dependency
+    db: AsyncSession = Depends(database_manager.get_session), # Added db dependency
     svc = Depends(lambda: english_cloze_service)
 ):
     """Generate a personalized English cloze question based on user's recent error patterns with idempotency."""
@@ -318,10 +362,16 @@ async def generate_cloze(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Error generating question: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate question: {str(e)}"
+        return error_handler.handle_error(
+            error=e,
+            error_code=ErrorCode.LLM_SERVICE_ERROR,
+            message="Failed to generate English cloze question",
+            severity=ErrorSeverity.HIGH,
+            context={
+                "user_id": str(user.id),
+                "error_type": req.error_type,
+                "request_id": req.model_dump_json()[:100]  # Truncated for security
+            }
         )
 
 # Add the missing /api/v1/english/questions/generate endpoint (alternative path)
@@ -329,7 +379,7 @@ async def generate_cloze(
 async def generate_cloze_alternative(
     req: ClozeGenRequest,
     user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(database_manager.get_session),
     svc = Depends(lambda: english_cloze_service)
 ):
     """Alternative English cloze generation endpoint - /api/v1/english/generate-cloze"""

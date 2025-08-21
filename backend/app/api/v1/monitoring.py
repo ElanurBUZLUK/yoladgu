@@ -10,7 +10,7 @@ from ...models.user import User
 from ...main import cache_service # Import the global cache_service instance
 
 logger = structlog.get_logger()
-router = APIRouter(prefix="/monitoring", tags=["monitoring"])
+router = APIRouter(prefix="/api/v1/monitoring", tags=["monitoring"])
 
 
 @router.get("/metrics")

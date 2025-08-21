@@ -10,7 +10,7 @@ from sqlalchemy.orm import joinedload
 from app.models.question import Question, Subject, DifficultyLevel
 from app.models.student_attempt import StudentAttempt
 from app.models.user import User
-from app.core.database import database
+from app.database import database_manager
 from app.core.cache import cache_service
 from app.services.embedding_service import embedding_service
 

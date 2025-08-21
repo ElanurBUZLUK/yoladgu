@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, DateTime, Float, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from app.core.database import Base
+from app.database import Base
 
 
 class SpacedRepetition(Base):

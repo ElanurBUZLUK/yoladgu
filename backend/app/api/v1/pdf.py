@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 import asyncio
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.services.pdf_upload_service import pdf_upload_service
 from app.schemas.pdf_upload import (
     PDFUploadRequest, PDFUploadResponse, PDFUploadProgress, PDFUploadSummary,
@@ -11,10 +11,12 @@ from app.schemas.pdf_upload import (
     DeleteUploadRequest, PDFReprocessRequest, PDFUploadStatistics
 )
 from app.middleware.auth import get_current_student, get_current_teacher, get_current_admin
+from app.core.error_handling import ErrorHandler, ErrorCode, ErrorSeverity
 from app.models.user import User
 from app.models.question import Subject as ModelSubject
 
 router = APIRouter(prefix="/api/v1/pdf", tags=["pdf"])
+error_handler = ErrorHandler()
 
 
 @router.post("/upload", response_model=PDFUploadResponse)
@@ -23,7 +25,7 @@ async def upload_pdf(
     subject: Subject = Form(..., description="Subject for the PDF content"),
     description: Optional[str] = Form(None, description="Optional description"),
     current_user: User = Depends(get_current_teacher),  # Only teachers can upload PDFs
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Upload a PDF file for question extraction"""
     
@@ -95,7 +97,7 @@ async def upload_pdf(
 async def get_upload_progress(
     upload_id: str,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get upload processing progress"""
     
@@ -137,7 +139,7 @@ async def list_uploads(
     limit: int = Query(20, ge=1, le=100, description="Number of uploads to return"),
     skip: int = Query(0, ge=0, description="Number of uploads to skip"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get list of user's PDF uploads"""
     
@@ -188,7 +190,7 @@ async def delete_upload(
     upload_id: str,
     confirm: bool = Query(False, description="Confirmation flag"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Delete an uploaded PDF and its extracted questions"""
     
@@ -227,7 +229,7 @@ async def reprocess_pdf(
     upload_id: str,
     force: bool = Query(False, description="Force reprocessing"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Reprocess a PDF to extract questions again"""
     
@@ -292,7 +294,7 @@ async def reprocess_pdf(
 async def process_pdf_upload(
     upload_id: str,
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Manually trigger PDF processing"""
     
@@ -324,7 +326,7 @@ async def process_pdf_upload(
 async def get_upload_statistics(
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_teacher),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get PDF upload statistics"""
     
@@ -399,7 +401,7 @@ async def list_all_uploads(
     limit: int = Query(20, ge=1, le=100, description="Number of uploads to return"),
     skip: int = Query(0, ge=0, description="Number of uploads to skip"),
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get list of all PDF uploads (Admin only)"""
     
@@ -458,7 +460,7 @@ async def list_all_uploads(
 async def get_system_upload_statistics(
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
     current_user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(database_manager.get_session)
 ):
     """Get system-wide PDF upload statistics (Admin only)"""
     
@@ -524,7 +526,7 @@ async def _background_virus_scan(upload_id: str, file_path: str):
         scan_result = await pdf_upload_service.virus_scan_file(Path(file_path))
         
         # Update database with scan result
-        async for db in get_async_session():
+        async with database_manager.get_session() as db:
             if scan_result["clean"]:
                 await pdf_upload_service.update_upload_status(
                     db, upload_id, "pending", {"virus_scan_status": "clean"}
@@ -533,15 +535,13 @@ async def _background_virus_scan(upload_id: str, file_path: str):
                 await pdf_upload_service.update_upload_status(
                     db, upload_id, "failed", {"virus_scan_status": "infected"}
                 )
-            break
             
     except Exception as e:
         # Update status to failed on error
-        async for db in get_async_session():
+        async with database_manager.get_session() as db:
             await pdf_upload_service.update_upload_status(
                 db, upload_id, "failed", {"virus_scan_status": "failed"}
             )
-            break
 
 
 @router.get("/health")

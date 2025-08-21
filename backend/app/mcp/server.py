@@ -4,16 +4,16 @@ import logging
 import sys
 import time
 from typing import Dict, Any, List, Optional
-from mcp.server import Server
+from mcp.server import FastMCP
 from mcp.types import Tool, CallToolResult, TextContent
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.services.math_recommend_service import math_recommend_service
 from app.services.english_cloze_service import english_cloze_service
 
 logger = logging.getLogger(__name__)
 
-server = Server("education-mcp")
+server = FastMCP("education-mcp")
 
 # Demo MCP Tools - Only 2 tools for showcase
 TOOLS = {
@@ -84,7 +84,7 @@ async def english_cloze_generate(
     start_time = time.time()
     
     try:
-        async for db_session in get_async_session():
+        async with database_manager.get_session() as db_session:
             questions = await english_cloze_service.generate_cloze_questions(
                 session=db_session,
                 user_id=student_id,
@@ -120,7 +120,7 @@ async def math_recommend(
     start_time = time.time()
     
     try:
-        async for db_session in get_async_session():
+        async with database_manager.get_session() as db_session:
             recommendations = await math_recommend_service.recommend_questions(
                 user_id=student_id,
                 session=db_session,

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import joinedload
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.models.user import User
 from app.models.student_attempt import StudentAttempt
 from app.models.error_pattern import ErrorPattern

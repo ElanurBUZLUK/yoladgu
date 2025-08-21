@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from app.services.dashboard_service import dashboard_service
 from app.schemas.dashboard import (
     DashboardData, SubjectSelectionResponse, LearningStyleAdaptation,
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 @router.get("/subject-selection", response_model=SubjectSelectionResponse)
 async def get_subject_selection_data(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get data for subject selection screen"""
     
@@ -29,7 +29,7 @@ async def get_subject_selection_data(
 async def select_subject(
     subject_choice: SubjectChoice,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Select a subject and get initial dashboard data"""
     
@@ -41,7 +41,7 @@ async def select_subject(
 async def get_dashboard_data(
     subject: Optional[Subject] = Query(None, description="Filter by specific subject"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get comprehensive dashboard data"""
     
@@ -51,7 +51,7 @@ async def get_dashboard_data(
 @router.get("/math", response_model=DashboardData)
 async def get_math_dashboard(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get mathematics-specific dashboard data"""
     
@@ -61,7 +61,7 @@ async def get_math_dashboard(
 @router.get("/english", response_model=DashboardData)
 async def get_english_dashboard(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get English-specific dashboard data"""
     
@@ -82,7 +82,7 @@ async def get_performance_summary(
     subject: Subject,
     period: str = Query("week", regex="^(today|week|month|all_time)$"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get performance summary for a specific subject and period"""
     
@@ -92,7 +92,7 @@ async def get_performance_summary(
 @router.get("/weekly-progress", response_model=WeeklyProgress)
 async def get_weekly_progress(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get weekly progress data"""
     
@@ -102,7 +102,7 @@ async def get_weekly_progress(
 @router.get("/stats/overview")
 async def get_stats_overview(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get quick stats overview for dashboard widgets"""
     
@@ -124,7 +124,7 @@ async def get_recommendations(
     subject: Optional[Subject] = Query(None, description="Filter by specific subject"),
     limit: int = Query(5, ge=1, le=20, description="Number of recommendations to return"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get personalized recommendations"""
     
@@ -139,7 +139,7 @@ async def get_recommendations(
 @router.get("/progress-tracking")
 async def get_progress_tracking(
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Get detailed progress tracking data"""
     
@@ -157,7 +157,7 @@ async def get_progress_tracking(
 async def get_subject_performance_comparison(
     period: str = Query("week", regex="^(today|week|month|all_time)$"),
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(get_async_session)
+    db: AsyncSession = Depends(enhanced_database_manager.get_session)
 ):
     """Compare performance between subjects"""
     

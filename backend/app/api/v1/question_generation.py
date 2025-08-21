@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 import logging
 
-from app.core.database import get_async_session
+from app.database import database_manager
 from app.middleware.auth import get_current_student
 from app.models.user import User
 from app.services.question_generator import question_generator

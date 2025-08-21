@@ -45,11 +45,14 @@ class Settings(BaseSettings):
     debug: bool = True
     
     # Database
-    database_url: str = "postgresql://user:password@localhost:5432/testdb"
+    database_url: str = "postgresql://postgres:password@localhost:5432/adaptive_learning"
+    database_echo: bool = False
+    database_pool_size: int = 20
+    database_max_overflow: int = 30
     test_database_url: Optional[str] = None  # Set to None to avoid testdb connection issues
     
     # Redis
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: Optional[str] = None  # Will be auto-configured for development
     
     # Security - Production Hardening
     secret_key: str = "your-secret-key-change-in-production"
@@ -144,6 +147,7 @@ class Settings(BaseSettings):
     pgvector_enabled: bool = True
     vector_similarity_threshold: float = 0.7
     embedding_dimension: int = int(os.getenv("EMBEDDING_DIM", "1536"))
+    embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1536"))  # Alias for backward compatibility
     vector_batch_size: int = int(os.getenv("VECTOR_BATCH_SIZE", "100"))
     vector_namespace_default: str = "default"
     vector_slot_default: int = 1
@@ -169,12 +173,22 @@ class Settings(BaseSettings):
     elo_k_factor: float = 0.2
     elo_tau_factor: float = 1.0
     
+    # Math recommendation parameters - Individual fields for environment loading
+    math_weight_difficulty_fit: float = 0.4
+    math_weight_neighbor_wrongs: float = 0.4
+    math_weight_diversity: float = 0.2
+    
     # Math recommendation parameters
     math_recommendation_weights: Dict[str, float] = {
         'difficulty_fit': 0.4,
         'neighbor_wrongs': 0.4,
         'diversity': 0.2
     }
+    
+    # English cloze generation parameters - Individual fields for environment loading
+    cloze_max_retries: int = 3
+    cloze_self_repair_attempts: int = 2
+    cloze_default_difficulty: int = 3
     
     # English cloze generation parameters
     cloze_generation_params: Dict[str, Any] = {
@@ -183,12 +197,25 @@ class Settings(BaseSettings):
         'default_difficulty': 3
     }
     
+    # CEFR assessment parameters - Individual fields for environment loading
+    cefr_max_retries: int = 3
+    cefr_strict_validation: bool = True
+    cefr_confidence_threshold: float = 0.7
+    
     # CEFR assessment parameters
     cefr_assessment_params: Dict[str, Any] = {
         'max_retries': 3,
         'strict_validation': True,
         'confidence_threshold': 0.7
     }
+    
+    # Question Generation parameters - Individual fields for environment loading
+    use_template_questions: bool = True
+    use_gpt_questions: bool = True
+    template_fallback: bool = True
+    max_gpt_questions_per_day: int = 100
+    gpt_creativity: float = 0.7
+    question_diversity_threshold: float = 0.8
     
     # Question Generation parameters
     question_generation_params: Dict[str, Any] = {
@@ -207,15 +234,31 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        env_file_encoding = 'utf-8'
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._load_api_keys_from_env()
         self._validate_environment_config()
         self._generate_secure_keys_if_needed()
+        print(f"✅ Configuration loaded successfully - Environment: {self.environment.value}")
+        print(f"   Database: {self.database_url}")
+        print(f"   Redis: {self.redis_url}")
+        print(f"   LLM Providers: {self.llm_providers_available}")
 
     def _load_api_keys_from_env(self):
-        """Load API keys from environment variables securely"""
+        """Load API keys and configuration from environment variables securely"""
+        # Load database configuration
+        if os.getenv("DATABASE_URL"):
+            self.database_url = os.getenv("DATABASE_URL")
+        
+        if os.getenv("TEST_DATABASE_URL"):
+            self.test_database_url = os.getenv("TEST_DATABASE_URL")
+        
+        # Load Redis configuration
+        if os.getenv("REDIS_URL"):
+            self.redis_url = os.getenv("REDIS_URL")
+        
         # Load OpenAI API key
         if not self.openai_api_key:
             self.openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -233,47 +276,71 @@ class Settings(BaseSettings):
         
         # Load math recommendation weights
         if os.getenv("MATH_WEIGHT_DIFFICULTY_FIT"):
-            self.math_recommendation_weights['difficulty_fit'] = float(os.getenv("MATH_WEIGHT_DIFFICULTY_FIT"))
+            self.math_weight_difficulty_fit = float(os.getenv("MATH_WEIGHT_DIFFICULTY_FIT"))
+            self.math_recommendation_weights['difficulty_fit'] = self.math_weight_difficulty_fit
         if os.getenv("MATH_WEIGHT_NEIGHBOR_WRONGS"):
-            self.math_recommendation_weights['neighbor_wrongs'] = float(os.getenv("MATH_WEIGHT_NEIGHBOR_WRONGS"))
+            self.math_weight_neighbor_wrongs = float(os.getenv("MATH_WEIGHT_NEIGHBOR_WRONGS"))
+            self.math_recommendation_weights['neighbor_wrongs'] = self.math_weight_neighbor_wrongs
         if os.getenv("MATH_WEIGHT_DIVERSITY"):
-            self.math_recommendation_weights['diversity'] = float(os.getenv("MATH_WEIGHT_DIVERSITY"))
+            self.math_weight_diversity = float(os.getenv("MATH_WEIGHT_DIVERSITY"))
+            self.math_recommendation_weights['diversity'] = self.math_weight_diversity
         
         # Load cloze generation parameters
         if os.getenv("CLOZE_MAX_RETRIES"):
-            self.cloze_generation_params['max_retries'] = int(os.getenv("CLOZE_MAX_RETRIES"))
+            self.cloze_max_retries = int(os.getenv("CLOZE_MAX_RETRIES"))
+            self.cloze_generation_params['max_retries'] = self.cloze_max_retries
         if os.getenv("CLOZE_SELF_REPAIR_ATTEMPTS"):
-            self.cloze_generation_params['self_repair_attempts'] = int(os.getenv("CLOZE_SELF_REPAIR_ATTEMPTS"))
+            self.cloze_self_repair_attempts = int(os.getenv("CLOZE_SELF_REPAIR_ATTEMPTS"))
+            self.cloze_generation_params['self_repair_attempts'] = self.cloze_self_repair_attempts
         if os.getenv("CLOZE_DEFAULT_DIFFICULTY"):
-            self.cloze_generation_params['default_difficulty'] = int(os.getenv("CLOZE_DEFAULT_DIFFICULTY"))
+            self.cloze_default_difficulty = int(os.getenv("CLOZE_DEFAULT_DIFFICULTY"))
+            self.cloze_generation_params['default_difficulty'] = self.cloze_default_difficulty
         
         # Load CEFR assessment parameters
         if os.getenv("CEFR_MAX_RETRIES"):
-            self.cefr_assessment_params['max_retries'] = int(os.getenv("CEFR_MAX_RETRIES"))
+            self.cefr_max_retries = int(os.getenv("CEFR_MAX_RETRIES"))
+            self.cefr_assessment_params['max_retries'] = self.cefr_max_retries
         if os.getenv("CEFR_STRICT_VALIDATION"):
-            self.cefr_assessment_params['strict_validation'] = os.getenv("CEFR_STRICT_VALIDATION").lower() == 'true'
+            self.cefr_strict_validation = os.getenv("CEFR_STRICT_VALIDATION").lower() == 'true'
+            self.cefr_assessment_params['strict_validation'] = self.cefr_strict_validation
         if os.getenv("CEFR_CONFIDENCE_THRESHOLD"):
-            self.cefr_assessment_params['confidence_threshold'] = float(os.getenv("CEFR_CONFIDENCE_THRESHOLD"))
+            self.cefr_confidence_threshold = float(os.getenv("CEFR_CONFIDENCE_THRESHOLD"))
+            self.cefr_assessment_params['confidence_threshold'] = self.cefr_confidence_threshold
         
         # Load question generation parameters
         if os.getenv("USE_TEMPLATE_QUESTIONS"):
-            self.question_generation_params['use_templates'] = os.getenv("USE_TEMPLATE_QUESTIONS").lower() == 'true'
+            self.use_template_questions = os.getenv("USE_TEMPLATE_QUESTIONS").lower() == 'true'
+            self.question_generation_params['use_templates'] = self.use_template_questions
         if os.getenv("USE_GPT_QUESTIONS"):
-            self.question_generation_params['use_gpt'] = os.getenv("USE_GPT_QUESTIONS").lower() == 'true'
+            self.use_gpt_questions = os.getenv("USE_GPT_QUESTIONS").lower() == 'true'
+            self.question_generation_params['use_gpt'] = self.use_gpt_questions
         if os.getenv("TEMPLATE_FALLBACK"):
-            self.question_generation_params['template_fallback'] = os.getenv("TEMPLATE_FALLBACK").lower() == 'true'
+            self.template_fallback = os.getenv("TEMPLATE_FALLBACK").lower() == 'true'
+            self.question_generation_params['template_fallback'] = self.template_fallback
         if os.getenv("MAX_GPT_QUESTIONS_PER_DAY"):
-            self.question_generation_params['max_gpt_questions_per_day'] = int(os.getenv("MAX_GPT_QUESTIONS_PER_DAY"))
+            self.max_gpt_questions_per_day = int(os.getenv("MAX_GPT_QUESTIONS_PER_DAY"))
+            self.question_generation_params['max_gpt_questions_per_day'] = self.max_gpt_questions_per_day
         if os.getenv("GPT_CREATIVITY"):
-            self.question_generation_params['gpt_creativity'] = float(os.getenv("GPT_CREATIVITY"))
+            self.gpt_creativity = float(os.getenv("GPT_CREATIVITY"))
+            self.question_generation_params['gpt_creativity'] = self.gpt_creativity
         if os.getenv("QUESTION_DIVERSITY_THRESHOLD"):
-            self.question_generation_params['question_diversity_threshold'] = float(os.getenv("QUESTION_DIVERSITY_THRESHOLD"))
+            self.question_diversity_threshold = float(os.getenv("QUESTION_DIVERSITY_THRESHOLD"))
+            self.question_generation_params['question_diversity_threshold'] = self.question_diversity_threshold
         
         # Load LanguageTool settings
         if os.getenv("USE_LANGUAGETOOL"):
             self.use_languagetool = os.getenv("USE_LANGUAGETOOL").lower() == 'true'
         if os.getenv("LANGUAGETOOL_URL"):
             self.languagetool_url = os.getenv("LANGUAGETOOL_URL")
+        
+        # Load other environment variables
+        if os.getenv("ENVIRONMENT"):
+            env_value = os.getenv("ENVIRONMENT").lower()
+            if env_value in ["development", "testing", "production"]:
+                self.environment = Environment(env_value)
+        
+        if os.getenv("DEBUG"):
+            self.debug = os.getenv("DEBUG").lower() == 'true'
 
     def _validate_environment_config(self):
         """Validate configuration based on environment"""
@@ -308,19 +375,50 @@ class Settings(BaseSettings):
         if not self.database_url or self.database_url == "postgresql://user:password@localhost:5432/testdb":
             critical_errors.append("DATABASE_URL must be configured")
         
-        # Redis URL validation
-        if not self.redis_url or self.redis_url == "redis://localhost:6379/0":
-            critical_errors.append("REDIS_URL must be configured")
+        # Redis URL validation - More flexible for development
+        if not self.redis_url:
+            if self.environment == Environment.PRODUCTION:
+                critical_errors.append("REDIS_URL must be configured in production")
+            else:
+                # Auto-generate default Redis URL for development
+                self.redis_url = "redis://localhost:6379/0"
+                print("⚠️ Warning: Using default Redis URL for development")
+                print("   You can set REDIS_URL in .env file to customize")
+        
+        # Check if Redis is actually accessible (only in production)
+        if self.environment == Environment.PRODUCTION and self.redis_url:
+            try:
+                import redis
+                r = redis.from_url(self.redis_url, socket_connect_timeout=5)
+                r.ping()
+                r.close()
+            except Exception as e:
+                critical_errors.append(f"Redis connection failed: {str(e)}")
+        elif self.environment != Environment.PRODUCTION:
+            # For development, just check if Redis package is available
+            try:
+                import redis
+                print("✅ Redis package available for development")
+            except ImportError:
+                print("⚠️ Redis package not installed - some features may not work")
         
         # LLM API Key validation (at least one required)
         if not self.openai_api_key and not self.anthropic_api_key:
             if self.environment == Environment.PRODUCTION:
                 critical_errors.append("At least one LLM API key (OPENAI_API_KEY or ANTHROPIC_API_KEY) must be configured")
             else:
-                print("Warning: No LLM API keys configured - some features may not work")
+                print("⚠️ Warning: No LLM API keys configured - some features may not work")
+                print("   You can set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env file")
         
         if critical_errors:
             error_message = "Critical configuration errors:\n" + "\n".join(f"- {error}" for error in critical_errors)
+            print("❌ Configuration validation failed:")
+            print(error_message)
+            if self.environment != Environment.PRODUCTION:
+                print("💡 For development, you can:")
+                print("   1. Set REDIS_URL in .env file")
+                print("   2. Install Redis: sudo apt-get install redis-server")
+                print("   3. Or use Docker: docker run -d -p 6379:6379 redis:alpine")
             raise ValueError(error_message)
 
     def _generate_secure_keys_if_needed(self):

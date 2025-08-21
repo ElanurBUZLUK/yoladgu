@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List
 from pydantic import ValidationError, TypeAdapter
 import json
 import re
+from datetime import datetime
 
 from app.services.llm_gateway import llm_gateway
 from app.schemas.cefr_assessment import CEFRAssessmentResponse
@@ -82,7 +83,10 @@ class CEFRAssessmentService:
             # 6. Validate and save results
             await self._save_assessment_results(user_id, assessment_result, session)
             
-            # 7. Store assessment embedding for future reference
+            # 7. Update user profile with CEFR level
+            await self._update_user_cefr_profile(user_id, assessment_result, session)
+            
+            # 8. Store assessment embedding for future reference
             await self._store_assessment_embedding(
                 user_id, assessment_text, assessment_embedding, assessment_result
             )
@@ -94,6 +98,49 @@ class CEFRAssessmentService:
             logger.error(f"Error during enhanced CEFR assessment for user {user_id}: {e}", exc_info=True)
             # Fallback to basic assessment
             return await self._fallback_assessment(user_id, assessment_text, assessment_type)
+
+    async def _update_user_cefr_profile(
+        self, 
+        user_id: str, 
+        assessment_result: CEFRAssessmentResponse, 
+        session: AsyncSession
+    ):
+        """Update user profile with CEFR assessment results"""
+        try:
+            if not user_id:
+                return
+            
+            # Convert CEFR level to numeric score for storage
+            level_scores = {"A1": 1, "A2": 2, "B1": 3, "B2": 4, "C1": 5, "C2": 6}
+            
+            overall_score = level_scores.get(assessment_result.overall_level, 3)
+            
+            # Calculate average skill score
+            skill_scores = []
+            for skill, level in assessment_result.skills.dict().items():
+                if level and level in level_scores:
+                    skill_scores.append(level_scores[level])
+            
+            avg_skill_score = sum(skill_scores) / len(skill_scores) if skill_scores else overall_score
+            
+            # Update user profile (this would integrate with user profile service)
+            profile_update = {
+                "user_id": user_id,
+                "cefr_overall_level": assessment_result.overall_level,
+                "cefr_overall_score": overall_score,
+                "cefr_avg_skill_score": avg_skill_score,
+                "cefr_confidence": assessment_result.confidence,
+                "cefr_assessment_date": datetime.utcnow(),
+                "cefr_skills": assessment_result.skills.dict()
+            }
+            
+            logger.info(f"Updated CEFR profile for user {user_id}: {assessment_result.overall_level}")
+            
+            # TODO: Integrate with user profile service for actual updates
+            # await user_profile_service.update_cefr_profile(user_id, profile_update)
+            
+        except Exception as e:
+            logger.error(f"Error updating user CEFR profile: {e}")
 
     async def _analyze_text_with_embeddings(
         self, 
@@ -286,8 +333,8 @@ class CEFRAssessmentService:
         - Confidence MUST be between 0.0 and 1.0
         - All skill levels MUST be valid CEFR levels
 
-        Assessment Text:
-        {assessment_text}
+            Assessment Text:
+            {assessment_text}
 
         Text Analysis:
         {analysis_context}
@@ -412,23 +459,23 @@ class CEFRAssessmentService:
                 
                 if mcp_utils.is_initialized:
                     try:
-                    mcp_response = await mcp_utils.call_tool(
-                        tool_name="assess_cefr",
-                        arguments={
-                            "student_id": user_id,
-                            "text": assessment_text,
-                            "assessment_type": assessment_type,
-                            "language": "english",
+                        mcp_response = await mcp_utils.call_tool(
+                            tool_name="assess_cefr",
+                            arguments={
+                                "student_id": user_id,
+                                "text": assessment_text,
+                                "assessment_type": assessment_type,
+                                "language": "english",
                                 "detailed_feedback": True,
                                 "strict_validation": True
-                        }
-                    )
+                            }
+                        )
                     
-                    if mcp_response["success"]:
-                        assessment_data = mcp_response["data"]
-                        if isinstance(assessment_data, str):
-                            assessment_data = json.loads(assessment_data)
-                        
+                        if mcp_response["success"]:
+                            assessment_data = mcp_response["data"]
+                            if isinstance(assessment_data, str):
+                                assessment_data = json.loads(assessment_data)
+                            
                             # Validate and repair if needed
                             validated_data = self._validate_and_repair_assessment(assessment_data)
                             if validated_data:
@@ -436,27 +483,28 @@ class CEFRAssessmentService:
                             else:
                                 logger.warning(f"MCP assessment validation failed on attempt {attempt + 1}")
                                 continue
-                    else:
-                        logger.warning(f"MCP CEFR assessment failed: {mcp_response.get('error')}")
+                        else:
+                            logger.warning(f"MCP CEFR assessment failed: {mcp_response.get('error')}")
+                            
                     except Exception as e:
                         logger.warning(f"MCP CEFR assessment failed, using fallback: {e}")
                 else:
                     logger.warning("MCP not initialized, using direct LLM")
-            
-            # Fallback: Direct LLM Gateway call
-            llm_response = await llm_gateway.generate_json(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                schema=CEFRAssessmentResponse.model_json_schema(),
+                
+                # Fallback: Direct LLM Gateway call
+                llm_response = await llm_gateway.generate_json(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    schema=CEFRAssessmentResponse.model_json_schema(),
                     max_retries=2
-            )
+                )
 
-            if not llm_response["success"]:
-                logger.error(f"LLM Gateway failed for CEFR assessment: {llm_response.get('error')}")
+                if not llm_response["success"]:
+                    logger.error(f"LLM Gateway failed for CEFR assessment: {llm_response.get('error')}")
                     continue
 
                 # Validate and repair parsed JSON
-            parsed_json = llm_response["parsed_json"]
+                parsed_json = llm_response["parsed_json"]
                 validated_data = self._validate_and_repair_assessment(parsed_json)
                 
                 if validated_data:

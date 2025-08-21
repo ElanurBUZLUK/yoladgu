@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import statistics
 
 from app.core.cache import cache_service
-from app.core.database import database
+from app.database import database_manager
 
 logger = logging.getLogger(__name__)
 

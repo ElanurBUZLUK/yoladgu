@@ -11,9 +11,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import QueuePool
 from sqlalchemy import event
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 from app.core.config import settings
+
+# Create declarative base for models
+Base = declarative_base()
 
 logger = logging.getLogger(__name__)
 

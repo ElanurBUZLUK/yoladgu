@@ -4,7 +4,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import uuid
 import enum
-from app.core.database import Base
+from app.database import Base
 
 # Import MathProfile to resolve relationship
 try:

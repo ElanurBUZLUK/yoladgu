@@ -4,7 +4,7 @@ from sqlalchemy import select, update, delete
 from sqlalchemy.orm import DeclarativeBase
 from pydantic import BaseModel
 
-from app.core.database import get_async_session
+from app.database import database_manager
 
 ModelType = TypeVar("ModelType", bound=DeclarativeBase)
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)

@@ -131,8 +131,7 @@ class PDFProcessingService:
         # Domain-specific question indicators
         self.question_indicators = {
             Subject.MATH: ['?', 'soru', 'problem', 'question', 'hesapla', 'çöz', 'bul', '=', '+', '-', '*', '/'],
-            Subject.ENGLISH: ['?', 'soru', 'question', 'fill', 'blank', 'choose', 'correct', 'grammar', 'vocabulary'],
-            Subject.GENERAL: ['?', 'soru', 'question', 'problem', 'test']
+            Subject.ENGLISH: ['?', 'soru', 'question', 'fill', 'blank', 'choose', 'correct', 'grammar', 'vocabulary']
         }
         
         # Domain-specific metadata patterns

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 import logging
 from datetime import datetime
 
-from app.core.database import get_async_session
+from app.database_enhanced import enhanced_database_manager
 from app.middleware.auth import get_current_teacher, get_current_student
 from app.models.user import User
 from app.services.llm_providers.policy_manager import policy_manager, PolicyType
@@ -79,7 +79,7 @@ class LLMHealthResponse(BaseModel):
 # Policy Management Endpoints
 @router.get("/policies", response_model=GetAllPoliciesResponse, status_code=status.HTTP_200_OK)
 async def get_all_policies(
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Get all available LLM policies"""
@@ -97,7 +97,7 @@ async def get_all_policies(
 @router.post("/select-policy", response_model=PolicySelectionResponse, status_code=status.HTTP_200_OK)
 async def select_policy_for_task(
     request: PolicySelectionRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Select appropriate policy for a task"""
@@ -133,7 +133,7 @@ async def select_policy_for_task(
 @router.post("/cost-limits", response_model=CostLimitResponse, status_code=status.HTTP_200_OK)
 async def check_cost_limits(
     request: CostLimitRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Check cost limits for user/organization/endpoint"""
@@ -174,7 +174,7 @@ async def get_usage_report(
     user_id: str,
     organization_id: Optional[str] = Query(None, description="Organization ID"),
     endpoint: Optional[str] = Query(None, description="Endpoint name"),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Get detailed usage report"""
@@ -202,7 +202,7 @@ async def get_usage_report(
 )
 async def moderate_content(
     request: ContentModerationRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_student),
 ):
     """Moderate content for safety and injection attempts"""
@@ -227,7 +227,7 @@ async def moderate_content(
 async def get_moderation_stats(
     user_id: Optional[str] = Query(None, description="User ID"),
     time_period: str = Query("24h", description="Time period"),
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Get content moderation statistics"""
@@ -249,7 +249,7 @@ async def get_moderation_stats(
 @router.get("/user-flagged/{user_id}", response_model=CheckUserFlagStatusResponse, status_code=status.HTTP_200_OK)
 async def check_user_flag_status(
     user_id: str,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Check if user is flagged for violations"""
@@ -273,7 +273,7 @@ async def check_user_flag_status(
 @router.post("/health", response_model=LLMHealthResponse, status_code=status.HTTP_200_OK)
 async def get_llm_health(
     request: LLMHealthRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Get comprehensive LLM system health"""
@@ -305,7 +305,7 @@ async def get_llm_health(
 
 @router.get("/provider-status", response_model=GetProviderStatusResponse, status_code=status.HTTP_200_OK)
 async def get_provider_status(
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Get detailed provider status"""
@@ -329,7 +329,7 @@ async def get_provider_status(
 )
 async def test_policy_selection(
     request: PolicySelectionRequest,
-    db: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(enhanced_database_manager.get_session),
     user: User = Depends(get_current_teacher),
 ):
     """Test policy selection with a sample request"""
