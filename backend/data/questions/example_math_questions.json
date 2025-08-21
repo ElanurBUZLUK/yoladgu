@@ -1,0 +1,148 @@
+[
+  {
+    "subject": "math",
+    "content": "What is 15 + 27?",
+    "question_type": "multiple_choice",
+    "difficulty_level": 2,
+    "topic_category": "addition",
+    "correct_answer": "42",
+    "options": ["40", "41", "42", "43"],
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 45,
+      "learning_objectives": ["two-digit addition"],
+      "tags": ["arithmetic", "addition", "two-digit"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "Solve: 8 × 7 = ?",
+    "question_type": "fill_blank",
+    "difficulty_level": 2,
+    "topic_category": "multiplication",
+    "correct_answer": "56",
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["multiplication facts"],
+      "tags": ["arithmetic", "multiplication", "facts"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "What is 3/4 + 1/8?",
+    "question_type": "multiple_choice",
+    "difficulty_level": 3,
+    "topic_category": "fractions",
+    "correct_answer": "7/8",
+    "options": ["4/12", "6/8", "7/8", "8/8"],
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["fraction addition", "common denominators"],
+      "tags": ["fractions", "addition", "denominators"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "Solve for x: 3x - 6 = 15",
+    "question_type": "open_ended",
+    "difficulty_level": 4,
+    "topic_category": "linear_equations",
+    "correct_answer": "x = 7",
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 180,
+      "learning_objectives": ["solving linear equations", "algebraic manipulation"],
+      "tags": ["algebra", "equations", "solving"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "Find the area of a rectangle with length 12 cm and width 8 cm.",
+    "question_type": "multiple_choice",
+    "difficulty_level": 3,
+    "topic_category": "geometry",
+    "correct_answer": "96 cm²",
+    "options": ["80 cm²", "88 cm²", "96 cm²", "104 cm²"],
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 90,
+      "learning_objectives": ["rectangle area formula", "geometry calculations"],
+      "tags": ["geometry", "area", "rectangles"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "What is the next number in the sequence: 2, 6, 12, 20, ___?",
+    "question_type": "fill_blank",
+    "difficulty_level": 4,
+    "topic_category": "patterns",
+    "correct_answer": "30",
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["number patterns", "sequence analysis"],
+      "tags": ["patterns", "sequences", "analysis"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "Convert 0.625 to a fraction in its simplest form.",
+    "question_type": "open_ended",
+    "difficulty_level": 3,
+    "topic_category": "decimals_fractions",
+    "correct_answer": "5/8",
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 150,
+      "learning_objectives": ["decimal to fraction conversion", "simplifying fractions"],
+      "tags": ["decimals", "fractions", "conversion"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "True or False: The sum of angles in a triangle is 180 degrees.",
+    "question_type": "true_false",
+    "difficulty_level": 3,
+    "topic_category": "geometry",
+    "correct_answer": "True",
+    "options": ["True", "False"],
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["triangle properties", "angle sum"],
+      "tags": ["geometry", "triangles", "angles"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "What is 2³ × 2²?",
+    "question_type": "multiple_choice",
+    "difficulty_level": 4,
+    "topic_category": "exponents",
+    "correct_answer": "32",
+    "options": ["16", "32", "64", "128"],
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 90,
+      "learning_objectives": ["exponent rules", "multiplication of powers"],
+      "tags": ["exponents", "powers", "rules"]
+    }
+  },
+  {
+    "subject": "math",
+    "content": "If a car travels 240 km in 3 hours, what is its average speed?",
+    "question_type": "multiple_choice",
+    "difficulty_level": 3,
+    "topic_category": "word_problems",
+    "correct_answer": "80 km/h",
+    "options": ["60 km/h", "70 km/h", "80 km/h", "90 km/h"],
+    "source_type": "manual",
+    "question_metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["speed calculation", "word problems"],
+      "tags": ["word_problems", "speed", "calculation"]
+    }
+  }
+]

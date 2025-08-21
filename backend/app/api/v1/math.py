@@ -1,15 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 import logging
 import hashlib
 import json
+import time # Added for idempotency key
 
 from app.database_enhanced import enhanced_database_manager as database_manager
-from app.middleware.auth import get_current_student
+from app.middleware.auth import get_current_student, get_current_teacher
 from app.models.user import User
-from app.models.question import Subject, QuestionType, Question
+from app.models.question import Subject, QuestionType, Question, SourceType # Added SourceType
 from app.services.math_recommend_service import math_recommend_service # NEW IMPORT
 from app.services.math_profile_manager import math_profile_manager # Keep for other endpoints if needed
 from app.schemas.question import (
@@ -39,31 +40,19 @@ class QuestionRecommendationRequest(BaseModel):
     limit: int = Field(10, description="Number of questions to recommend")
     exclude_recent: bool = Field(True, description="Exclude recently answered questions")
 
+class JSONUploadResponse(BaseModel):
+    success: bool
+    message: str
+    questions_imported: int
+    questions_failed: int
+    errors: List[str] = []
+
 def _math_recommend_key_builder(*args, **kwargs) -> str:
     """Build idempotency key for math recommendation"""
-    # Extract user_id and limit from request
-    request = None
-    for arg in args:
-        if isinstance(arg, QuestionRecommendationRequest):
-            request = arg
-            break
-    
-    if not request:
-        # Try to get from kwargs
-        request = kwargs.get('request')
-    
-    if not request:
-        return "math_recommend:default"
-    
-    # Create deterministic key based on request parameters
-    key_data = {
-        "user_id": getattr(request, 'user_id', 'unknown'),
-        "limit": getattr(request, 'limit', 10),
-        "exclude_recent": getattr(request, 'exclude_recent', True)
-    }
-    
-    key_string = json.dumps(key_data, sort_keys=True)
-    return f"math_recommend:{hashlib.md5(key_string.encode()).hexdigest()}"
+    # Create a unique key based on user_id and timestamp
+    user_id = kwargs.get('user_id', 'unknown')
+    timestamp = int(time.time() / 60)  # Round to minute for idempotency
+    return f"math_recommend_{user_id}_{timestamp}"
 
 # Removed duplicate /recommend endpoints
 
@@ -376,4 +365,135 @@ async def get_question_by_id(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get question: {str(e)}"
+        )
+
+
+@router.post("/questions/upload-json", response_model=JSONUploadResponse)
+async def upload_math_questions_json(
+    file: UploadFile = File(..., description="JSON file containing math questions"),
+    current_user: User = Depends(get_current_teacher),  # Only teachers can upload
+    db: AsyncSession = Depends(database_manager.get_session)
+):
+    """
+    Upload math questions from a JSON file
+    
+    Expected JSON format:
+    [
+        {
+            "subject": "math",
+            "content": "What is 5 + 3?",
+            "question_type": "multiple_choice",
+            "difficulty_level": 1,
+            "topic_category": "addition",
+            "correct_answer": "8",
+            "options": ["6", "7", "8", "9"],
+            "source_type": "manual",
+            "question_metadata": {
+                "estimated_time": 30,
+                "learning_objectives": ["basic addition"],
+                "tags": ["arithmetic", "basic"]
+            }
+        }
+    ]
+    """
+    try:
+        # Validate file type
+        if not file.filename.endswith('.json'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only JSON files are allowed"
+            )
+        
+        # Read and parse JSON
+        content = await file.read()
+        try:
+            questions_data = json.loads(content.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON format: {str(e)}"
+            )
+        
+        if not isinstance(questions_data, list):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="JSON must contain an array of questions"
+            )
+        
+        # Process questions
+        questions_imported = 0
+        questions_failed = 0
+        errors = []
+        
+        for i, question_data in enumerate(questions_data):
+            try:
+                # Validate required fields
+                required_fields = ['content', 'question_type', 'difficulty_level', 'topic_category']
+                for field in required_fields:
+                    if field not in question_data:
+                        raise ValueError(f"Missing required field: {field}")
+                
+                # Convert string values to enum types
+                subject = Subject.MATH  # Default to math for this endpoint
+                
+                question_type_map = {
+                    'multiple_choice': QuestionType.MULTIPLE_CHOICE,
+                    'fill_blank': QuestionType.FILL_BLANK,
+                    'open_ended': QuestionType.OPEN_ENDED,
+                    'true_false': QuestionType.TRUE_FALSE
+                }
+                question_type = question_type_map.get(
+                    question_data['question_type'].lower(), QuestionType.MULTIPLE_CHOICE
+                )
+                
+                source_type_map = {
+                    'manual': SourceType.MANUAL,
+                    'pdf': SourceType.PDF,
+                    'api': SourceType.API
+                }
+                source_type = source_type_map.get(
+                    question_data.get('source_type', 'manual').lower(), SourceType.MANUAL
+                )
+                
+                # Create question object
+                question = Question(
+                    subject=subject,
+                    content=question_data['content'],
+                    question_type=question_type,
+                    difficulty_level=question_data['difficulty_level'],
+                    topic_category=question_data['topic_category'],
+                    correct_answer=question_data.get('correct_answer'),
+                    options=question_data.get('options'),
+                    source_type=source_type,
+                    question_metadata=question_data.get('question_metadata', {}),
+                    created_by=str(current_user.id)
+                )
+                
+                db.add(question)
+                questions_imported += 1
+                
+            except Exception as e:
+                questions_failed += 1
+                error_msg = f"Question {i+1}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+        
+        # Commit all successful questions
+        await db.commit()
+        
+        return JSONUploadResponse(
+            success=True,
+            message=f"Successfully imported {questions_imported} questions",
+            questions_imported=questions_imported,
+            questions_failed=questions_failed,
+            errors=errors
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error uploading JSON questions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload questions: {str(e)}"
         )

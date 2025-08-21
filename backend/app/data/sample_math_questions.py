@@ -2,9 +2,110 @@
 Sample mathematics questions for seeding the database
 """
 
+import json
+import os
+from typing import List, Dict, Any
 from app.models.question import Subject, QuestionType, SourceType
 
-SAMPLE_MATH_QUESTIONS = [
+def load_questions_from_json(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Load questions from a JSON file
+    
+    Expected JSON format:
+    [
+        {
+            "subject": "math",
+            "content": "What is 5 + 3?",
+            "question_type": "multiple_choice",
+            "difficulty_level": 1,
+            "topic_category": "addition",
+            "correct_answer": "8",
+            "options": ["6", "7", "8", "9"],
+            "source_type": "manual",
+            "question_metadata": {
+                "estimated_time": 30,
+                "learning_objectives": ["basic addition"],
+                "tags": ["arithmetic", "basic"]
+            }
+        }
+    ]
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            questions_data = json.load(f)
+        
+        # Convert string values to enum types
+        converted_questions = []
+        for question in questions_data:
+            converted_question = question.copy()
+            
+            # Convert subject
+            if isinstance(question.get('subject'), str):
+                converted_question['subject'] = Subject.MATH if question['subject'].lower() == 'math' else Subject.ENGLISH
+            
+            # Convert question_type
+            if isinstance(question.get('question_type'), str):
+                question_type_map = {
+                    'multiple_choice': QuestionType.MULTIPLE_CHOICE,
+                    'fill_blank': QuestionType.FILL_BLANK,
+                    'open_ended': QuestionType.OPEN_ENDED,
+                    'true_false': QuestionType.TRUE_FALSE
+                }
+                converted_question['question_type'] = question_type_map.get(
+                    question['question_type'].lower(), QuestionType.MULTIPLE_CHOICE
+                )
+            
+            # Convert source_type
+            if isinstance(question.get('source_type'), str):
+                source_type_map = {
+                    'manual': SourceType.MANUAL,
+                    'pdf': SourceType.PDF,
+                    'api': SourceType.API
+                }
+                converted_question['source_type'] = source_type_map.get(
+                    question['source_type'].lower(), SourceType.MANUAL
+                )
+            
+            converted_questions.append(converted_question)
+        
+        return converted_questions
+    
+    except FileNotFoundError:
+        print(f"❌ JSON file not found: {file_path}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON format in {file_path}: {e}")
+        return []
+    except Exception as e:
+        print(f"❌ Error loading questions from {file_path}: {e}")
+        return []
+
+def get_questions_from_json_directory(directory_path: str = "data/questions") -> List[Dict[str, Any]]:
+    """
+    Load all JSON question files from a directory
+    """
+    all_questions = []
+    
+    if not os.path.exists(directory_path):
+        print(f"📁 Creating directory: {directory_path}")
+        os.makedirs(directory_path, exist_ok=True)
+        return all_questions
+    
+    for filename in os.listdir(directory_path):
+        if filename.endswith('.json'):
+            file_path = os.path.join(directory_path, filename)
+            print(f"📄 Loading questions from: {filename}")
+            questions = load_questions_from_json(file_path)
+            all_questions.extend(questions)
+            print(f"✅ Loaded {len(questions)} questions from {filename}")
+    
+    return all_questions
+
+# Load questions from JSON files if they exist
+JSON_QUESTIONS = get_questions_from_json_directory()
+
+# Combine JSON questions with sample questions
+SAMPLE_MATH_QUESTIONS = JSON_QUESTIONS + [
     # Level 1 - Basic Arithmetic
     {
         "subject": Subject.MATH,
