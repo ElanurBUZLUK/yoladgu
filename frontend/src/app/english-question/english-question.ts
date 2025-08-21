@@ -1,6 +1,6 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterModule } from '@angular/router';
+import { RouterModule, Router } from '@angular/router';
 import { ApiService, Question, QuizResult } from '../services/api';
 import englishQuestions from '../../assets/english-questions.json';
 
@@ -24,7 +24,7 @@ export class EnglishQuestionComponent implements OnInit, OnDestroy {
   loading = true;
   error = '';
 
-  constructor(private apiService: ApiService) {}
+  constructor(private apiService: ApiService, private router: Router) {}
 
   ngOnInit() {
     this.loadQuestions();
@@ -274,9 +274,8 @@ ${this.getRecommendations(percentage)}
   }
 
   goHome() {
-    if (confirm('Quiz\'den çıkmak istediğinizden emin misiniz?')) {
-      window.location.href = '/dashboard';
-    }
+    // Navigate to dashboard after quiz completion
+    this.router.navigate(['/']);
   }
 
   // Audio functionality removed - focusing on cloze questions only

@@ -1,6 +1,6 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterModule } from '@angular/router';
+import { RouterModule, Router } from '@angular/router';
 import { ApiService, Question, QuizResult } from '../services/api';
 import mathQuestions from '../../assets/math-questions.json';
 
@@ -24,7 +24,7 @@ export class MathQuestionComponent implements OnInit, OnDestroy {
   loading = true;
   error = '';
 
-  constructor(private apiService: ApiService) {}
+  constructor(private apiService: ApiService, private router: Router) {}
 
   ngOnInit() {
     this.loadQuestions();
@@ -196,9 +196,8 @@ export class MathQuestionComponent implements OnInit, OnDestroy {
   }
 
   goHome() {
-    if (confirm('Quiz\'den çıkmak istediğinizden emin misiniz?')) {
-      window.location.href = '/dashboard';
-    }
+    // Navigate to dashboard after quiz completion
+    this.router.navigate(['/']);
   }
 
   getOptionLetter(index: number): string {
