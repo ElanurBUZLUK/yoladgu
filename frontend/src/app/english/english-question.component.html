@@ -1,6 +1,25 @@
 <div class="english-container">
   <h2>İngilizce Soru Çöz</h2>
 
+  <!-- Progress Tracking -->
+  <div class="progress-container">
+    <div class="session-info">
+      <span class="session-duration">Süre: {{ getSessionDuration() }}</span>
+      <span class="attempt-count">Soru: {{ attemptCount + 1 }}</span>
+    </div>
+    
+    <div *ngIf="isPlacementTest" class="placement-progress">
+      <div class="progress-bar">
+        <div class="progress-fill" [style.width.%]="getProgressPercentage()"></div>
+      </div>
+      <span class="progress-text">Seviye Belirleme: {{ placementProgress }}/20</span>
+    </div>
+    
+    <div *ngIf="!isPlacementTest" class="adaptive-mode">
+      <span class="adaptive-text">🎯 Adaptif Mod - Seviyenize uygun sorular</span>
+    </div>
+  </div>
+
   <!-- Loading State -->
   <div *ngIf="loading" class="loading-state">
     <p>Yükleniyor...</p>
@@ -49,5 +68,10 @@
   <div *ngIf="!question && !loading && !error" class="no-question">
     <p>Soru bulunamadı.</p>
     <button (click)="retry()" class="retry-button">Tekrar Dene</button>
+  </div>
+
+  <!-- Session Controls -->
+  <div class="session-controls">
+    <button (click)="resetSession()" class="reset-button">Oturumu Sıfırla</button>
   </div>
 </div>

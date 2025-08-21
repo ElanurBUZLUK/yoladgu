@@ -6,6 +6,7 @@ import logging
 import hashlib
 import json
 import time # Added for idempotency key
+from datetime import datetime # Added for session data
 
 from app.database_enhanced import enhanced_database_manager as database_manager
 from app.middleware.auth import get_current_student, get_current_teacher
@@ -21,6 +22,7 @@ from app.schemas.question import (
 from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig
 from app.core.error_handling import ErrorHandler, ErrorCode, ErrorSeverity
 from sqlalchemy import select, and_, func, distinct
+from app.services.cache_service import cache_service # Added for session data
 
 logger = logging.getLogger(__name__)
 error_handler = ErrorHandler()
@@ -100,48 +102,151 @@ async def generate_math_question(
     current_user: User = Depends(get_current_student),
     db: AsyncSession = Depends(database_manager.get_session)
 ):
-    """Generate math question using MathRecommendService"""
+    """Generate Math questions with placement test and adaptive mode"""
+    
     try:
-        recommended_questions = await math_recommend_service.recommend_questions(
-            user_id=request.user_id,
-            session=db,
-            num_questions=request.k
-        )
+        # Check if user is in placement test mode or adaptive mode
+        session_key = f"math_session:{current_user.id}"
+        session_data = await cache_service.get(session_key)
         
-        if recommended_questions and len(recommended_questions) > 0:
-            q = recommended_questions[0]
-            # Convert to dict format if it's a Question object
-            if hasattr(q, 'to_dict'):
-                q_dict = q.to_dict()
-            else:
-                q_dict = q
-            
-            # Ensure options format is correct
-            if 'options' not in q_dict and 'distractors' in q_dict:
-                q_dict['options'] = q_dict['distractors']
-            
-            # Invariant: 1 doğru + 3 benzersiz distraktör (hızlı savunma)
-            if 'correct_answer' in q_dict and 'options' in q_dict:
-                assert q_dict['correct_answer'] in q_dict['options'], "Answer not in options"
-                assert len(set(q_dict['options'])) == len(q_dict['options']), "Duplicate options"
-            
-            return GenerateMathQuestionResponse(
-                success=True,
-                question=MathQuestion(**q_dict),
-                generation_info={"source": "math_recommend", "user_level": "current"}
-            )
+        if not session_data:
+            # Initialize new session
+            session_data = {
+                "is_placement_test": True,
+                "placement_progress": 0,
+                "math_level": 3,  # Default math level
+                "attempt_count": 0,
+                "session_start": datetime.utcnow().isoformat()
+            }
+            await cache_service.set(session_key, session_data, expire=3600)
+        
+        # Check if placement test is complete
+        if session_data.get("is_placement_test", True) and session_data.get("placement_progress", 0) >= 20:
+            # Switch to adaptive mode
+            session_data["is_placement_test"] = False
+            session_data["math_level"] = session_data.get("math_level", 3)  # Default math level
+            await cache_service.set(session_key, session_data, expire=3600)
+        
+        # Generate question based on mode
+        if session_data.get("is_placement_test", True):
+            # Placement test mode - use baseline questions
+            question = await _generate_math_placement_question(db, current_user)
         else:
+            # Adaptive mode - use math recommendation service
+            question = await _generate_math_adaptive_question(db, current_user, session_data)
+        
+        if not question:
             return GenerateMathQuestionResponse(
                 success=False,
                 generation_info={"error": "no_question_generated"}
             )
-            
+        
+        # Update session data
+        session_data["attempt_count"] = session_data.get("attempt_count", 0) + 1
+        if session_data.get("is_placement_test", True):
+            session_data["placement_progress"] = session_data.get("placement_progress", 0) + 1
+        await cache_service.set(session_key, session_data, expire=3600)
+        
+        # Invariant checks
+        assert question["correct_answer"] in question["options"]
+        assert len(set(question["options"])) == len(question["options"])
+        
+        return GenerateMathQuestionResponse(
+            success=True,
+            question=MathQuestion(**question),
+            generation_info={
+                "mode": "placement_test" if session_data.get("is_placement_test", True) else "adaptive",
+                "math_level": session_data.get("math_level"),
+                "placement_progress": session_data.get("placement_progress", 0),
+                "attempt_count": session_data.get("attempt_count", 0)
+            }
+        )
+        
     except Exception as e:
-        logger.error(f"Error generating math question: {e}")
+        logger.error(f"Error generating Math question: {e}")
         return GenerateMathQuestionResponse(
             success=False,
             generation_info={"error": str(e)}
         )
+
+async def _generate_math_placement_question(db: AsyncSession, user: User) -> Optional[Dict[str, Any]]:
+    """Generate baseline question for math placement test"""
+    try:
+        # Get a random baseline question
+        result = await db.execute(
+            select(Question)
+            .where(
+                and_(
+                    Question.subject == Subject.MATH,
+                    Question.difficulty_level.between(1, 3),  # Start with moderate difficulty
+                    Question.question_type == QuestionType.MULTIPLE_CHOICE
+                )
+            )
+            .order_by(func.random())
+            .limit(1)
+        )
+        
+        question = result.scalar_one_or_none()
+        if not question:
+            return None
+        
+        return {
+            "id": str(question.id),
+            "content": question.content,
+            "options": question.options if question.options else ["Option A", "Option B", "Option C", "Option D"],
+            "correct_answer": question.correct_answer,
+            "difficulty_level": question.difficulty_level,
+            "topic_category": question.topic_category
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating math placement question: {e}")
+        return None
+
+async def _generate_math_adaptive_question(db: AsyncSession, user: User, session_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Generate adaptive question using math recommendation service"""
+    try:
+        # Use math recommendation service
+        recommendation_result = await math_recommend_service.recommend_questions(
+            user_id=str(user.id),
+            session=db,
+            num_questions=1,
+            include_recent_errors=True,
+            use_embeddings=True
+        )
+        
+        if not recommendation_result.get("success") or not recommendation_result.get("recommendations"):
+            # Fallback to traditional method
+            return await _generate_math_placement_question(db, user)
+        
+        # Get the first recommended question
+        recommendation = recommendation_result["recommendations"][0]
+        
+        # Get full question details from database
+        result = await db.execute(
+            select(Question)
+            .where(Question.id == recommendation["id"])
+        )
+        
+        question = result.scalar_one_or_none()
+        if not question:
+            return await _generate_math_placement_question(db, user)
+        
+        # Update session math level based on recommendation
+        session_data["math_level"] = recommendation.get("difficulty_level", session_data.get("math_level", 3))
+        
+        return {
+            "id": str(question.id),
+            "content": question.content,
+            "options": question.options if question.options else ["Option A", "Option B", "Option C", "Option D"],
+            "correct_answer": question.correct_answer,
+            "difficulty_level": question.difficulty_level,
+            "topic_category": question.topic_category
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating math adaptive question: {e}")
+        return await _generate_math_placement_question(db, user)
 
 @router.post("/recommend", response_model=QuestionRecResponse)
 async def recommend_math_questions(

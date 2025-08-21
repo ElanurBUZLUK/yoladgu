@@ -22,6 +22,8 @@ from app.utils.distlock_idem import idempotency_decorator, IdempotencyConfig
 from app.core.error_handling import ErrorHandler, ErrorCode, ErrorSeverity
 import hashlib
 import json
+from sqlalchemy import select, and_, func, desc
+from app.models.student_attempt import StudentAttempt
 
 logger = logging.getLogger(__name__)
 error_handler = ErrorHandler()
@@ -65,51 +67,188 @@ class ClozeGenerationRequest(BaseModel):
 async def generate_cloze_questions(
     request: ClozeGenerationRequest,
     current_user: User = Depends(get_current_student),
-    db: AsyncSession = Depends(database_manager.get_session)
+    db: AsyncSession = Depends(database_manager.get_session),
 ):
-    """Generate cloze questions using EnglishClozeService"""
+    """Generate English questions with CEFR level tracking and adaptive mode"""
+    
     try:
-        questions = await english_cloze_service.generate_cloze_questions(
-            session=db,
-            user_id=request.student_id,
-            num_questions=request.k,
-            last_n_errors=5
-        )
+        # Check if user is in placement test mode or adaptive mode
+        session_key = f"english_session:{current_user.id}"
+        session_data = await cache_service.get(session_key)
         
-        if questions and len(questions) > 0:
-            q = questions[0]
-            # Convert to dict format if it's a Question object
-            if hasattr(q, 'to_dict'):
-                q_dict = q.to_dict()
-            else:
-                q_dict = q
-            
-            # Ensure options format is correct
-            if 'options' not in q_dict and 'distractors' in q_dict:
-                q_dict['options'] = q_dict['distractors']
-            
-            # Invariant: 1 doğru + 3 benzersiz distraktör (hızlı savunma)
-            if 'correct_answer' in q_dict and 'options' in q_dict:
-                assert q_dict['correct_answer'] in q_dict['options'], "Answer not in options"
-                assert len(set(q_dict['options'])) == len(q_dict['options']), "Duplicate options"
-            
-            return GenerateQuestionResponse(
-                success=True,
-                question=EnglishQuestion(**q_dict),
-                generation_info={"source": "rag+llm", "error_type": "cloze_generation"}
-            )
+        if not session_data:
+            # Initialize new session
+            session_data = {
+                "is_placement_test": True,
+                "placement_progress": 0,
+                "cefr_level": None,
+                "attempt_count": 0,
+                "session_start": datetime.utcnow().isoformat()
+            }
+            await cache_service.set(session_key, session_data, expire=3600)
+        
+        # Check if placement test is complete
+        if session_data.get("is_placement_test", True) and session_data.get("placement_progress", 0) >= 20:
+            # Switch to adaptive mode
+            session_data["is_placement_test"] = False
+            session_data["cefr_level"] = session_data.get("cefr_level", "B1")  # Default CEFR level
+            await cache_service.set(session_key, session_data, expire=3600)
+        
+        # Generate question based on mode
+        if session_data.get("is_placement_test", True):
+            # Placement test mode - use baseline questions
+            question = await _generate_placement_question(db, current_user)
         else:
+            # Adaptive mode - use CEFR-based question selection
+            question = await _generate_adaptive_question(db, current_user, session_data)
+        
+        if not question:
             return GenerateQuestionResponse(
                 success=False,
                 generation_info={"error": "no_question_generated"}
             )
-            
+        
+        # Update session data
+        session_data["attempt_count"] = session_data.get("attempt_count", 0) + 1
+        if session_data.get("is_placement_test", True):
+            session_data["placement_progress"] = session_data.get("placement_progress", 0) + 1
+        await cache_service.set(session_key, session_data, expire=3600)
+        
+        # Invariant checks
+        assert question["correct_answer"] in question["options"]
+        assert len(set(question["options"])) == len(question["options"])
+        
+        return GenerateQuestionResponse(
+            success=True,
+            question=EnglishQuestion(**question),
+            generation_info={
+                "mode": "placement_test" if session_data.get("is_placement_test", True) else "adaptive",
+                "cefr_level": session_data.get("cefr_level"),
+                "placement_progress": session_data.get("placement_progress", 0),
+                "attempt_count": session_data.get("attempt_count", 0)
+            }
+        )
+        
     except Exception as e:
-        logger.error(f"Error generating cloze questions: {e}")
+        logger.error(f"Error generating English question: {e}")
         return GenerateQuestionResponse(
             success=False,
             generation_info={"error": str(e)}
         )
+
+async def _generate_placement_question(db: AsyncSession, user: User) -> Optional[Dict[str, Any]]:
+    """Generate baseline question for placement test"""
+    try:
+        # Get a random baseline question
+        result = await db.execute(
+            select(Question)
+            .where(
+                and_(
+                    Question.subject == Subject.ENGLISH,
+                    Question.difficulty_level.between(1, 3),  # Start with moderate difficulty
+                    Question.question_type == QuestionType.MULTIPLE_CHOICE
+                )
+            )
+            .order_by(func.random())
+            .limit(1)
+        )
+        
+        question = result.scalar_one_or_none()
+        if not question:
+            return None
+        
+        return {
+            "id": str(question.id),
+            "content": question.content,
+            "options": question.options if question.options else ["Option A", "Option B", "Option C", "Option D"],
+            "correct_answer": question.correct_answer,
+            "difficulty_level": question.difficulty_level,
+            "topic_category": question.topic_category
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating placement question: {e}")
+        return None
+
+async def _generate_adaptive_question(db: AsyncSession, user: User, session_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Generate adaptive question based on CEFR level and user performance"""
+    try:
+        cefr_level = session_data.get("cefr_level", "B1")
+        
+        # Map CEFR level to difficulty
+        cefr_to_difficulty = {
+            "A1": 1, "A2": 2, "B1": 3, "B2": 4, "C1": 5, "C2": 5
+        }
+        target_difficulty = cefr_to_difficulty.get(cefr_level, 3)
+        
+        # Get user's recent performance to adjust difficulty
+        recent_attempts = await db.execute(
+            select(StudentAttempt)
+            .where(
+                and_(
+                    StudentAttempt.user_id == user.id,
+                    StudentAttempt.subject == Subject.ENGLISH
+                )
+            )
+            .order_by(desc(StudentAttempt.attempt_date))
+            .limit(10)
+        )
+        
+        attempts = recent_attempts.scalars().all()
+        if attempts:
+            recent_accuracy = sum(1 for a in attempts if a.is_correct) / len(attempts)
+            # Adjust difficulty based on recent performance
+            if recent_accuracy > 0.8:
+                target_difficulty = min(5, target_difficulty + 1)
+            elif recent_accuracy < 0.4:
+                target_difficulty = max(1, target_difficulty - 1)
+        
+        # Get question with target difficulty
+        result = await db.execute(
+            select(Question)
+            .where(
+                and_(
+                    Question.subject == Subject.ENGLISH,
+                    Question.difficulty_level == target_difficulty,
+                    Question.question_type == QuestionType.MULTIPLE_CHOICE
+                )
+            )
+            .order_by(func.random())
+            .limit(1)
+        )
+        
+        question = result.scalar_one_or_none()
+        if not question:
+            # Fallback to any available question
+            result = await db.execute(
+                select(Question)
+                .where(
+                    and_(
+                        Question.subject == Subject.ENGLISH,
+                        Question.question_type == QuestionType.MULTIPLE_CHOICE
+                    )
+                )
+                .order_by(func.random())
+                .limit(1)
+            )
+            question = result.scalar_one_or_none()
+        
+        if not question:
+            return None
+        
+        return {
+            "id": str(question.id),
+            "content": question.content,
+            "options": question.options if question.options else ["Option A", "Option B", "Option C", "Option D"],
+            "correct_answer": question.correct_answer,
+            "difficulty_level": question.difficulty_level,
+            "topic_category": question.topic_category
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating adaptive question: {e}")
+        return None
+
 
 def _cloze_generation_key_builder(*args, **kwargs) -> str:
     """Build idempotency key for cloze generation"""
