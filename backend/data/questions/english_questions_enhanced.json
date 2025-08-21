@@ -1,0 +1,422 @@
+[
+  {
+    "stem": "Choose the correct form: I ____ to school every day.",
+    "options": {
+      "A": "go",
+      "B": "goes",
+      "C": "going",
+      "D": "went"
+    },
+    "correct_answer": "A",
+    "topic": "grammar",
+    "subtopic": "present_tense",
+    "difficulty": 0.5,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["present tense with 'I'"],
+      "tags": ["grammar", "present_tense", "basic"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "What is the plural of 'cat'?",
+    "options": {
+      "A": "cat",
+      "B": "cats",
+      "C": "cates",
+      "D": "catss"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "plurals",
+    "difficulty": 0.3,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 20,
+      "learning_objectives": ["basic plurals"],
+      "tags": ["grammar", "plurals", "basic"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "Fill in the blank: This is ____ apple.",
+    "options": {
+      "A": "a",
+      "B": "an",
+      "C": "the",
+      "D": "some"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "articles",
+    "difficulty": 0.4,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["articles a/an"],
+      "tags": ["grammar", "articles", "basic"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "Choose the past tense of 'go':",
+    "options": {
+      "A": "goed",
+      "B": "went",
+      "C": "going",
+      "D": "goes"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "past_tense",
+    "difficulty": 0.8,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 45,
+      "learning_objectives": ["irregular past tense"],
+      "tags": ["grammar", "past_tense", "irregular_verbs"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "Fill in the blank: Yesterday, I _____ (watch) a movie.",
+    "options": {
+      "A": "watch",
+      "B": "watched",
+      "C": "watching",
+      "D": "watches"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "past_tense",
+    "difficulty": 0.9,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 60,
+      "learning_objectives": ["regular past tense formation"],
+      "tags": ["grammar", "past_tense", "regular_verbs"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "What does 'happy' mean?",
+    "options": {
+      "A": "feeling sad",
+      "B": "feeling joy",
+      "C": "feeling angry",
+      "D": "feeling tired"
+    },
+    "correct_answer": "B",
+    "topic": "vocabulary",
+    "subtopic": "emotions",
+    "difficulty": 0.6,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["basic emotions vocabulary"],
+      "tags": ["vocabulary", "emotions", "adjectives"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "Choose the correct form: She ____ English very well.",
+    "options": {
+      "A": "speak",
+      "B": "speaks",
+      "C": "speaking",
+      "D": "spoke"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "present_tense",
+    "difficulty": 0.7,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 40,
+      "learning_objectives": ["present tense with 'she'"],
+      "tags": ["grammar", "present_tense", "third_person"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "What is the opposite of 'big'?",
+    "options": {
+      "A": "large",
+      "B": "small",
+      "C": "huge",
+      "D": "tall"
+    },
+    "correct_answer": "B",
+    "topic": "vocabulary",
+    "subtopic": "antonyms",
+    "difficulty": 0.5,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 25,
+      "learning_objectives": ["basic antonyms"],
+      "tags": ["vocabulary", "antonyms", "adjectives"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "Fill in the blank: I have been studying English ____ two years.",
+    "options": {
+      "A": "since",
+      "B": "for",
+      "C": "from",
+      "D": "during"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "prepositions",
+    "difficulty": 1.2,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 60,
+      "learning_objectives": ["prepositions of time"],
+      "tags": ["grammar", "prepositions", "time"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "Choose the correct form: If I ____ rich, I would buy a house.",
+    "options": {
+      "A": "am",
+      "B": "was",
+      "C": "were",
+      "D": "will be"
+    },
+    "correct_answer": "C",
+    "topic": "grammar",
+    "subtopic": "conditionals",
+    "difficulty": 1.5,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 90,
+      "learning_objectives": ["second conditional"],
+      "tags": ["grammar", "conditionals", "subjunctive"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "What is the meaning of 'appreciate'?",
+    "options": {
+      "A": "to dislike",
+      "B": "to understand and value",
+      "C": "to ignore",
+      "D": "to forget"
+    },
+    "correct_answer": "B",
+    "topic": "vocabulary",
+    "subtopic": "advanced_words",
+    "difficulty": 1.3,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 45,
+      "learning_objectives": ["advanced vocabulary"],
+      "tags": ["vocabulary", "advanced", "verbs"],
+      "cefr_level": "B2"
+    }
+  },
+  {
+    "stem": "Choose the correct form: The book ____ on the table.",
+    "options": {
+      "A": "is",
+      "B": "are",
+      "C": "was",
+      "D": "were"
+    },
+    "correct_answer": "A",
+    "topic": "grammar",
+    "subtopic": "verb_to_be",
+    "difficulty": 0.6,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 35,
+      "learning_objectives": ["verb to be present tense"],
+      "tags": ["grammar", "verb_to_be", "present"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "Fill in the blank: She ____ her homework before dinner.",
+    "options": {
+      "A": "finish",
+      "B": "finishes",
+      "C": "finished",
+      "D": "finishing"
+    },
+    "correct_answer": "C",
+    "topic": "grammar",
+    "subtopic": "past_tense",
+    "difficulty": 1.0,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 50,
+      "learning_objectives": ["past tense with regular verbs"],
+      "tags": ["grammar", "past_tense", "regular_verbs"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "What is a synonym for 'beautiful'?",
+    "options": {
+      "A": "ugly",
+      "B": "pretty",
+      "C": "small",
+      "D": "old"
+    },
+    "correct_answer": "B",
+    "topic": "vocabulary",
+    "subtopic": "synonyms",
+    "difficulty": 0.7,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["basic synonyms"],
+      "tags": ["vocabulary", "synonyms", "adjectives"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "Choose the correct form: They ____ to the cinema last night.",
+    "options": {
+      "A": "go",
+      "B": "goes",
+      "C": "went",
+      "D": "going"
+    },
+    "correct_answer": "C",
+    "topic": "grammar",
+    "subtopic": "past_tense",
+    "difficulty": 0.8,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 40,
+      "learning_objectives": ["past tense with 'they'"],
+      "tags": ["grammar", "past_tense", "irregular_verbs"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "Fill in the blank: The weather is ____ today.",
+    "options": {
+      "A": "sun",
+      "B": "sunny",
+      "C": "sunshine",
+      "D": "sunning"
+    },
+    "correct_answer": "B",
+    "topic": "vocabulary",
+    "subtopic": "weather",
+    "difficulty": 0.6,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 35,
+      "learning_objectives": ["weather vocabulary"],
+      "tags": ["vocabulary", "weather", "adjectives"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "Choose the correct form: I ____ never been to Paris.",
+    "options": {
+      "A": "am",
+      "B": "have",
+      "C": "has",
+      "D": "had"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "present_perfect",
+    "difficulty": 1.4,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 70,
+      "learning_objectives": ["present perfect with 'never'"],
+      "tags": ["grammar", "present_perfect", "experience"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "What does 'determine' mean?",
+    "options": {
+      "A": "to decide",
+      "B": "to forget",
+      "C": "to ask",
+      "D": "to sleep"
+    },
+    "correct_answer": "A",
+    "topic": "vocabulary",
+    "subtopic": "advanced_words",
+    "difficulty": 1.6,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 50,
+      "learning_objectives": ["advanced vocabulary"],
+      "tags": ["vocabulary", "advanced", "verbs"],
+      "cefr_level": "B2"
+    }
+  },
+  {
+    "stem": "Fill in the blank: The children ____ playing in the garden.",
+    "options": {
+      "A": "is",
+      "B": "are",
+      "C": "was",
+      "D": "were"
+    },
+    "correct_answer": "B",
+    "topic": "grammar",
+    "subtopic": "present_continuous",
+    "difficulty": 0.9,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 45,
+      "learning_objectives": ["present continuous"],
+      "tags": ["grammar", "present_continuous", "plural"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "Choose the correct form: She ____ her keys yesterday.",
+    "options": {
+      "A": "lose",
+      "B": "loses",
+      "C": "lost",
+      "D": "losing"
+    },
+    "correct_answer": "C",
+    "topic": "grammar",
+    "subtopic": "past_tense",
+    "difficulty": 1.1,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 55,
+      "learning_objectives": ["irregular past tense"],
+      "tags": ["grammar", "past_tense", "irregular_verbs"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "What is the meaning of 'accomplish'?",
+    "options": {
+      "A": "to start",
+      "B": "to finish successfully",
+      "C": "to try",
+      "D": "to fail"
+    },
+    "correct_answer": "B",
+    "topic": "vocabulary",
+    "subtopic": "advanced_words",
+    "difficulty": 1.7,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 60,
+      "learning_objectives": ["advanced vocabulary"],
+      "tags": ["vocabulary", "advanced", "verbs"],
+      "cefr_level": "B2"
+    }
+  }
+]

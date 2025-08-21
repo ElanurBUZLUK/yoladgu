@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ from datetime import datetime
 from app.database_enhanced import enhanced_database_manager as database_manager
 from app.middleware.auth import get_current_student, get_current_teacher
 from app.models.user import User
-from app.models.question import Subject, QuestionType
+from app.models.question import Subject, QuestionType, SourceType, Question
 from app.domains.english.hybrid_retriever import hybrid_retriever
 from app.domains.english.moderation import content_moderator
 from app.services.llm_gateway import llm_gateway
@@ -315,6 +315,13 @@ class GenerateQuestionResponse(BaseModel):
     question: Dict[str, Any]
     generation_info: Dict[str, Any]
 
+class JSONUploadResponse(BaseModel):
+    success: bool
+    message: str
+    questions_imported: int
+    questions_failed: int
+    errors: List[str] = []
+
 
 @idempotency_decorator(
     key_builder=lambda req, user, db, svc: f"cloze_generation:{user.id}:{req.num_recent_errors}",
@@ -392,4 +399,149 @@ async def generate_cloze_alternative(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate cloze question: {str(e)}"
+        )
+
+
+@router.post("/questions/upload-json", response_model=JSONUploadResponse)
+async def upload_english_questions_json(
+    file: UploadFile = File(..., description="JSON file containing English questions"),
+    current_user: User = Depends(get_current_teacher),  # Only teachers can upload
+    db: AsyncSession = Depends(database_manager.get_session)
+):
+    """
+    Upload English questions from a JSON file using enhanced format
+    
+    Expected JSON format:
+    [
+        {
+            "stem": "Choose the correct form: I ____ to school every day.",
+            "options": {
+                "A": "go",
+                "B": "goes",
+                "C": "going",
+                "D": "went"
+            },
+            "correct_answer": "A",
+            "topic": "grammar",
+            "subtopic": "present_tense",
+            "difficulty": 0.8,
+            "source": "seed",
+            "metadata": {
+                "estimated_time": 30,
+                "learning_objectives": ["present tense with 'I'"],
+                "tags": ["grammar", "present_tense", "basic"],
+                "cefr_level": "A1"
+            }
+        }
+    ]
+    """
+    try:
+        # Validate file type
+        if not file.filename.endswith('.json'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only JSON files are allowed"
+            )
+        
+        # Read and parse JSON
+        content = await file.read()
+        try:
+            questions_data = json.loads(content.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON format: {str(e)}"
+            )
+        
+        if not isinstance(questions_data, list):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="JSON must contain an array of questions"
+            )
+        
+        # Process questions
+        questions_imported = 0
+        questions_failed = 0
+        errors = []
+        
+        for i, question_data in enumerate(questions_data):
+            try:
+                # Validate required fields for enhanced format
+                required_fields = ['stem', 'options', 'correct_answer', 'topic']
+                for field in required_fields:
+                    if field not in question_data:
+                        raise ValueError(f"Missing required field: {field}")
+                
+                # Convert difficulty (continuous 0.0-2.0 to discrete 1-5)
+                difficulty = question_data.get('difficulty', 1.0)
+                if difficulty <= 0.5:
+                    difficulty_level = 1
+                elif difficulty <= 1.0:
+                    difficulty_level = 2
+                elif difficulty <= 1.5:
+                    difficulty_level = 3
+                elif difficulty <= 1.8:
+                    difficulty_level = 4
+                else:
+                    difficulty_level = 5
+                
+                # Determine question type based on options
+                options = question_data['options']
+                if len(options) == 2 and all(opt in ['True', 'False', 'true', 'false'] for opt in options.values()):
+                    question_type = QuestionType.TRUE_FALSE
+                elif len(options) == 0:
+                    question_type = QuestionType.OPEN_ENDED
+                else:
+                    question_type = QuestionType.MULTIPLE_CHOICE
+                
+                # Create question object with enhanced format
+                question = Question(
+                    subject=Subject.ENGLISH,
+                    content=question_data['stem'],
+                    question_type=question_type,
+                    difficulty_level=difficulty_level,
+                    original_difficulty=difficulty_level,
+                    topic_category=question_data['topic'],
+                    correct_answer=question_data['correct_answer'],
+                    options=question_data['options'],
+                    source_type=SourceType.MANUAL,
+                    estimated_difficulty=question_data.get('difficulty', 1.0),
+                    question_metadata={
+                        "subtopic": question_data.get('subtopic'),
+                        "source": question_data.get('source', 'seed'),
+                        "estimated_time": question_data.get('metadata', {}).get('estimated_time', 60),
+                        "learning_objectives": question_data.get('metadata', {}).get('learning_objectives', []),
+                        "tags": question_data.get('metadata', {}).get('tags', []),
+                        "cefr_level": question_data.get('metadata', {}).get('cefr_level', 'A1')
+                    },
+                    created_by=str(current_user.id)
+                )
+                
+                db.add(question)
+                questions_imported += 1
+                
+            except Exception as e:
+                questions_failed += 1
+                error_msg = f"Question {i+1}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+        
+        # Commit all successful questions
+        await db.commit()
+        
+        return JSONUploadResponse(
+            success=True,
+            message=f"Successfully imported {questions_imported} English questions",
+            questions_imported=questions_imported,
+            questions_failed=questions_failed,
+            errors=errors
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error uploading English JSON questions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload English questions: {str(e)}"
         )

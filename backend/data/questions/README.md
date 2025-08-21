@@ -1,14 +1,16 @@
-# Matematik Soruları JSON Yükleme Rehberi
+# Matematik ve İngilizce Soruları JSON Yükleme Rehberi
 
-Bu dizin matematik sorularını JSON formatında yüklemek için kullanılır.
+Bu dizin matematik ve İngilizce sorularını JSON formatında yüklemek için kullanılır.
 
 ## 📁 Dosya Yapısı
 
 ```
 backend/data/questions/
-├── README.md                    # Bu dosya
-├── example_math_questions.json  # Örnek soru dosyası
-└── your_questions.json          # Kendi sorularınızı buraya ekleyin
+├── README.md                           # Bu dosya
+├── example_math_questions.json         # Örnek matematik soru dosyası
+├── math_questions_enhanced.json        # Gelişmiş matematik soru dosyası
+├── english_questions_enhanced.json     # Gelişmiş İngilizce soru dosyası
+└── your_questions.json                 # Kendi sorularınızı buraya ekleyin
 ```
 
 ## 📋 JSON Formatı
@@ -117,6 +119,7 @@ Her soru aşağıdaki formatta olmalıdır:
 
 ## 📚 Konu Kategorileri
 
+### 🧮 Matematik Konuları
 - `addition` - Toplama
 - `subtraction` - Çıkarma
 - `multiplication` - Çarpma
@@ -128,6 +131,19 @@ Her soru aşağıdaki formatta olmalıdır:
 - `patterns` - Örüntüler
 - `word_problems` - Sözel problemler
 
+### 🇬🇧 İngilizce Konuları
+- `grammar` - Dilbilgisi
+- `vocabulary` - Kelime bilgisi
+- `present_tense` - Şimdiki zaman
+- `past_tense` - Geçmiş zaman
+- `present_perfect` - Şimdiki zamanın hikayesi
+- `conditionals` - Koşul cümleleri
+- `articles` - Tanımlıklar
+- `prepositions` - Edatlar
+- `plurals` - Çoğul yapılar
+- `antonyms` - Zıt anlamlılar
+- `synonyms` - Eş anlamlılar
+
 ## 🚀 Kullanım Yöntemleri
 
 ### 1. Dosya Yerleştirme (Otomatik Yükleme)
@@ -136,13 +152,24 @@ Her soru aşağıdaki formatta olmalıdır:
 3. Dosya adı `.json` ile bitmelidir
 
 ### 2. API ile Yükleme
+
+#### Matematik Soruları
 ```bash
 curl -X POST "http://localhost:8000/api/v1/math/questions/upload-json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  -F "file=@your_questions.json"
+  -F "file=@your_math_questions.json"
+```
+
+#### İngilizce Soruları
+```bash
+curl -X POST "http://localhost:8000/api/v1/english/questions/upload-json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@your_english_questions.json"
 ```
 
 ### 3. Script ile Yükleme (Embedding ile)
+
+#### Matematik Soruları
 ```bash
 # Tek dosya yükleme
 python scripts/load_math_questions_json.py --json data/questions/math_questions_enhanced.json
@@ -151,17 +178,43 @@ python scripts/load_math_questions_json.py --json data/questions/math_questions_
 python scripts/load_math_questions_json.py --dir data/questions/
 ```
 
+#### İngilizce Soruları
+```bash
+# Tek dosya yükleme
+python scripts/load_english_questions_json.py --json data/questions/english_questions_enhanced.json
+
+# Dizin yükleme
+python scripts/load_english_questions_json.py --dir data/questions/
+```
+
 ### 4. Örnek Kullanım
+
+#### Matematik Soruları
 ```bash
 # Gelişmiş örnek dosyayı kopyalayın
-cp math_questions_enhanced.json my_questions.json
+cp math_questions_enhanced.json my_math_questions.json
 
 # Dosyayı düzenleyin
-nano my_questions.json
+nano my_math_questions.json
 
 # Script ile yükleyin (embedding ile)
-python scripts/load_math_questions_json.py --json my_questions.json
+python scripts/load_math_questions_json.py --json my_math_questions.json
+```
 
+#### İngilizce Soruları
+```bash
+# Gelişmiş örnek dosyayı kopyalayın
+cp english_questions_enhanced.json my_english_questions.json
+
+# Dosyayı düzenleyin
+nano my_english_questions.json
+
+# Script ile yükleyin (embedding ile)
+python scripts/load_english_questions_json.py --json my_english_questions.json
+```
+
+#### Genel
+```bash
 # Veya uygulamayı yeniden başlatın (otomatik yükleme)
 python -m app.main
 ```

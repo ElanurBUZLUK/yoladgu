@@ -23,7 +23,11 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+try:
+    from sqlalchemy.orm import sessionmaker
+except ImportError:
+    # Fallback for older SQLAlchemy versions
+    from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from app.models.question import Question, Subject, QuestionType, SourceType
 from app.services.embedding_service import embedding_service
@@ -49,11 +53,19 @@ class EnhancedMathQuestionLoader:
             max_overflow=20,
             echo=False
         )
-        self.Session = sessionmaker(
-            self.engine, 
-            class_=AsyncSession, 
-            expire_on_commit=False
-        )
+        try:
+            self.Session = sessionmaker(
+                self.engine, 
+                class_=AsyncSession, 
+                expire_on_commit=False
+            )
+        except TypeError:
+            # Fallback for older SQLAlchemy versions
+            from sqlalchemy.orm import sessionmaker
+            self.Session = sessionmaker(
+                bind=self.engine,
+                expire_on_commit=False
+            )
         
         # Initialize embedding service
         await embedding_service.initialize()
