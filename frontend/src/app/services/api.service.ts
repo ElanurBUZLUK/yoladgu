@@ -5,6 +5,7 @@ import { map, catchError } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 import { AuthService } from '../core/services/auth.service';
 import { ApiConfig } from '../core/config/api.config';
+import { EnglishQuestionRequest, EnglishQuestionResponse } from '../models/english-question.model';
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
@@ -70,39 +71,29 @@ export class ApiService {
     );
   }
 
-  getEnglishQuestion(): Observable<any> {
-    const payload = {
-      num_recent_errors: 5
-    };
-
-    return this.http.post(
-      ApiConfig.getApiUrl('english/questions/generate'), 
-      payload,
-      { headers: this.getHeaders() }
-    ).pipe(
-      map((response: any) => {
-        // Backend'ten gelen response'u frontend formatına çevir
-        if (response.success && response.question) {
-          const question = response.question;
-          return {
-            id: question.id,
-            text: question.content,
-            options: question.options || [],
-            correct_answer: question.correct_answer,
-            difficulty_level: question.difficulty_level,
-            topic: question.topic_category,
-            hint: question.hint,
-            explanation: question.explanation,
-            error_type: response.generation_info?.error_type
-          };
-        }
-        return null;
-      }),
-      catchError(error => {
-        console.error('English question error:', error);
-        return throwError(() => error);
-      })
-    );
+  getEnglishQuestion(req: EnglishQuestionRequest): Observable<EnglishQuestionResponse> {
+    return this.http
+      .post<EnglishQuestionResponse>(ApiConfig.getApiUrl('english/questions/generate'), req, { headers: this.getHeaders() })
+      .pipe(
+        map((res) => {
+          if (!res || res.success !== true || !res.question) {
+            throw new Error('Invalid response contract');
+          }
+          // Invariant (runtime guard): 1 doğru + benzersiz distraktörler
+          const opts = res.question.options || [];
+          if (!opts.includes(res.question.correct_answer)) {
+            throw new Error('Answer not in options');
+          }
+          if (new Set(opts).size !== opts.length) {
+            throw new Error('Duplicate options');
+          }
+          return res;
+        }),
+        catchError(error => {
+          console.error('English question error:', error);
+          return throwError(() => error);
+        })
+      );
   }
 
   submitAnswer(questionId: number, answer: string): Observable<any> {

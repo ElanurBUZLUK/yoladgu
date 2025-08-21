@@ -17,11 +17,11 @@
     <div class="question-header">
       <h3>Soru</h3>
       <span class="difficulty">Zorluk: {{ question.difficulty_level }}/5</span>
-      <span *ngIf="question.error_type" class="error-type">Hata Tipi: {{ question.error_type }}</span>
+      <span *ngIf="question.topic_category" class="topic">Konu: {{ question.topic_category }}</span>
     </div>
     
     <div class="question-content">
-      <p [innerHTML]="question.text"></p>
+      <p [innerHTML]="question.content"></p>
     </div>
 
     <div class="options-container">
@@ -37,10 +37,10 @@
       </div>
     </div>
 
-    <div *ngIf="question.hint" class="hint-container">
+    <div *ngIf="question.topic_category" class="topic-container">
       <details>
-        <summary>İpucu</summary>
-        <p>{{ question.hint }}</p>
+        <summary>Konu Bilgisi</summary>
+        <p>{{ question.topic_category }}</p>
       </details>
     </div>
   </div>

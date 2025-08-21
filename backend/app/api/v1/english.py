@@ -43,13 +43,25 @@ class EnglishQuestionResponse(BaseModel):
     topic: str
     latency_ms: int
 
+class EnglishQuestion(BaseModel):
+    id: str
+    content: str
+    options: List[str] = Field(min_items=3)
+    correct_answer: str
+    difficulty_level: float
+    topic_category: Optional[str] = None
+
+class GenerateQuestionResponse(BaseModel):
+    success: bool
+    question: Optional[EnglishQuestion] = None
+    generation_info: Optional[dict] = None
+
 class ClozeGenerationRequest(BaseModel):
     student_id: str
-    target_error_tag: Optional[str] = Field(None, description="Target error tag for cloze generation")
-    k: int = Field(3, ge=1, le=10, description="Number of cloze questions to generate")
+    k: int = Field(default=1, ge=1, le=10)
 
 
-@router.post("/questions/generate", response_model=List[Dict[str, Any]])
+@router.post("/questions/generate", response_model=GenerateQuestionResponse)
 async def generate_cloze_questions(
     request: ClozeGenerationRequest,
     current_user: User = Depends(get_current_student),
@@ -64,30 +76,39 @@ async def generate_cloze_questions(
             last_n_errors=5
         )
         
-        # Validate and ensure distractor != answer
-        validated_questions = []
-        for q in questions:
-            q_dict = q.to_dict()
-            # Ensure distractor validation
-            if 'distractors' in q_dict and 'correct_answer' in q_dict:
-                # Remove any distractors that match the correct answer
-                q_dict['distractors'] = [
-                    d for d in q_dict['distractors'] 
-                    if d != q_dict['correct_answer']
-                ]
-                # Ensure we have at least 3 distractors
-                while len(q_dict['distractors']) < 3:
-                    q_dict['distractors'].append(f"option_{len(q_dict['distractors'])+1}")
-            validated_questions.append(q_dict)
-        
-        return validated_questions
+        if questions and len(questions) > 0:
+            q = questions[0]
+            # Convert to dict format if it's a Question object
+            if hasattr(q, 'to_dict'):
+                q_dict = q.to_dict()
+            else:
+                q_dict = q
+            
+            # Ensure options format is correct
+            if 'options' not in q_dict and 'distractors' in q_dict:
+                q_dict['options'] = q_dict['distractors']
+            
+            # Invariant: 1 doğru + 3 benzersiz distraktör (hızlı savunma)
+            if 'correct_answer' in q_dict and 'options' in q_dict:
+                assert q_dict['correct_answer'] in q_dict['options'], "Answer not in options"
+                assert len(set(q_dict['options'])) == len(q_dict['options']), "Duplicate options"
+            
+            return GenerateQuestionResponse(
+                success=True,
+                question=EnglishQuestion(**q_dict),
+                generation_info={"source": "rag+llm", "error_type": "cloze_generation"}
+            )
+        else:
+            return GenerateQuestionResponse(
+                success=False,
+                generation_info={"error": "no_question_generated"}
+            )
+            
     except Exception as e:
-        return error_handler.handle_error(
-            error=e,
-            error_code=ErrorCode.ENGLISH_CLOZE_ERROR,
-            message="Cloze generation failed",
-            severity=ErrorSeverity.MEDIUM,
-            context={"student_id": request.student_id, "k": request.k}
+        logger.error(f"Error generating cloze questions: {e}")
+        return GenerateQuestionResponse(
+            success=False,
+            generation_info={"error": str(e)}
         )
 
 def _cloze_generation_key_builder(*args, **kwargs) -> str:
