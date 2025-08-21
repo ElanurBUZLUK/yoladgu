@@ -27,13 +27,22 @@ error_handler = ErrorHandler()
 
 router = APIRouter(prefix="/api/v1/math", tags=["math"])
 
-class RecommendRequest(BaseModel):
-    # Assuming a simple request for now, adjust as needed
+class MathQuestion(BaseModel):
+    id: str
+    content: str
+    options: List[str] = Field(min_items=3)
+    correct_answer: str
+    difficulty_level: float
+    topic_category: Optional[str] = None
+
+class GenerateMathQuestionResponse(BaseModel):
+    success: bool
+    question: Optional[MathQuestion] = None
+    generation_info: Optional[dict] = None
+
+class MathQuestionRequest(BaseModel):
     user_id: str
-    # Add other fields relevant to math recommendation, e.g., current_topic, difficulty_level
-    # For example:
-    # current_topic: Optional[str] = None
-    # desired_difficulty: Optional[int] = None
+    k: int = Field(default=1, ge=1, le=10)
 
 class QuestionRecommendationRequest(BaseModel):
     user_id: str = Field(..., description="User ID for recommendation")
@@ -84,6 +93,55 @@ async def _recommend_math_questions_internal(
         user_level=profile.global_skill, # Use actual global skill
         next_recommendations=[] # Placeholder for now
     )
+
+@router.post("/questions/generate", response_model=GenerateMathQuestionResponse)
+async def generate_math_question(
+    request: MathQuestionRequest,
+    current_user: User = Depends(get_current_student),
+    db: AsyncSession = Depends(database_manager.get_session)
+):
+    """Generate math question using MathRecommendService"""
+    try:
+        recommended_questions = await math_recommend_service.recommend_questions(
+            user_id=request.user_id,
+            session=db,
+            num_questions=request.k
+        )
+        
+        if recommended_questions and len(recommended_questions) > 0:
+            q = recommended_questions[0]
+            # Convert to dict format if it's a Question object
+            if hasattr(q, 'to_dict'):
+                q_dict = q.to_dict()
+            else:
+                q_dict = q
+            
+            # Ensure options format is correct
+            if 'options' not in q_dict and 'distractors' in q_dict:
+                q_dict['options'] = q_dict['distractors']
+            
+            # Invariant: 1 doğru + 3 benzersiz distraktör (hızlı savunma)
+            if 'correct_answer' in q_dict and 'options' in q_dict:
+                assert q_dict['correct_answer'] in q_dict['options'], "Answer not in options"
+                assert len(set(q_dict['options'])) == len(q_dict['options']), "Duplicate options"
+            
+            return GenerateMathQuestionResponse(
+                success=True,
+                question=MathQuestion(**q_dict),
+                generation_info={"source": "math_recommend", "user_level": "current"}
+            )
+        else:
+            return GenerateMathQuestionResponse(
+                success=False,
+                generation_info={"error": "no_question_generated"}
+            )
+            
+    except Exception as e:
+        logger.error(f"Error generating math question: {e}")
+        return GenerateMathQuestionResponse(
+            success=False,
+            generation_info={"error": str(e)}
+        )
 
 @router.post("/recommend", response_model=QuestionRecResponse)
 async def recommend_math_questions(

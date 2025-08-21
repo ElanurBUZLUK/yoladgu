@@ -1,6 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ApiService } from '../services/api.service';
+import { MathQuestion, MathQuestionRequest } from '../models/math-question.model';
 
 @Component({
   selector: 'app-math-question',
@@ -10,7 +11,7 @@ import { ApiService } from '../services/api.service';
   styleUrls: ['./math-question.component.css']
 })
 export class MathQuestionComponent implements OnInit {
-  question: any;
+  question: MathQuestion | null = null;
   loading = false;
   error: string | null = null;
 
@@ -24,9 +25,14 @@ export class MathQuestionComponent implements OnInit {
     this.loading = true;
     this.error = null;
     
-    this.api.getMathQuestion().subscribe({
+    const req: MathQuestionRequest = { 
+      user_id: 's1', // TODO: Get from auth service
+      k: 1 
+    };
+    
+    this.api.getMathQuestion(req).subscribe({
       next: (res) => {
-        this.question = res;
+        this.question = res.question!;
         this.loading = false;
       },
       error: (error) => {
@@ -43,7 +49,7 @@ export class MathQuestionComponent implements OnInit {
       return;
     }
 
-    this.api.submitAnswer(this.question.id, answer).subscribe({
+    this.api.submitAnswer(parseInt(this.question.id), answer).subscribe({
       next: (response) => {
         console.log('Answer submitted:', response);
         // Cevap gönderildikten sonra yeni soru yükle

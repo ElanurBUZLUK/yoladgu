@@ -20,7 +20,7 @@
     </div>
     
     <div class="question-content">
-      <p>{{ question.text }}</p>
+      <p>{{ question.content }}</p>
     </div>
 
     <div class="options-container">
@@ -37,10 +37,10 @@
       </div>
     </div>
 
-    <div *ngIf="question.hint" class="hint-container">
+    <div *ngIf="question.topic_category" class="topic-container">
       <details>
-        <summary>İpucu</summary>
-        <p>{{ question.hint }}</p>
+        <summary>Konu Bilgisi</summary>
+        <p>{{ question.topic_category }}</p>
       </details>
     </div>
   </div>
