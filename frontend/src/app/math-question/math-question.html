@@ -1,0 +1,105 @@
+<div class="question-container fade-in">
+    <!-- Quiz Header -->
+    <div class="quiz-header">
+        <div class="header-content">
+            <div class="subject-info">
+                <div class="subject-icon">📊</div>
+                <div class="subject-details">
+                    <h1>Matematik Soruları</h1>
+                    <p>Trigonometri • Kolay Seviye</p>
+                </div>
+            </div>
+            
+            <div class="quiz-stats">
+                <div class="stat-box">
+                    <div class="stat-number">{{ questions.length - currentQuestionIndex - 1 }}</div>
+                    <div class="stat-label">Kalan</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{{ score }}</div>
+                    <div class="stat-label">Doğru</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{{ currentQuestionIndex - score }}</div>
+                    <div class="stat-label">Yanlış</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quiz Container -->
+    <div class="quiz-container" *ngIf="currentQuestion">
+        <div class="question-header">
+            <div class="question-number">Soru {{ currentQuestionIndex + 1 }} / {{ questions.length }}</div>
+            <div class="difficulty-badge difficulty-easy">Kolay</div>
+            <div class="timer">⏱️ <span>{{ formatTime(timeLeft) }}</span></div>
+        </div>
+
+        <div class="question-content">
+            <div class="question-text">
+                {{ currentQuestion.question }}
+            </div>
+            
+            <div class="math-formula" *ngIf="currentQuestion.formula">
+                {{ currentQuestion.formula }}
+            </div>
+        </div>
+
+        <div class="options-container">
+            <div 
+                class="option" 
+                *ngFor="let option of currentQuestion.options; let i = index"
+                [class.selected]="selectedAnswer === i"
+                [class.correct]="showResult && i === currentQuestion.correctAnswer"
+                [class.incorrect]="showResult && selectedAnswer === i && selectedAnswer !== currentQuestion.correctAnswer"
+                (click)="selectAnswer(i)">
+                <div class="option-letter">{{ getOptionLetter(i) }}</div>
+                <div class="option-text">{{ option }}</div>
+            </div>
+        </div>
+
+        <div class="result-message" *ngIf="showResult">
+            <div class="result-icon" [class.correct]="isCorrect" [class.incorrect]="!isCorrect">
+                {{ isCorrect ? '✅' : '❌' }}
+            </div>
+            <div class="result-text">
+                <h4>{{ isCorrect ? 'Doğru!' : 'Yanlış!' }}</h4>
+                <p *ngIf="!isCorrect">Doğru cevap: {{ getOptionLetter(currentQuestion.correctAnswer) }}</p>
+                <p *ngIf="currentQuestion.explanation">{{ currentQuestion.explanation }}</p>
+            </div>
+        </div>
+
+        <div class="action-buttons">
+            <button class="btn btn-secondary" (click)="goHome()">🏠 Ana Sayfa</button>
+            <button 
+                class="btn btn-primary" 
+                (click)="submitAnswer()" 
+                [disabled]="selectedAnswer === null || showResult">
+                Cevabı Gönder
+            </button>
+            <button 
+                class="btn btn-secondary" 
+                (click)="nextQuestion()" 
+                *ngIf="showResult && currentQuestionIndex < questions.length - 1">
+                Sonraki Soru
+            </button>
+            <button 
+                class="btn btn-success" 
+                (click)="finishQuiz()" 
+                *ngIf="showResult && currentQuestionIndex === questions.length - 1">
+                Testi Bitir
+            </button>
+        </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-container">
+        <div class="progress-header">
+            <span style="color: #f8fafc; font-weight: bold;">İlerleme</span>
+            <span style="color: #fca5a5;">{{ ((currentQuestionIndex + 1) / questions.length) * 100 | number:'1.0-0' }}% Tamamlandı</span>
+        </div>
+        <div class="progress-bar">
+            <div class="progress-fill" [style.width]="((currentQuestionIndex + 1) / questions.length) * 100 + '%'"></div>
+        </div>
+    </div>
+</div>

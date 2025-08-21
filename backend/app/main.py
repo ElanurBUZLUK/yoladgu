@@ -24,7 +24,9 @@ async def lifespan(app: FastAPI):
                 version=settings.version,
                 debug=settings.debug)
     
-    await database_manager.initialize()
+    # Temporarily disable database initialization for development
+    # await database_manager.initialize()
+    logger.info("⚠️ Database initialization temporarily disabled for development")
     await cache_service.connect()
     
     # Background scheduler'ı başlat

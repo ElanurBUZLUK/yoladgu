@@ -1,0 +1,141 @@
+<div class="container">
+    <div class="dashboard fade-in">
+        <!-- Hoş Geldin Bildirimi -->
+        <div class="notification">
+            <span>🎉</span>
+            <span>Hoş geldin! Bugün için 3 yeni AI önerisi hazır.</span>
+        </div>
+        
+        <!-- Header -->
+        <div class="dashboard-header">
+            <div class="user-info">
+                <div class="avatar">A</div>
+                <div class="user-details">
+                    <h2>Ahmet Yılmaz</h2>
+                    <p>9. Sınıf Öğrencisi • Son giriş: Bugün 14:30</p>
+                </div>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-math" routerLink="/math-question">📊 Matematik</button>
+                <button class="btn btn-english" routerLink="/english-question">🇺🇸 İngilizce</button>
+                <button class="btn" (click)="logout()">Çıkış</button>
+            </div>
+        </div>
+        
+        <div class="dashboard-grid">
+            <!-- Dersler ve Konular -->
+            <div class="card">
+                <h3>📚 Dersler & Konular</h3>
+                <div class="subject-list">
+                    <div class="subject-item" (click)="openSubject('matematik')">
+                        <div class="subject-name">Matematik</div>
+                        <div class="subject-count">12 konu</div>
+                    </div>
+                    <div class="subject-item" (click)="openSubject('fizik')">
+                        <div class="subject-name">Fizik</div>
+                        <div class="subject-count">8 konu</div>
+                    </div>
+                    <div class="subject-item" (click)="openSubject('kimya')">
+                        <div class="subject-name">Kimya</div>
+                        <div class="subject-count">10 konu</div>
+                    </div>
+                    <div class="subject-item" (click)="openSubject('biyoloji')">
+                        <div class="subject-name">Biyoloji</div>
+                        <div class="subject-count">15 konu</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- İlerleme Raporu -->
+            <div class="card">
+                <h3>📈 İlerleme Durumu</h3>
+                
+                <div class="progress-section">
+                    <div class="progress-item">
+                        <span class="progress-label">Son 1 Ay</span>
+                        <span class="progress-value">+15%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 65%;"></div>
+                    </div>
+                </div>
+                
+                <div class="progress-section">
+                    <div class="progress-item">
+                        <span class="progress-label">Son 1 Yıl</span>
+                        <span class="progress-value">+45%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: 78%;"></div>
+                    </div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-number">247</div>
+                        <div class="stat-label">Çözülen Soru</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">78%</div>
+                        <div class="stat-label">Doğruluk Oranı</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">23h</div>
+                        <div class="stat-label">Çalışma Süresi</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- AI Önerileri ve Tahmini İlerleme -->
+        <div class="card">
+            <h3>🤖 AI Önerileri & Tahmini İlerleme</h3>
+            
+            <div class="ai-section">
+                <h4>📊 Tahmini İlerleme (Gelecek 3 Ay)</h4>
+                
+                <div class="prediction-item">
+                    <span class="prediction-subject">Matematik: Fonksiyonlar</span>
+                    <span class="prediction-value">+25% beklenen artış</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 85%;"></div>
+                </div>
+                
+                <div class="prediction-item">
+                    <span class="prediction-subject">Fizik: Kuvvet ve Hareket</span>
+                    <span class="prediction-value">+18% beklenen artış</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 72%;"></div>
+                </div>
+            </div>
+            
+            <h4 style="color: #4a5568; margin: 25px 0 15px 0;">📋 Sistemin Önerdiği Çalışma Planı</h4>
+            
+            <div class="plan-item" (click)="startPlan('Matematik - Trigonometri')">
+                <div class="plan-icon">1</div>
+                <div class="plan-content">
+                    <div class="plan-title">Matematik - Trigonometri</div>
+                    <div class="plan-description">Zayıf olduğun konudan 15 kolay soru çöz • Tahmini süre: 30 dakika • Başarı hedefi: %70</div>
+                </div>
+            </div>
+            
+            <div class="plan-item" (click)="startPlan('Fizik - Hareket')">
+                <div class="plan-icon">2</div>
+                <div class="plan-content">
+                    <div class="plan-title">Fizik - Hareket</div>
+                    <div class="plan-description">Orta seviye 10 soru ile başarı oranını %85'e çıkar • Tahmini süre: 25 dakika</div>
+                </div>
+            </div>
+            
+            <div class="plan-item" (click)="startPlan('Kimya - Periyodik Tablo')">
+                <div class="plan-icon">3</div>
+                <div class="plan-content">
+                    <div class="plan-title">Kimya - Periyodik Tablo</div>
+                    <div class="plan-description">Güçlü olduğun konudan 5 zor soru ile kendini test et • Tahmini süre: 20 dakika</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

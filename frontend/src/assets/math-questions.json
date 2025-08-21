@@ -1,0 +1,420 @@
+[
+  {
+    "stem": "What is 2 + 2?",
+    "options": {
+      "A": "1",
+      "B": "2", 
+      "C": "3",
+      "D": "4"
+    },
+    "correct_answer": "D",
+    "topic": "arithmetic",
+    "subtopic": "addition",
+    "difficulty": 0.5,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["basic addition"],
+      "tags": ["arithmetic", "basic", "addition"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "Solve for x: 2x + 3 = 7",
+    "options": {
+      "A": "1",
+      "B": "2",
+      "C": "3", 
+      "D": "4"
+    },
+    "correct_answer": "B",
+    "topic": "algebra",
+    "subtopic": "linear_equations",
+    "difficulty": 1.0,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["solving linear equations", "algebraic manipulation"],
+      "tags": ["algebra", "equations", "solving"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "What is 15 × 8?",
+    "options": {
+      "A": "110",
+      "B": "115",
+      "C": "120",
+      "D": "125"
+    },
+    "correct_answer": "C",
+    "topic": "arithmetic",
+    "subtopic": "multiplication",
+    "difficulty": 0.8,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 60,
+      "learning_objectives": ["two-digit multiplication"],
+      "tags": ["arithmetic", "multiplication"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "What is 1/2 + 1/4?",
+    "options": {
+      "A": "1/2",
+      "B": "2/4",
+      "C": "3/4",
+      "D": "4/4"
+    },
+    "correct_answer": "C",
+    "topic": "fractions",
+    "subtopic": "addition",
+    "difficulty": 1.2,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["fraction addition", "common denominators"],
+      "tags": ["fractions", "addition", "denominators"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "Convert 0.75 to a fraction in its simplest form.",
+    "options": {
+      "A": "1/4",
+      "B": "2/4",
+      "C": "3/4",
+      "D": "4/4"
+    },
+    "correct_answer": "C",
+    "topic": "decimals",
+    "subtopic": "conversion",
+    "difficulty": 1.3,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 150,
+      "learning_objectives": ["decimal to fraction conversion", "simplifying fractions"],
+      "tags": ["decimals", "fractions", "conversion"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "Find the area of a circle with radius 5 cm. (Use π ≈ 3.14)",
+    "options": {
+      "A": "62.8 cm²",
+      "B": "78.5 cm²",
+      "C": "94.2 cm²",
+      "D": "157 cm²"
+    },
+    "correct_answer": "B",
+    "topic": "geometry",
+    "subtopic": "circles",
+    "difficulty": 1.8,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 180,
+      "learning_objectives": ["circle area formula", "geometry calculations"],
+      "tags": ["geometry", "circles", "area"],
+      "cefr_level": "B2"
+    }
+  },
+  {
+    "stem": "What is the next number in the sequence: 2, 4, 6, 8, ___?",
+    "options": {
+      "A": "9",
+      "B": "10",
+      "C": "11",
+      "D": "12"
+    },
+    "correct_answer": "B",
+    "topic": "patterns",
+    "subtopic": "sequences",
+    "difficulty": 0.7,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 60,
+      "learning_objectives": ["number patterns", "sequences"],
+      "tags": ["patterns", "sequences", "arithmetic"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "If f(x) = 2x + 3, what is f(5)?",
+    "options": {
+      "A": "10",
+      "B": "11",
+      "C": "12",
+      "D": "13"
+    },
+    "correct_answer": "D",
+    "topic": "functions",
+    "subtopic": "evaluation",
+    "difficulty": 1.5,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["function evaluation", "function notation"],
+      "tags": ["functions", "evaluation", "algebra"],
+      "cefr_level": "B2"
+    }
+  },
+  {
+    "stem": "Solve the quadratic equation: x² - 5x + 6 = 0",
+    "options": {
+      "A": "x = 1, x = 6",
+      "B": "x = 2, x = 3",
+      "C": "x = -2, x = -3",
+      "D": "x = 0, x = 5"
+    },
+    "correct_answer": "B",
+    "topic": "algebra",
+    "subtopic": "quadratic_equations",
+    "difficulty": 2.0,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 300,
+      "learning_objectives": ["solving quadratic equations", "factoring"],
+      "tags": ["algebra", "quadratic", "factoring"],
+      "cefr_level": "B2"
+    }
+  },
+  {
+    "stem": "A rectangle has a length of 8 cm and width of 5 cm. What is its perimeter?",
+    "options": {
+      "A": "18 cm",
+      "B": "22 cm",
+      "C": "26 cm",
+      "D": "40 cm"
+    },
+    "correct_answer": "C",
+    "topic": "geometry",
+    "subtopic": "perimeter",
+    "difficulty": 1.1,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["perimeter calculation", "rectangle properties"],
+      "tags": ["geometry", "perimeter", "rectangles"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "What is 2.5 × 4.2?",
+    "options": {
+      "A": "10.0",
+      "B": "10.5",
+      "C": "11.0",
+      "D": "11.5"
+    },
+    "correct_answer": "B",
+    "topic": "decimals",
+    "subtopic": "multiplication",
+    "difficulty": 1.4,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["decimal multiplication"],
+      "tags": ["decimals", "multiplication"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "Simplify: 4x + 3x - 2x",
+    "options": {
+      "A": "3x",
+      "B": "4x",
+      "C": "5x",
+      "D": "6x"
+    },
+    "correct_answer": "C",
+    "topic": "algebra",
+    "subtopic": "simplification",
+    "difficulty": 1.2,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 90,
+      "learning_objectives": ["combining like terms", "algebraic simplification"],
+      "tags": ["algebra", "simplification", "like_terms"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "What is 144 ÷ 12?",
+    "options": {
+      "A": "10",
+      "B": "11",
+      "C": "12",
+      "D": "13"
+    },
+    "correct_answer": "C",
+    "topic": "arithmetic",
+    "subtopic": "division",
+    "difficulty": 0.9,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 60,
+      "learning_objectives": ["division with larger numbers"],
+      "tags": ["arithmetic", "division"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "Solve: 25 + 37 - 18 = ?",
+    "options": {
+      "A": "42",
+      "B": "43",
+      "C": "44",
+      "D": "45"
+    },
+    "correct_answer": "C",
+    "topic": "arithmetic",
+    "subtopic": "mixed_operations",
+    "difficulty": 1.0,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 90,
+      "learning_objectives": ["order of operations", "mixed arithmetic"],
+      "tags": ["arithmetic", "mixed_operations"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "True or False: 7 × 8 = 56",
+    "options": {
+      "A": "True",
+      "B": "False"
+    },
+    "correct_answer": "A",
+    "topic": "arithmetic",
+    "subtopic": "multiplication",
+    "difficulty": 0.6,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 30,
+      "learning_objectives": ["multiplication facts"],
+      "tags": ["arithmetic", "multiplication", "facts"],
+      "cefr_level": "A1"
+    }
+  },
+  {
+    "stem": "If a car travels 240 km in 3 hours, what is its average speed?",
+    "options": {
+      "A": "60 km/h",
+      "B": "70 km/h",
+      "C": "80 km/h",
+      "D": "90 km/h"
+    },
+    "correct_answer": "C",
+    "topic": "word_problems",
+    "subtopic": "speed",
+    "difficulty": 1.3,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["speed calculation", "word problems"],
+      "tags": ["word_problems", "speed", "calculation"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "What is 2³ × 2²?",
+    "options": {
+      "A": "16",
+      "B": "32",
+      "C": "64",
+      "D": "128"
+    },
+    "correct_answer": "B",
+    "topic": "exponents",
+    "subtopic": "multiplication",
+    "difficulty": 1.6,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 90,
+      "learning_objectives": ["exponent rules", "multiplication of powers"],
+      "tags": ["exponents", "powers", "rules"],
+      "cefr_level": "B2"
+    }
+  },
+  {
+    "stem": "Find the value of 3x² when x = 4",
+    "options": {
+      "A": "36",
+      "B": "42",
+      "C": "48",
+      "D": "54"
+    },
+    "correct_answer": "C",
+    "topic": "algebra",
+    "subtopic": "evaluation",
+    "difficulty": 1.4,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["evaluating algebraic expressions", "exponents"],
+      "tags": ["algebra", "expressions", "exponents"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "What is the sum of angles in a triangle?",
+    "options": {
+      "A": "90 degrees",
+      "B": "180 degrees",
+      "C": "270 degrees",
+      "D": "360 degrees"
+    },
+    "correct_answer": "B",
+    "topic": "geometry",
+    "subtopic": "triangles",
+    "difficulty": 1.0,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 60,
+      "learning_objectives": ["triangle properties", "angle sum"],
+      "tags": ["geometry", "triangles", "angles"],
+      "cefr_level": "A2"
+    }
+  },
+  {
+    "stem": "Convert 0.625 to a fraction in its simplest form.",
+    "options": {
+      "A": "3/8",
+      "B": "4/8",
+      "C": "5/8",
+      "D": "6/8"
+    },
+    "correct_answer": "C",
+    "topic": "decimals",
+    "subtopic": "conversion",
+    "difficulty": 1.5,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 150,
+      "learning_objectives": ["decimal to fraction conversion", "simplifying fractions"],
+      "tags": ["decimals", "fractions", "conversion"],
+      "cefr_level": "B1"
+    }
+  },
+  {
+    "stem": "What is the next number in the sequence: 2, 6, 12, 20, ___?",
+    "options": {
+      "A": "28",
+      "B": "30",
+      "C": "32",
+      "D": "34"
+    },
+    "correct_answer": "B",
+    "topic": "patterns",
+    "subtopic": "sequences",
+    "difficulty": 1.4,
+    "source": "seed",
+    "metadata": {
+      "estimated_time": 120,
+      "learning_objectives": ["number patterns", "sequence analysis"],
+      "tags": ["patterns", "sequences", "analysis"],
+      "cefr_level": "B1"
+    }
+  }
+]

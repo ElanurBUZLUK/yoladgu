@@ -1,0 +1,439 @@
+/* Reset ve temel ayarlar */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Ana body stil ayarları */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    min-height: 100vh;
+    padding: 20px;
+}
+
+/* Ana konteyner */
+.container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Dashboard ana kartı */
+.dashboard {
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(30, 58, 138, 0.3);
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    min-height: 85vh;
+}
+
+/* Dashboard başlık alanı */
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid rgba(30, 58, 138, 0.3);
+}
+
+/* Kullanıcı bilgileri */
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+/* Avatar stilii */
+.avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+    border: 2px solid #3b82f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #60a5fa;
+    font-weight: bold;
+    font-size: 24px;
+}
+
+/* Kullanıcı detay bilgileri */
+.user-details h2 {
+    color: #f8fafc;
+    margin-bottom: 5px;
+    font-size: 1.5em;
+}
+
+.user-details p {
+    color: #94a3b8;
+}
+
+/* Genel buton stilleri */
+.btn {
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+    border: 1px solid #3b82f6;
+    color: #60a5fa;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(59, 130, 246, 0.4);
+    background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
+    color: white;
+}
+
+/* Buton grubu */
+.btn-group {
+    display: flex;
+    gap: 10px;
+}
+
+/* Matematik butonu */
+.btn-math {
+    background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+    border: 1px solid #ef4444;
+    color: #fca5a5;
+}
+
+.btn-math:hover {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    box-shadow: 0 10px 20px rgba(239, 68, 68, 0.4);
+    color: white;
+}
+
+/* İngilizce butonu */
+.btn-english {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    border: 1px solid #10b981;
+    color: #86efac;
+}
+
+.btn-english:hover {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 10px 20px rgba(16, 185, 129, 0.4);
+    color: white;
+}
+
+/* Dashboard grid yapısı */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 30px;
+    margin-bottom: 30px;
+}
+
+/* Kart stili */
+.card {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.8) 0%, rgba(30, 41, 59, 0.6) 100%);
+    border: 1px solid rgba(30, 58, 138, 0.3);
+    border-radius: 15px;
+    padding: 25px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 35px rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+}
+
+/* Kart başlıkları */
+.card h3 {
+    color: #f8fafc;
+    margin-bottom: 20px;
+    font-size: 1.4em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Ders listesi */
+.subject-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+}
+
+/* Ders öğeleri */
+.subject-item {
+    background: rgba(30, 58, 138, 0.2);
+    border: 2px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.subject-item:hover {
+    background: rgba(30, 58, 138, 0.4);
+    transform: scale(1.05);
+    border-color: #3b82f6;
+    box-shadow: 0 5px 15px rgba(59, 130, 246, 0.3);
+}
+
+/* Ders adları */
+.subject-name {
+    font-weight: bold;
+    color: #60a5fa;
+    font-size: 1.1em;
+    margin-bottom: 5px;
+}
+
+/* Ders sayıları */
+.subject-count {
+    font-size: 0.9em;
+    color: #94a3b8;
+}
+
+/* İlerleme bölümü */
+.progress-section {
+    margin: 20px 0;
+}
+
+/* İlerleme öğeleri */
+.progress-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+/* İlerleme etiketleri */
+.progress-label {
+    font-weight: 500;
+    color: #e2e8f0;
+}
+
+/* İlerleme değerleri */
+.progress-value {
+    font-weight: bold;
+    color: #60a5fa;
+}
+
+/* İlerleme çubukları */
+.progress-bar {
+    width: 100%;
+    height: 10px;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(30, 58, 138, 0.3);
+    border-radius: 5px;
+    overflow: hidden;
+    margin: 8px 0 20px 0;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%);
+    border-radius: 5px;
+    transition: width 1.5s ease;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+/* İstatistik grid'i */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-top: 20px;
+}
+
+/* İstatistik öğeleri */
+.stat-item {
+    text-align: center;
+    padding: 20px 15px;
+    background: rgba(30, 58, 138, 0.2);
+    border-radius: 12px;
+    border: 2px solid rgba(30, 58, 138, 0.3);
+    transition: all 0.3s ease;
+}
+
+.stat-item:hover {
+    background: rgba(30, 58, 138, 0.3);
+    border-color: #3b82f6;
+    box-shadow: 0 5px 15px rgba(59, 130, 246, 0.3);
+}
+
+/* İstatistik sayıları */
+.stat-number {
+    font-size: 2.2em;
+    font-weight: bold;
+    color: #60a5fa;
+    margin-bottom: 8px;
+}
+
+/* İstatistik etiketleri */
+.stat-label {
+    font-size: 0.95em;
+    color: #94a3b8;
+}
+
+/* AI bölümü */
+.ai-section {
+    background: linear-gradient(135deg, rgba(30, 58, 138, 0.2) 0%, rgba(15, 23, 42, 0.3) 100%);
+    border: 2px solid rgba(59, 130, 246, 0.3);
+    border-radius: 15px;
+    padding: 25px;
+    margin: 25px 0;
+}
+
+.ai-section h4 {
+    color: #60a5fa;
+    margin-bottom: 15px;
+    font-size: 1.2em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Tahmin öğeleri */
+.prediction-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 15px 0;
+    padding: 15px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(30, 58, 138, 0.3);
+    border-radius: 10px;
+}
+
+/* Tahmin dersleri */
+.prediction-subject {
+    font-weight: 500;
+    color: #e2e8f0;
+}
+
+/* Tahmin değerleri */
+.prediction-value {
+    color: #10b981;
+    font-weight: bold;
+}
+
+/* Plan öğeleri */
+.plan-item {
+    display: flex;
+    align-items: center;
+    padding: 20px;
+    margin: 15px 0;
+    background: rgba(255, 255, 255, 0.6);
+    border-left: 4px solid #667eea;
+    border-radius: 10px;
+    transition: all 0.3s ease;
+}
+
+.plan-item:hover {
+    background: rgba(255, 255, 255, 0.8);
+    transform: translateX(5px);
+}
+
+/* Plan ikonları */
+.plan-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    margin-right: 20px;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+/* Plan içeriği */
+.plan-content {
+    flex: 1;
+}
+
+/* Plan başlıkları */
+.plan-title {
+    font-weight: bold;
+    color: #4a5568;
+    margin-bottom: 5px;
+    font-size: 1.1em;
+}
+
+/* Plan açıklamaları */
+.plan-description {
+    color: #718096;
+    font-size: 0.95em;
+    line-height: 1.4;
+}
+
+/* Bildirim stili */
+.notification {
+    background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%);
+    border: 1px solid #3b82f6;
+    color: #e2e8f0;
+    padding: 15px 20px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 5px 15px rgba(59, 130, 246, 0.2);
+}
+
+/* Animasyonlar */
+.fade-in {
+    animation: fadeIn 0.8s ease-in;
+}
+
+@keyframes fadeIn {
+    from { 
+        opacity: 0; 
+        transform: translateY(20px); 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0); 
+    }
+}
+
+/* Responsive tasarım - Tablet ve mobil */
+@media (max-width: 768px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .subject-list {
+        grid-template-columns: 1fr;
+    }
+    
+    .dashboard-header {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+    
+    .btn-group {
+        flex-direction: column;
+        width: 100%;
+    }
+    
+    .prediction-item {
+        flex-direction: column;
+        gap: 10px;
+        text-align: center;
+    }
+}

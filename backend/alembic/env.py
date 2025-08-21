@@ -9,7 +9,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 from app.core.config import settings
-from app.core.database import Base
+from app.database import Base
 
 # Import all models to ensure they are registered with SQLAlchemy
 from app.models.user import User
@@ -40,7 +40,7 @@ target_metadata = Base.metadata
 
 def get_url():
     # Sync URL for alembic
-    return settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+    return settings.database_url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql://", "postgresql://")
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.

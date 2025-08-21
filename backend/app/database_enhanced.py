@@ -226,13 +226,28 @@ class EnhancedDatabaseManager:
     
     async def initialize(self):
         """Initialize enhanced database connection pool"""
+        if self.is_initialized:
+            logger.warning("⚠️ Database already initialized, skipping...")
+            return
         
         try:
             logger.info("🚀 Initializing enhanced database connection pool...")
             
+            # Check if we have async driver support
+            database_url = settings.database_url
+            if "postgresql+asyncpg://" in database_url:
+                try:
+                    import asyncpg
+                    logger.info("✅ Using asyncpg driver for async database connections")
+                except ImportError:
+                    logger.warning("⚠️ asyncpg not available, falling back to sync driver")
+                    database_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
+            elif "postgresql://" in database_url:
+                logger.info("✅ Using psycopg2 driver for sync database connections")
+            
             # Create async engine with advanced connection pooling
             self.engine = create_async_engine(
-                settings.database_url,
+                database_url,
                 echo=settings.database_echo,
                 poolclass=QueuePool,
                 pool_size=settings.database_pool_size,

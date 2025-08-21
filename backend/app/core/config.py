@@ -45,10 +45,11 @@ class Settings(BaseSettings):
     debug: bool = True
     
     # Database
-    database_url: str = "postgresql://postgres:password@localhost:5432/adaptive_learning"
+    database_url: str = "postgresql+asyncpg://postgres:password@localhost:5432/adaptive_learning"
     database_echo: bool = False
     database_pool_size: int = 20
     database_max_overflow: int = 30
+    database_pool_timeout: int = 30
     test_database_url: Optional[str] = None  # Set to None to avoid testdb connection issues
     
     # Redis
