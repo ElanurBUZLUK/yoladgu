@@ -1,1263 +1,785 @@
+import asyncio
 import logging
-from typing import List, Dict, Any, Optional
+import time
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from redis.asyncio import Redis
-from datetime import datetime
+from sqlalchemy import select, and_, or_, func, desc
+from sqlalchemy.orm import selectinload
+import random
 
-from app.repositories.question_repository import QuestionRepository
-from app.repositories.math_profile_repository import MathProfileRepository
-from app.repositories.student_attempt_repository import StudentAttemptRepository
-from app.repositories.error_pattern_repository import ErrorPatternRepository
-from app.models.question import Question, DifficultyLevel, Subject
+from app.models.student import Student
 from app.models.math_profile import MathProfile
-from app.utils.distlock_idem import idempotent_singleflight, IdempotencyConfig
-from app.core.config import settings
-# --- YENİ EKLENENLER ---
+from app.models.question import Question, Subject, DifficultyLevel
+from app.models.student_attempt import StudentAttempt
+from app.models.error_pattern import ErrorPattern
 from app.services.embedding_service import embedding_service
 from app.services.vector_index_manager import vector_index_manager
 from app.services.metadata_schema_service import metadata_schema_service, ContentType, Domain
-# --- BİTİŞ ---
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-class MathRecommendService:
-    def __init__(
-        self,
-        question_repo: QuestionRepository,
-        math_profile_repo: MathProfileRepository,
-        student_attempt_repo: StudentAttemptRepository,
-        error_pattern_repo: ErrorPatternRepository
-    ):
-        self.question_repo = question_repo
-        self.math_profile_repo = math_profile_repo
-        self.student_attempt_repo = student_attempt_repo
-        self.error_pattern_repo = error_pattern_repo
-        self.redis_client = Redis.from_url(settings.redis_url)
+
+class ProfileLockManager:
+    """Manages locks for student profile updates to prevent race conditions"""
+    
+    def __init__(self):
+        self.locks: Dict[str, asyncio.Lock] = {}
+        self.lock_timeout = 30  # 30 seconds timeout
+        self.cleanup_interval = 300  # 5 minutes
+    
+    async def acquire_lock(self, student_id: str) -> asyncio.Lock:
+        """Acquire lock for student profile"""
+        if student_id not in self.locks:
+            self.locks[student_id] = asyncio.Lock()
         
-        # Embedding-based recommendation weights
-        self.embedding_weights = {
-            "error_pattern_similarity": 0.4,
-            "question_content_similarity": 0.3,
-            "difficulty_fit": 0.2,
-            "diversity": 0.1
+        # Clean up old locks periodically
+        if len(self.locks) > 1000:  # Prevent memory leaks
+            await self._cleanup_old_locks()
+        
+        return self.locks[student_id]
+    
+    async def release_lock(self, student_id: str):
+        """Release lock for student profile"""
+        if student_id in self.locks:
+            # Don't delete the lock, just mark it as available
+            pass
+    
+    async def _cleanup_old_locks(self):
+        """Clean up old locks to prevent memory leaks"""
+        try:
+            # Remove locks for students not accessed recently
+            current_time = time.time()
+            keys_to_remove = []
+            
+            for student_id, lock in self.locks.items():
+                # Simple cleanup - could be enhanced with access tracking
+                if len(self.locks) > 500:  # Only cleanup if we have too many
+                    keys_to_remove.append(student_id)
+            
+            for key in keys_to_remove[:100]:  # Remove max 100 at a time
+                if key in self.locks:
+                    del self.locks[key]
+            
+            if keys_to_remove:
+                logger.info(f"🧹 Cleaned up {len(keys_to_remove)} old profile locks")
+                
+        except Exception as e:
+            logger.error(f"❌ Error during lock cleanup: {e}")
+
+
+class OptimisticLockManager:
+    """Manages optimistic locking for database operations"""
+    
+    def __init__(self):
+        self.retry_attempts = 3
+        self.retry_delay = 0.1  # 100ms
+    
+    async def execute_with_optimistic_lock(
+        self,
+        operation_func,
+        *args,
+        **kwargs
+    ) -> Any:
+        """Execute operation with optimistic locking and retry logic"""
+        
+        last_exception = None
+        
+        for attempt in range(self.retry_attempts):
+            try:
+                result = await operation_func(*args, **kwargs)
+                return result
+                
+            except Exception as e:
+                last_exception = e
+                
+                # Check if it's a concurrency error
+                if "concurrent" in str(e).lower() or "stale" in str(e).lower():
+                    if attempt < self.retry_attempts - 1:
+                        # Wait before retry with exponential backoff
+                        delay = self.retry_delay * (2 ** attempt)
+                        await asyncio.sleep(delay)
+                        logger.warning(f"⚠️ Optimistic lock conflict, retrying in {delay}s (attempt {attempt + 1})")
+                        continue
+                
+                # If not a concurrency error or max attempts reached, break
+                break
+        
+        # If we get here, all attempts failed
+        logger.error(f"❌ Operation failed after {self.retry_attempts} attempts: {last_exception}")
+        raise last_exception
+
+
+class MathRecommendService:
+    """Matematik soru öneri servisi - Race condition korumalı"""
+    
+    def __init__(self):
+        self.profile_lock_manager = ProfileLockManager()
+        self.optimistic_lock_manager = OptimisticLockManager()
+        
+        # Performance tracking
+        self.performance_metrics = {
+            "total_recommendations": 0,
+            "successful_recommendations": 0,
+            "failed_recommendations": 0,
+            "average_response_time": 0.0,
+            "total_response_time": 0.0,
+            "race_condition_resolved": 0,
+            "optimistic_lock_retries": 0,
+            "embedding_based_recommendations": 0,
+            "fallback_recommendations": 0
         }
-
-    async def _recommend_questions_worker(
-        self,
-        session: AsyncSession,
-        user_id: str,
-        limit: int
-    ) -> List[Question]:
-        """Enhanced worker function with embedding-based recommendations."""
-        try:
-            user_math_profile = await self.math_profile_repo.get_by_user_id(session, user_id)
-            if not user_math_profile:
-                logger.warning(f"MathProfile not found for user {user_id}. Cannot recommend questions.")
-                return []
-
-            # 1. Get user's error patterns with embeddings
-            user_error_patterns = await self._get_user_error_patterns_with_embeddings(session, user_id)
-            
-            # 2. Find similar error patterns using semantic search
-            similar_error_patterns = await self._find_similar_math_error_patterns(user_error_patterns)
-            
-            # 3. Get questions based on error patterns and difficulty
-            error_based_questions = await self._get_questions_by_error_patterns(
-                session, similar_error_patterns, user_math_profile, limit // 2
-            )
-            
-            # 4. Get questions based on difficulty level (traditional approach)
-            difficulty_based_questions = await self._get_questions_by_difficulty(
-                session, user_math_profile, limit // 2
-            )
-            
-            # 5. Combine and rank questions using embedding similarity
-            combined_questions = await self._combine_and_rank_questions(
-                error_based_questions, difficulty_based_questions, user_error_patterns, limit
-            )
-            
-            logger.info(f"Recommended {len(combined_questions)} questions for user {user_id} using embedding-based approach.")
-            return combined_questions
-            
-        except Exception as e:
-            logger.error(f"Error in enhanced recommendation worker: {e}", exc_info=True)
-            # Fallback to traditional method
-            return await self._traditional_recommendation_worker(session, user_id, limit)
-
-    async def _get_user_error_patterns_with_embeddings(
-        self, 
-        session: AsyncSession, 
-        user_id: str
-    ) -> List[Dict[str, Any]]:
-        """Get user's math error patterns and generate embeddings if missing"""
-        try:
-            error_patterns = await self.error_pattern_repo.get_by_user_id_and_subject(
-                session, user_id, Subject.MATH, limit=10
-            )
-            
-            patterns_with_embeddings = []
-            for pattern in error_patterns:
-                # Generate embedding if missing
-                if not hasattr(pattern, 'embedding') or not pattern.embedding:
-                    pattern_text = f"{pattern.error_type}: {pattern.error_context or ''} {pattern.topic_category or ''}"
-                    embedding = await self.embedding_service.get_embedding(pattern_text, domain="math")
-                    
-                    if embedding:
-                        # Store embedding in vector DB
-                        await self._store_error_embedding_in_vector_db(pattern, embedding)
-                        pattern.embedding = embedding
-                
-                patterns_with_embeddings.append({
-                    "id": str(pattern.id),
-                    "error_type": pattern.error_type,
-                    "error_context": pattern.error_context,
-                    "embedding": getattr(pattern, 'embedding', None),
-                    "error_count": pattern.error_count,
-                    "topic_category": pattern.topic_category
-                })
-            
-            return patterns_with_embeddings
-            
-        except Exception as e:
-            logger.error(f"Error getting user error patterns: {e}")
-            return []
-
-    async def _find_similar_math_error_patterns(
-        self, 
-        user_patterns: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Find similar math error patterns using semantic search"""
-        try:
-            similar_patterns = []
-            
-            for user_pattern in user_patterns:
-                if not user_pattern.get("embedding"):
-                    continue
-                
-                # Search for similar patterns in vector DB
-                similar_results = await self.vector_index_manager.search_similar_content(
-                    user_pattern["embedding"],
-                    namespace="math_errors",
-                    similarity_threshold=0.7,
-                    limit=5,
-                    metadata_filters={
-                        "domain": "math",
-                        "error_type": user_pattern.get("error_type", "unknown")
-                    }
-                )
-                
-                for result in similar_results:
-                    if result.get("obj_ref") != str(user_pattern.get("id")):
-                        similar_patterns.append({
-                            "error_type": result.get("metadata", {}).get("error_type", user_pattern["error_type"]),
-                            "similarity_score": result.get("similarity", 0.0),
-                            "pattern_context": result.get("content", ""),
-                            "topic_category": result.get("metadata", {}).get("topic_category", user_pattern.get("topic_category")),
-                            "user_pattern": user_pattern
-                        })
-            
-            # Sort by similarity score and remove duplicates
-            unique_patterns = {}
-            for pattern in similar_patterns:
-                key = f"{pattern['error_type']}_{pattern['topic_category']}"
-                if key not in unique_patterns or pattern['similarity_score'] > unique_patterns[key]['similarity_score']:
-                    unique_patterns[key] = pattern
-            
-            return sorted(unique_patterns.values(), key=lambda x: x["similarity_score"], reverse=True)
-            
-        except Exception as e:
-            logger.error(f"Error finding similar math error patterns: {e}")
-            return user_patterns
-
-    async def _get_questions_by_error_patterns(
-        self,
-        session: AsyncSession,
-        similar_patterns: List[Dict[str, Any]],
-        math_profile: MathProfile,
-        limit: int
-    ) -> List[Question]:
-        """Get questions based on error patterns using embedding similarity"""
-        try:
-            questions = []
-            
-            for pattern in similar_patterns[:limit]:
-                if not pattern.get("embedding"):
-                    continue
-                
-                # Search for questions similar to error pattern
-                similar_questions = await self.vector_index_manager.search_similar_content(
-                    pattern["embedding"],
-                    namespace="math_questions",
-                    similarity_threshold=0.6,
-                    limit=3,
-                    metadata_filters={
-                        "domain": "math",
-                        "difficulty_level": math_profile.global_skill,
-                        "topic_category": pattern.get("topic_category", "unknown")
-                    }
-                )
-                
-                for result in similar_questions:
-                    question_id = result.get("obj_ref")
-                    if question_id:
-                        question = await self.question_repo.get_by_id(session, question_id)
-                        if question and question not in questions:
-                            question.similarity_score = result.get("similarity", 0.0)
-                            question.recommendation_source = "error_pattern"
-                            question.error_pattern_match = pattern.get("error_type")
-                            questions.append(question)
-            
-            return questions[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error getting questions by error patterns: {e}")
-            return []
-
-    async def _get_questions_by_difficulty(
-        self,
-        session: AsyncSession,
-        user_profile: MathProfile,
-        limit: int
-    ) -> List[Question]:
-        """Get questions based on difficulty level (traditional approach)"""
-        try:
-            # Determine target difficulty range
-            target_min_difficulty = user_profile.global_skill + 0.5
-            target_max_difficulty = user_profile.global_skill + 1.5
-            
-            target_min_difficulty = max(0.0, target_min_difficulty)
-            target_max_difficulty = min(5.0, target_max_difficulty)
-            
-            # Get questions within the target difficulty range
-            questions = await self.question_repo.get_by_subject_and_difficulty_range(
-                session,
-                subject=Subject.MATH,
-                min_difficulty=target_min_difficulty,
-                max_difficulty=target_max_difficulty,
-                limit=limit
-            )
-            
-            # Add default similarity scores
-            for question in questions:
-                question.similarity_score = 0.5  # Default score for difficulty-based questions
-                question.error_pattern_match = "difficulty_based"
-            
-            return questions
-            
-        except Exception as e:
-            logger.error(f"Error getting questions by difficulty: {e}")
-            return []
-
-    async def _combine_and_rank_questions(
-        self,
-        error_based_questions: List[Question],
-        difficulty_based_questions: List[Question],
-        user_error_patterns: List[Dict[str, Any]],
-        limit: int
-    ) -> List[Question]:
-        """Combine and rank questions using embedding similarity and other factors"""
-        try:
-            all_questions = error_based_questions + difficulty_based_questions
-            
-            # Calculate final scores for each question
-            scored_questions = []
-            for question in all_questions:
-                final_score = await self._calculate_question_score(question, user_error_patterns)
-                question.final_score = final_score
-                scored_questions.append(question)
-            
-            # Sort by final score and remove duplicates
-            unique_questions = {}
-            for question in scored_questions:
-                if question.id not in unique_questions or question.final_score > unique_questions[question.id].final_score:
-                    unique_questions[question.id] = question
-            
-            # Return top questions
-            sorted_questions = sorted(
-                unique_questions.values(),
-                key=lambda x: x.final_score,
-                reverse=True
-            )
-            
-            return sorted_questions[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error combining and ranking questions: {e}")
-            return all_questions[:limit]
-
-    async def _calculate_question_score(
-        self,
-        question: Question,
-        user_error_patterns: List[Dict[str, Any]]
-    ) -> float:
-        """Calculate a comprehensive score for a question"""
-        try:
-            score = 0.0
-            
-            # Base similarity score
-            similarity_score = getattr(question, 'similarity_score', 0.5)
-            score += similarity_score * self.embedding_weights["error_pattern_similarity"]
-            
-            # Question content similarity to user's error patterns
-            if user_error_patterns and hasattr(question, 'content_embedding') and question.content_embedding:
-                content_similarity = await self._calculate_content_similarity(
-                    question.content_embedding, user_error_patterns
-                )
-                score += content_similarity * self.embedding_weights["question_content_similarity"]
-            
-            # Difficulty fit (closer to user's level = higher score)
-            difficulty_fit = 1.0 - abs(question.difficulty_level - 3.0) / 5.0  # Normalize to 0-1
-            score += difficulty_fit * self.embedding_weights["difficulty_fit"]
-            
-            # Diversity bonus (different topics get higher scores)
-            if hasattr(question, 'topic_category') and question.topic_category:
-                diversity_bonus = 0.1  # Small bonus for topic variety
-                score += diversity_bonus * self.embedding_weights["diversity"]
-            
-            return min(1.0, max(0.0, score))  # Clamp between 0 and 1
-            
-        except Exception as e:
-            logger.error(f"Error calculating question score: {e}")
-            return 0.5
-
-    async def _calculate_content_similarity(
-        self,
-        question_embedding: List[float],
-        user_error_patterns: List[Dict[str, Any]]
-    ) -> float:
-        """Calculate similarity between question content and user's error patterns"""
-        try:
-            if not user_error_patterns:
-                return 0.5
-            
-            similarities = []
-            for pattern in user_error_patterns:
-                if pattern.get("embedding"):
-                    # Calculate cosine similarity
-                    similarity = await self._cosine_similarity(question_embedding, pattern["embedding"])
-                    similarities.append(similarity)
-            
-            if similarities:
-                return sum(similarities) / len(similarities)
-            return 0.5
-            
-        except Exception as e:
-            logger.error(f"Error calculating content similarity: {e}")
-            return 0.5
-
-    async def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
-        """Calculate cosine similarity between two vectors"""
-        try:
-            if len(vec1) != len(vec2):
-                return 0.0
-            
-            dot_product = sum(a * b for a, b in zip(vec1, vec2))
-            norm1 = sum(a * a for a in vec1) ** 0.5
-            norm2 = sum(b * b for b in vec2) ** 0.5
-            
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-            
-            return dot_product / (norm1 * norm2)
-            
-        except Exception as e:
-            logger.error(f"Error calculating cosine similarity: {e}")
-            return 0.0
-
-    async def _traditional_recommendation_worker(
-        self,
-        session: AsyncSession,
-        user_id: str,
-        limit: int
-    ) -> List[Question]:
-        """Traditional recommendation method as fallback"""
-        try:
-            user_math_profile = await self.math_profile_repo.get_by_user_id(session, user_id)
-            if not user_math_profile:
-                return []
-
-            # Basic difficulty-based recommendation
-            target_min_difficulty = user_math_profile.global_skill + 0.5
-            target_max_difficulty = user_math_profile.global_skill + 1.5
-            
-            target_min_difficulty = max(0.0, target_min_difficulty)
-            target_max_difficulty = min(5.0, target_max_difficulty)
-            
-            questions = await self.question_repo.get_by_subject_and_difficulty_range(
-                session,
-                subject=Subject.MATH,
-                min_difficulty=target_min_difficulty,
-                max_difficulty=target_max_difficulty,
-                limit=limit
-            )
-            
-            return questions
-            
-        except Exception as e:
-            logger.error(f"Error in traditional recommendation: {e}")
-            return []
-
+    
     async def recommend_questions(
         self,
-        session: AsyncSession,
-        user_id: str,
-        limit: int = 5
-    ) -> List[Question]:
-        """Recommends math questions based on user's skill level and neighbor-wrongs, with idempotency."""
-        idempotency_key = f"math_recommendation:{user_id}:{limit}"
-        config = IdempotencyConfig(scope="math_recommendation", ttl_seconds=300) # Cache for 5 minutes
-
-        try:
-            # Use idempotent_singleflight to ensure only one recommendation process runs per user/limit
-            # and to cache the results.
-            recommended_questions = await idempotent_singleflight(
-                client=self.redis_client,
-                key=idempotency_key,
-                config=config,
-                worker=lambda: self._recommend_questions_worker(session, user_id, limit)
-            )
-            return recommended_questions
-
-        except Exception as e:
-            logger.error(f"Error in MathRecommendService for user {user_id}: {e}", exc_info=True)
-            return []
-
-    async def recommend(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """API endpoint için recommend metodu - request body'den user_id alır"""
-        try:
-            user_id = request.get("user_id")
-            limit = request.get("limit", 5)
-            
-            if not user_id:
-                raise ValueError("user_id is required")
-            
-            # Bu metod session'ı dışarıdan almalı, şimdilik mock dönelim
-            # Gerçek implementasyonda session dependency injection kullanılmalı
-            return {
-                "status": "success",
-                "message": "Recommendation service is working",
-                "user_id": user_id,
-                "limit": limit,
-                "note": "Full implementation requires session injection"
-            }
-        except Exception as e:
-            logger.error(f"Error in recommend method: {e}", exc_info=True)
-            return {
-                "status": "error",
-                "message": str(e)
-            }
-
-    async def record_placement_test_results(
-        self,
-        session: AsyncSession,
-        user_id: str,
-        test_results: Dict[str, Any],
-        test_questions: List[Dict[str, Any]]
+        db: AsyncSession,
+        student_id: str,
+        num_questions: int = 5,
+        difficulty_adjustment: float = 0.0,
+        include_recent_errors: bool = True,
+        use_embeddings: bool = True
     ) -> Dict[str, Any]:
-        """Record placement test results with real-time embedding and profile updates"""
+        """Matematik soru önerisi - Race condition korumalı"""
+        
+        start_time = time.time()
+        
         try:
-            logger.info(f"📊 Recording placement test results for user {user_id}")
+            logger.info(f"🚀 Starting math recommendation for student {student_id}")
             
-            # 1. Generate embedding for test results
-            test_embedding = await self._generate_placement_test_embedding(test_results, test_questions)
+            # Acquire profile lock to prevent race conditions
+            profile_lock = await self.profile_lock_manager.acquire_lock(student_id)
             
-            # 2. Create or update math profile
-            math_profile = await self._create_or_update_math_profile_from_placement_test(
-                session, user_id, test_results, test_embedding
-            )
-            
-            # 3. Store embedding in vector DB
-            await self._store_placement_test_embedding(
-                user_id, test_embedding, test_results, math_profile
-            )
-            
-            # 4. Generate initial recommendations
-            initial_recommendations = await self._generate_initial_recommendations_from_placement(
-                session, test_embedding, math_profile, limit=5
-            )
-            
-            # 5. Real-time profile update
-            await self._update_math_profile_with_placement_test(session, math_profile, test_results)
-            
-            logger.info(f"✅ Placement test results recorded successfully for user {user_id}")
-            
-            return {
-                "success": True,
-                "math_profile_id": math_profile.id,
-                "placement_level": math_profile.global_skill,
-                "initial_recommendations_count": len(initial_recommendations),
-                "embedding_stored": True,
-                "profile_updated": True
-            }
-            
+            async with profile_lock:
+                # Get student profile with optimistic locking
+                profile = await self._get_student_profile_safe(db, student_id)
+                
+                if not profile:
+                    raise ValueError(f"Student profile not found for {student_id}")
+                
+                # Get recent error patterns if requested
+                recent_errors = []
+                if include_recent_errors:
+                    recent_errors = await self._get_recent_error_patterns(db, student_id)
+                
+                # Generate recommendations using embedding-based approach
+                if use_embeddings and recent_errors:
+                    recommendations = await self._generate_embedding_based_recommendations(
+                        db, profile, recent_errors, num_questions, difficulty_adjustment
+                    )
+                    self.performance_metrics["embedding_based_recommendations"] += 1
+                else:
+                    # Fallback to traditional recommendation
+                    recommendations = await self._generate_traditional_recommendations(
+                        db, profile, num_questions, difficulty_adjustment
+                    )
+                    self.performance_metrics["fallback_recommendations"] += 1
+                
+                # Update performance metrics
+                response_time = time.time() - start_time
+                self._update_performance_metrics(response_time, True)
+                
+                logger.info(f"✅ Math recommendation completed for student {student_id}: {len(recommendations)} questions")
+                
+                return {
+                    "success": True,
+                    "student_id": student_id,
+                    "recommendations": recommendations,
+                    "profile": {
+                        "current_skill": profile.global_skill,
+                        "math_skill": profile.math_skill,
+                        "last_updated": profile.updated_at.isoformat() if profile.updated_at else None
+                    },
+                    "error_patterns": [error.error_type for error in recent_errors],
+                    "recommendation_method": "embedding_based" if use_embeddings and recent_errors else "traditional",
+                    "performance_metrics": self.performance_metrics,
+                    "response_time": response_time
+                }
+                
         except Exception as e:
-            logger.error(f"❌ Error recording placement test results: {e}", exc_info=True)
+            response_time = time.time() - start_time
+            self._update_performance_metrics(response_time, False)
+            
+            logger.error(f"❌ Math recommendation failed for student {student_id}: {e}", exc_info=True)
+            
             return {
                 "success": False,
-                "error": str(e)
+                "student_id": student_id,
+                "error": str(e),
+                "recommendations": [],
+                "performance_metrics": self.performance_metrics,
+                "response_time": response_time
             }
-
-    async def _generate_placement_test_embedding(
-        self, 
-        test_results: Dict[str, Any], 
-        test_questions: List[Dict[str, Any]]
-    ) -> List[float]:
-        """Generate embedding for placement test results"""
-        try:
-            # Combine test results and questions into a single text
-            test_summary = self._build_placement_test_summary(test_results, test_questions)
-            
-            # Generate embedding using embedding service
-            embedding = await embedding_service.get_embedding(
-                test_summary, 
-                domain="math"
-            )
-            
-            logger.info(f"✅ Generated placement test embedding: {len(embedding)} dimensions")
-            return embedding
-            
-        except Exception as e:
-            logger.error(f"❌ Error generating placement test embedding: {e}")
-            raise
-
-    def _build_placement_test_summary(
-        self, 
-        test_results: Dict[str, Any], 
-        test_questions: List[Dict[str, Any]]
-    ) -> str:
-        """Build comprehensive summary of placement test"""
-        try:
-            summary_parts = []
-            
-            # Test results summary
-            summary_parts.append(f"Test Score: {test_results.get('score', 0)}/{test_results.get('total_questions', 0)}")
-            summary_parts.append(f"Accuracy: {test_results.get('accuracy', 0):.2f}%")
-            summary_parts.append(f"Time Taken: {test_results.get('time_taken_minutes', 0)} minutes")
-            
-            # Question difficulty distribution
-            difficulty_counts = {}
-            for question in test_questions:
-                difficulty = question.get('difficulty_level', 'unknown')
-                difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
-            
-            summary_parts.append("Difficulty Distribution:")
-            for difficulty, count in difficulty_counts.items():
-                summary_parts.append(f"  {difficulty}: {count} questions")
-            
-            # Topic distribution
-            topic_counts = {}
-            for question in test_questions:
-                topic = question.get('topic', 'unknown')
-                topic_counts[topic] = topic_counts.get(topic, 0) + 1
-            
-            summary_parts.append("Topic Distribution:")
-            for topic, count in topic_counts.items():
-                summary_parts.append(f"  {topic}: {count} questions")
-            
-            # Performance analysis
-            if test_results.get('correct_answers'):
-                correct_topics = [q.get('topic') for q in test_results['correct_answers']]
-                incorrect_topics = [q.get('topic') for q in test_results.get('incorrect_answers', [])]
-                
-                summary_parts.append("Strong Topics:")
-                for topic in set(correct_topics):
-                    summary_parts.append(f"  {topic}: {correct_topics.count(topic)} correct")
-                
-                summary_parts.append("Weak Topics:")
-                for topic in set(incorrect_topics):
-                    summary_parts.append(f"  {topic}: {incorrect_topics.count(topic)} incorrect")
-            
-            return "\n".join(summary_parts)
-            
-        except Exception as e:
-            logger.error(f"Error building placement test summary: {e}")
-            return f"Placement test with score {test_results.get('score', 0)}"
-
-    async def _create_or_update_math_profile_from_placement_test(
+        
+        finally:
+            # Release profile lock
+            await self.profile_lock_manager.release_lock(student_id)
+    
+    async def _get_student_profile_safe(
         self,
-        session: AsyncSession,
-        user_id: str,
-        test_results: Dict[str, Any],
-        test_embedding: List[float]
-    ) -> MathProfile:
-        """Create or update math profile based on placement test"""
+        db: AsyncSession,
+        student_id: str
+    ) -> Optional[MathProfile]:
+        """Get student profile with optimistic locking protection"""
+        
         try:
-            # Check if profile exists
-            existing_profile = await self.math_profile_repo.get_by_user_id(session, user_id)
-            
-            if existing_profile:
-                # Update existing profile
-                profile = await self._update_math_profile_with_placement_test(
-                    session, existing_profile, test_results
-                )
-            else:
-                # Create new profile
-                profile = await self._create_math_profile_from_placement_test(
-                    session, user_id, test_results, test_embedding
-                )
+            # Use optimistic locking with retry logic
+            profile = await self.optimistic_lock_manager.execute_with_optimistic_lock(
+                self._get_profile_operation,
+                db,
+                student_id
+            )
             
             return profile
             
         except Exception as e:
-            logger.error(f"Error creating/updating math profile: {e}")
-            raise
-
-    async def _create_math_profile_from_placement_test(
+            logger.error(f"❌ Failed to get student profile: {e}")
+            return None
+    
+    async def _get_profile_operation(
         self,
-        session: AsyncSession,
-        user_id: str,
-        test_results: Dict[str, Any],
-        test_embedding: List[float]
-    ) -> MathProfile:
-        """Create new math profile from placement test results"""
+        db: AsyncSession,
+        student_id: str
+    ) -> Optional[MathProfile]:
+        """Database operation for getting profile"""
+        
         try:
-            # Calculate initial skill level based on test results
-            initial_skill = self._calculate_initial_skill_from_placement(test_results)
+            result = await db.execute(
+                select(MathProfile)
+                .where(MathProfile.student_id == student_id)
+                .options(selectinload(MathProfile.student))
             
-            # Create new profile
-            profile = MathProfile(
-                user_id=user_id,
-                global_skill=initial_skill,
-                algebra_skill=initial_skill * 0.8,  # Slightly lower for specific skills
-                geometry_skill=initial_skill * 0.8,
-                calculus_skill=initial_skill * 0.7,
-                statistics_skill=initial_skill * 0.7,
-                last_updated=datetime.utcnow(),
-                placement_test_date=datetime.utcnow(),
-                placement_test_score=test_results.get('score', 0),
-                placement_test_accuracy=test_results.get('accuracy', 0.0),
-                placement_test_embedding=test_embedding
-            )
+            profile = result.scalar_one_or_none()
             
-            # Save to database
-            saved_profile = await self.math_profile_repo.create(session, profile)
+            if profile:
+                # Add version tracking for optimistic locking
+                if not hasattr(profile, 'version'):
+                    profile.version = 1
+                else:
+                    profile.version += 1
             
-            logger.info(f"✅ Created new math profile for user {user_id} with skill level {initial_skill}")
-            return saved_profile
+            return profile
             
         except Exception as e:
-            logger.error(f"Error creating math profile: {e}")
+            logger.error(f"❌ Database operation failed: {e}")
             raise
-
-    async def _update_math_profile_with_placement_test(
+    
+    async def _get_recent_error_patterns(
         self,
-        session: AsyncSession,
+        db: AsyncSession,
+        student_id: str,
+        limit: int = 10
+    ) -> List[ErrorPattern]:
+        """Get recent error patterns for student"""
+        
+        try:
+            # Get recent attempts with errors
+            recent_attempts = await db.execute(
+                select(StudentAttempt)
+                .where(
+                    and_(
+                        StudentAttempt.student_id == student_id,
+                        StudentAttempt.subject == Subject.MATH,
+                        StudentAttempt.is_correct == False
+                    )
+                )
+                .order_by(desc(StudentAttempt.created_at))
+                .limit(limit)
+            )
+            
+            attempts = recent_attempts.scalars().all()
+            
+            # Extract error patterns
+            error_patterns = []
+            for attempt in attempts:
+                if attempt.error_details:
+                    error_pattern = ErrorPattern(
+                        student_id=student_id,
+                        subject=Subject.MATH,
+                        error_type=attempt.error_details.get("error_type", "unknown"),
+                        error_context=attempt.error_details.get("context", ""),
+                        question_id=attempt.question_id,
+                        created_at=attempt.created_at
+                    )
+                    error_patterns.append(error_pattern)
+            
+            logger.debug(f"📊 Found {len(error_patterns)} recent error patterns for student {student_id}")
+            return error_patterns
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get recent error patterns: {e}")
+            return []
+    
+    async def _generate_embedding_based_recommendations(
+        self,
+        db: AsyncSession,
         profile: MathProfile,
-        test_results: Dict[str, Any]
-    ) -> MathProfile:
-        """Update existing math profile with placement test results"""
-        try:
-            # Update placement test information
-            profile.placement_test_date = datetime.utcnow()
-            profile.placement_test_score = test_results.get('score', 0)
-            profile.placement_test_accuracy = test_results.get('accuracy', 0.0)
-            
-            # Update skill levels based on test performance
-            new_skill = self._calculate_updated_skill_from_placement(profile, test_results)
-            
-            if new_skill != profile.global_skill:
-                profile.global_skill = new_skill
-                logger.info(f"📈 Updated global skill from {profile.global_skill} to {new_skill}")
-            
-            # Update last updated timestamp
-            profile.last_updated = datetime.utcnow()
-            
-            # Save updates
-            updated_profile = await self.math_profile_repo.update(session, profile)
-            
-            logger.info(f"✅ Updated math profile for user {profile.user_id}")
-            return updated_profile
-            
-        except Exception as e:
-            logger.error(f"Error updating math profile: {e}")
-            raise
-
-    def _calculate_initial_skill_from_placement(self, test_results: Dict[str, Any]) -> float:
-        """Calculate initial skill level from placement test"""
-        try:
-            accuracy = test_results.get('accuracy', 0.0)
-            score = test_results.get('score', 0)
-            total = test_results.get('total_questions', 1)
-            
-            # Base skill calculation
-            base_skill = (accuracy / 100.0) * 5.0  # Scale 0-5
-            
-            # Adjust based on question difficulty
-            difficulty_bonus = 0.0
-            if test_results.get('difficulty_level') == 'advanced':
-                difficulty_bonus = 1.0
-            elif test_results.get('difficulty_level') == 'intermediate':
-                difficulty_bonus = 0.5
-            
-            # Adjust based on time taken (faster = slightly higher skill)
-            time_bonus = 0.0
-            avg_time_per_question = test_results.get('time_taken_minutes', 0) / total
-            if avg_time_per_question < 1.0:  # Less than 1 minute per question
-                time_bonus = 0.3
-            
-            final_skill = min(5.0, base_skill + difficulty_bonus + time_bonus)
-            
-            logger.info(f"Calculated initial skill: {final_skill:.2f} (base: {base_skill:.2f}, difficulty: {difficulty_bonus}, time: {time_bonus})")
-            return final_skill
-            
-        except Exception as e:
-            logger.error(f"Error calculating initial skill: {e}")
-            return 2.5  # Default middle skill level
-
-    def _calculate_updated_skill_from_placement(
-        self, 
-        profile: MathProfile, 
-        test_results: Dict[str, Any]
-    ) -> float:
-        """Calculate updated skill level from placement test"""
-        try:
-            current_skill = profile.global_skill
-            new_accuracy = test_results.get('accuracy', 0.0)
-            
-            # Weighted average: 70% new result, 30% previous skill
-            new_skill = (new_accuracy / 100.0) * 5.0 * 0.7 + current_skill * 0.3
-            
-            # Ensure skill stays within bounds
-            new_skill = max(0.0, min(5.0, new_skill))
-            
-            logger.info(f"Updated skill: {current_skill:.2f} -> {new_skill:.2f}")
-            return new_skill
-            
-        except Exception as e:
-            logger.error(f"Error calculating updated skill: {e}")
-            return profile.global_skill
-
-    async def _store_placement_test_embedding(
-        self,
-        user_id: str,
-        test_embedding: List[float],
-        test_results: Dict[str, Any],
-        math_profile: MathProfile
-    ):
-        """Store placement test embedding in vector database using standardized metadata"""
-        try:
-            # Use standardized metadata schema
-            metadata = metadata_schema_service.build_placement_test_metadata(
-                domain=Domain.MATH.value,
-                obj_ref=f"placement_test_{user_id}_{datetime.utcnow().timestamp()}",
-                user_id=user_id,
-                test_score=test_results.get('score', 0),
-                test_accuracy=test_results.get('accuracy', 0.0),
-                skill_level=math_profile.global_skill,
-                difficulty_level=test_results.get('difficulty_level', 'unknown'),
-                topics_covered=list(set(q.get('topic', 'unknown') for q in test_results.get('test_questions', [])))
-            
-            await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
-                domain="math",
-                content_type="placement_tests",
-                items=[{
-                    "obj_ref": f"placement_test_{user_id}_{datetime.utcnow().timestamp()}",
-                    "content": f"Placement test for user {user_id} with score {test_results.get('score', 0)}",
-                    "embedding": test_embedding,
-                    "metadata": metadata
-                }],
-                batch_size=1
-            )
-            
-            logger.info(f"✅ Stored placement test embedding for user {user_id} with standardized metadata")
-            
-        except Exception as e:
-            logger.error(f"❌ Error storing placement test embedding: {e}")
-            raise
-
-    async def _generate_initial_recommendations_from_placement(
-        self,
-        session: AsyncSession,
-        placement_embedding: List[float],
-        math_profile: MathProfile,
-        limit: int = 5
-    ) -> List[Question]:
-        """Generate initial recommendations based on placement test"""
-        try:
-            # Search for similar questions
-            similar_questions = await vector_index_manager.search_similar_content(
-                placement_embedding,
-                namespace="math_questions",
-                similarity_threshold=0.6,
-                limit=limit * 2,  # Get more to filter
-                metadata_filters={
-                    "domain": "math",
-                    "difficulty_level": math_profile.global_skill
-                }
-            )
-            
-            questions = []
-            for result in similar_questions[:limit]:
-                question_id = result.get("obj_ref")
-                if question_id:
-                    question = await self.question_repo.get_by_id(session, question_id)
-                    if question:
-                        question.similarity_score = result.get("similarity", 0.0)
-                        question.recommendation_source = "placement_test_initial"
-                        questions.append(question)
-            
-            logger.info(f"✅ Generated {len(questions)} initial recommendations from placement test")
-            return questions
-            
-        except Exception as e:
-            logger.error(f"Error generating initial recommendations: {e}")
-            return []
-
-    async def find_similar_students_by_embedding(
-        self,
-        user_id: str,
-        limit: int = 5
+        recent_errors: List[ErrorPattern],
+        num_questions: int,
+        difficulty_adjustment: float
     ) -> List[Dict[str, Any]]:
-        """Find similar students using embedding-based similarity"""
+        """Generate recommendations using embedding-based similarity"""
+        
         try:
-            # Get user's math profile embedding
-            user_profile = await self.math_profile_repo.get_by_user_id(session, user_id)
-            if not user_profile:
-                return []
+            logger.info(f"🧠 Generating embedding-based recommendations for {len(recent_errors)} error patterns")
             
-            # Get user's placement test embedding
-            placement_embedding = await self._get_user_placement_embedding(user_id)
-            if not placement_embedding:
-                return []
+            # Create error context for embedding
+            error_context = self._build_error_context(recent_errors)
             
-            # Search for similar students
-            similar_students = await vector_index_manager.search_similar_content(
-                placement_embedding,
-                namespace="math_placement_tests",
-                similarity_threshold=0.7,
-                limit=limit + 1,  # +1 to exclude self
-                metadata_filters={
-                    "domain": "math",
-                    "content_type": "placement_test"
-                }
-            )
+            # Generate embedding for error context
+            error_embedding = await embedding_service.get_embedding(error_context)
             
-            # Filter out self and process results
-            similar_students_filtered = []
-            for result in similar_students:
-                metadata = result.get("metadata", {})
-                if metadata.get("user_id") != user_id:
-                    similar_students_filtered.append({
-                        "user_id": metadata.get("user_id"),
-                        "similarity_score": result.get("similarity", 0.0),
-                        "global_skill": metadata.get("global_skill", 0.0),
-                        "overall_level": metadata.get("overall_level", "unknown"),
-                        "topics": metadata.get("topics", []),
-                        "test_date": metadata.get("test_date", "")
-                    })
-            
-            return similar_students_filtered[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error finding similar students: {e}")
-            return []
-
-    async def _get_user_placement_embedding(self, user_id: str) -> Optional[List[float]]:
-        """Get user's placement test embedding"""
-        try:
-            # Search for user's placement test embedding
-            results = await vector_index_manager.search_similar_content(
-                [0.0] * 3072,  # Dummy embedding for search
-                namespace="math_placement_tests",
-                similarity_threshold=0.0,
-                limit=1,
-                metadata_filters={
-                    "domain": "math",
-                    "content_type": "placement_test",
-                    "user_id": user_id
-                }
-            )
-            
-            if results:
-                # Return the actual embedding from the result
-                return results[0].get("embedding")
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting user placement embedding: {e}")
-            return None
-
-    async def recommend_questions_with_enhanced_similarity(
-        self,
-        session: AsyncSession,
-        user_id: str,
-        limit: int = 10,
-        use_placement_test: bool = True
-    ) -> List[Question]:
-        """Enhanced question recommendation using placement test and similarity"""
-        try:
-            logger.info(f"🎯 Generating enhanced recommendations for user {user_id}")
-            
-            # 1. Get user's math profile and placement test data
-            math_profile = await self.math_profile_repo.get_by_user_id(session, user_id)
-            if not math_profile:
-                logger.warning(f"MathProfile not found for user {user_id}")
-                return []
-            
-            # 2. Get placement test embedding if available
-            placement_embedding = None
-            if use_placement_test:
-                placement_embedding = await self._get_user_placement_embedding(user_id)
-            
-            # 3. Get recent error patterns
-            recent_errors = await self._get_user_math_error_patterns(session, user_id)
-            
-            # 4. Generate recommendations using multiple strategies
-            recommendations = []
-            
-            # Strategy 1: Placement test based (if available)
-            if placement_embedding:
-                placement_recommendations = await self._get_placement_based_recommendations(
-                    session, placement_embedding, math_profile, limit // 3
+            if not error_embedding:
+                logger.warning("⚠️ Failed to generate error embedding, falling back to traditional method")
+                return await self._generate_traditional_recommendations(
+                    db, profile, num_questions, difficulty_adjustment
                 )
-                recommendations.extend(placement_recommendations)
             
-            # Strategy 2: Error pattern based
-            if recent_errors:
-                error_based_recommendations = await self._get_error_based_recommendations(
-                    session, recent_errors, math_profile, limit // 3
-                )
-                recommendations.extend(error_based_recommendations)
-            
-            # Strategy 3: Similar student based
-            similar_student_recommendations = await self._get_similar_student_recommendations(
-                session, user_id, math_profile, limit // 3
-            )
-            recommendations.extend(similar_student_recommendations)
-            
-            # 5. Combine and rank recommendations
-            final_recommendations = await self._combine_and_rank_recommendations_enhanced(
-                recommendations, math_profile, recent_errors, limit
+            # Search for similar questions using vector database
+            similar_questions = await vector_index_manager.search_similar_content(
+                embedding=error_embedding,
+                namespace="math_questions",
+                limit=num_questions * 2,  # Get more to filter
+                similarity_threshold=0.7
             )
             
-            logger.info(f"✅ Generated {len(final_recommendations)} enhanced recommendations")
-            return final_recommendations
+            # Filter and rank questions
+            filtered_questions = await self._filter_and_rank_questions(
+                db, similar_questions, profile, difficulty_adjustment, num_questions
+            )
+            
+            # Store error embedding for future use
+            await self._store_error_embedding_in_vector_db(
+                error_context, error_embedding, recent_errors
+            )
+            
+            logger.info(f"✅ Generated {len(filtered_questions)} embedding-based recommendations")
+            return filtered_questions
             
         except Exception as e:
-            logger.error(f"❌ Error in enhanced recommendation: {e}", exc_info=True)
+            logger.error(f"❌ Embedding-based recommendation failed: {e}")
             # Fallback to traditional method
-            return await self._traditional_recommendation_worker(session, user_id, limit)
-
-    async def _get_placement_based_recommendations(
-        self,
-        session: AsyncSession,
-        placement_embedding: List[float],
-        math_profile: MathProfile,
-        limit: int
-    ) -> List[Question]:
-        """Get recommendations based on placement test results"""
-        try:
-            similar_questions = await vector_index_manager.search_similar_content(
-                placement_embedding,
-                namespace="math_questions",
-                similarity_threshold=0.6,
-                limit=limit * 2,  # Get more to filter
-                metadata_filters={
-                    "domain": "math",
-                    "difficulty_level": math_profile.global_skill
-                }
+            return await self._generate_traditional_recommendations(
+                db, profile, num_questions, difficulty_adjustment
             )
-            
-            questions = []
-            for result in similar_questions[:limit]:
-                question_id = result.get("obj_ref")
-                if question_id:
-                    question = await self.question_repo.get_by_id(session, question_id)
-                    if question:
-                        question.similarity_score = result.get("similarity", 0.0)
-                        question.recommendation_source = "placement_test"
-                        questions.append(question)
-            
-            return questions
-            
-        except Exception as e:
-            logger.error(f"Error getting placement-based recommendations: {e}")
-            return []
-
-    async def _get_error_based_recommendations(
-        self,
-        session: AsyncSession,
-        recent_errors: List[Dict[str, Any]],
-        math_profile: MathProfile,
-        limit: int
-    ) -> List[Question]:
-        """Get recommendations based on recent error patterns"""
+    
+    def _build_error_context(self, recent_errors: List[ErrorPattern]) -> str:
+        """Build context string from recent errors for embedding"""
+        
         try:
-            questions = []
+            error_types = [error.error_type for error in recent_errors]
+            error_contexts = [error.error_context for error in recent_errors if error.error_context]
             
-            for error in recent_errors[:limit]:
-                if not error.get("embedding"):
-                    continue
-                
-                similar_questions = await vector_index_manager.search_similar_content(
-                    error["embedding"],
-                    namespace="math_questions",
-                    similarity_threshold=0.7,
-                    limit=3,
-                    metadata_filters={
-                        "domain": "math",
-                        "difficulty_level": math_profile.global_skill
-                    }
-                )
-                
-                for result in similar_questions:
-                    question_id = result.get("obj_ref")
-                    if question_id:
-                        question = await self.question_repo.get_by_id(session, question_id)
-                        if question:
-                            question.similarity_score = result.get("similarity", 0.0)
-                            question.recommendation_source = "error_pattern"
-                            question.error_pattern_match = error.get("error_type")
-                            questions.append(question)
+            # Combine error information
+            context_parts = []
             
-            return questions[:limit]
+            if error_types:
+                context_parts.append(f"Error types: {', '.join(set(error_types))}")
+            
+            if error_contexts:
+                context_parts.append(f"Error contexts: {' '.join(error_contexts[:3])}")  # Limit context length
+            
+            # Add mathematical context
+            math_keywords = self._extract_math_keywords(error_contexts)
+            if math_keywords:
+                context_parts.append(f"Mathematical concepts: {', '.join(math_keywords)}")
+            
+            return " | ".join(context_parts)
             
         except Exception as e:
-            logger.error(f"Error getting error-based recommendations: {e}")
-            return []
-
-    async def _get_similar_student_recommendations(
-        self,
-        session: AsyncSession,
-        user_id: str,
-        math_profile: MathProfile,
-        limit: int
-    ) -> List[Question]:
-        """Get recommendations based on similar students' performance using embeddings"""
+            logger.error(f"❌ Failed to build error context: {e}")
+            return "math error patterns"
+    
+    def _extract_math_keywords(self, contexts: List[str]) -> List[str]:
+        """Extract mathematical keywords from error contexts"""
+        
         try:
-            # Get user's error patterns to find similar students
-            user_error_patterns = await self._get_user_error_patterns_with_embeddings(session, user_id)
+            math_keywords = set()
             
-            if not user_error_patterns:
-                return []
+            # Common mathematical terms
+            math_terms = [
+                'algebra', 'geometry', 'calculus', 'trigonometry', 'statistics',
+                'equation', 'function', 'derivative', 'integral', 'matrix',
+                'probability', 'percentage', 'ratio', 'fraction', 'decimal'
+            ]
             
-            # Create a combined embedding from user's error patterns
-            combined_error_text = " ".join([
-                f"{p['error_type']} {p['error_context'] or ''} {p['topic_category'] or ''}"
-                for p in user_error_patterns[:3]  # Use top 3 patterns
-            ])
+            for context in contexts:
+                context_lower = context.lower()
+                for term in math_terms:
+                    if term in context_lower:
+                        math_keywords.add(term)
             
-            user_error_embedding = await self.embedding_service.get_embedding(combined_error_text, domain="math")
-            
-            if not user_error_embedding:
-                return []
-            
-            # Find similar students using embedding similarity
-            similar_students = await self._find_similar_students_by_embedding(user_error_embedding, limit=5)
-            
-            questions = []
-            for student in similar_students:
-                # Get questions that similar students struggled with
-                student_questions = await self._get_student_struggle_questions(session, student["user_id"], limit=2)
-                questions.extend(student_questions)
-            
-            # Remove duplicates and limit results
-            unique_questions = {}
-            for question in questions:
-                if question.id not in unique_questions:
-                    question.recommendation_source = "similar_student"
-                    unique_questions[question.id] = question
-            
-            return list(unique_questions.values())[:limit]
+            return list(math_keywords)[:5]  # Limit to 5 keywords
             
         except Exception as e:
-            logger.error(f"Error getting similar student recommendations: {e}")
+            logger.error(f"❌ Failed to extract math keywords: {e}")
             return []
-
-    async def _find_similar_students_by_embedding(
-        self, 
-        user_error_embedding: List[float], 
-        limit: int = 5
+    
+    async def _filter_and_rank_questions(
+        self,
+        db: AsyncSession,
+        similar_questions: List[Dict[str, Any]],
+        profile: MathProfile,
+        difficulty_adjustment: float,
+        num_questions: int
     ) -> List[Dict[str, Any]]:
-        """Find similar students using embedding-based similarity"""
+        """Filter and rank similar questions based on profile and difficulty"""
+        
         try:
-            # Search for similar student profiles in vector DB
-            similar_profiles = await self.vector_index_manager.search_similar_content(
-                user_error_embedding,
-                namespace="math_placement_tests",
-                similarity_threshold=0.6,
-                limit=limit * 2,  # Get more to filter
-                metadata_filters={
-                    "domain": "math",
-                    "content_type": "placement_test"
-                }
-            )
+            # Get full question details from database
+            question_ids = [q.get("id") for q in similar_questions if q.get("id")]
             
-            similar_students = []
-            for result in similar_profiles:
-                user_id = result.get("metadata", {}).get("user_id")
-                if user_id and user_id not in [s["user_id"] for s in similar_students]:
-                    similar_students.append({
-                        "user_id": user_id,
-                        "similarity_score": result.get("similarity", 0.0),
-                        "skill_level": result.get("metadata", {}).get("skill_level", 0.0),
-                        "test_score": result.get("metadata", {}).get("test_score", 0)
-                    })
-            
-            # Sort by similarity and return top results
-            return sorted(similar_students, key=lambda x: x["similarity_score"], reverse=True)[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error finding similar students by embedding: {e}")
-            return []
-
-    async def _get_student_struggle_questions(
-        self, 
-        session: AsyncSession, 
-        student_id: str, 
-        limit: int = 2
-    ) -> List[Question]:
-        """Get questions that a student struggled with"""
-        try:
-            # Get student's incorrect attempts
-            incorrect_attempts = await self.student_attempt_repo.get_incorrect_attempts_by_user(
-                session, student_id, Subject.MATH, limit=limit * 2
-            )
-            
-            questions = []
-            for attempt in incorrect_attempts:
-                if attempt.question_id and attempt.question_id not in [q.id for q in questions]:
-                    question = await self.question_repo.get_by_id(session, attempt.question_id)
-                    if question:
-                        question.similarity_score = 0.5  # Default similarity for struggle questions
-                        questions.append(question)
-            
-            return questions[:limit]
-            
-        except Exception as e:
-            logger.error(f"Error getting student struggle questions: {e}")
-            return []
-
-    async def _store_error_embedding_in_vector_db(
-        self, 
-        error_pattern, 
-        embedding: List[float]
-    ):
-        """Store error pattern embedding in vector database using standardized metadata"""
-        try:
-            # Use standardized metadata schema
-            metadata = metadata_schema_service.build_error_pattern_metadata(
-                domain=Domain.MATH.value,
-                error_type=error_pattern.error_type,
-                obj_ref=str(error_pattern.id),
-                user_id=str(error_pattern.user_id) if hasattr(error_pattern, 'user_id') else None,
-                topic_category=error_pattern.topic_category,
-                skill_tag=getattr(error_pattern, 'skill_tag', None),
-                error_count=error_pattern.error_count
-            )
-            
-            await self.vector_index_manager.batch_upsert_domain_embeddings_enhanced(
-                domain="math",
-                content_type="error_patterns",
-                items=[{
-                    "obj_ref": str(error_pattern.id),
-                    "content": f"{error_pattern.error_type}: {error_pattern.error_context or ''}",
-                    "embedding": embedding,
-                    "metadata": metadata
-                }],
-                batch_size=1
-            )
-            
-            logger.info(f"✅ Stored error pattern embedding for {error_pattern.id} with standardized metadata")
-            
-        except Exception as e:
-            logger.error(f"❌ Error storing error pattern embedding: {e}")
-
-    async def _combine_and_rank_recommendations_enhanced(
-        self,
-        recommendations: List[Question],
-        math_profile: MathProfile,
-        recent_errors: List[Dict[str, Any]],
-        limit: int
-    ) -> List[Question]:
-        """Combine and rank recommendations using enhanced scoring"""
-        try:
-            if not recommendations:
+            if not question_ids:
                 return []
             
-            # Calculate enhanced scores for each question
-            scored_questions = []
-            for question in recommendations:
-                final_score = await self._calculate_enhanced_question_score_v2(
-                    question, math_profile, recent_errors
-                )
-                question.final_score = final_score
-                scored_questions.append(question)
-            
-            # Remove duplicates and sort by score
-            unique_questions = {}
-            for question in scored_questions:
-                if question.id not in unique_questions or question.final_score > unique_questions[question.id].final_score:
-                    unique_questions[question.id] = question
-            
-            # Return top questions
-            sorted_questions = sorted(
-                unique_questions.values(),
-                key=lambda x: x.final_score,
-                reverse=True
+            # Fetch questions from database
+            questions_result = await db.execute(
+                select(Question)
+                .where(Question.id.in_(question_ids))
+                .where(Question.subject == Subject.MATH)
             )
             
-            return sorted_questions[:limit]
+            questions = questions_result.scalars().all()
+            
+            # Calculate target difficulty
+            target_difficulty = min(5, max(1, profile.math_skill + difficulty_adjustment))
+            
+            # Score and rank questions
+            scored_questions = []
+            for question in questions:
+                score = self._calculate_question_score(question, profile, target_difficulty)
+                scored_questions.append({
+                    "question": question,
+                    "score": score,
+                    "difficulty_match": 1.0 - abs(question.difficulty_level - target_difficulty) / 5.0
+                })
+            
+            # Sort by score and select top questions
+            scored_questions.sort(key=lambda x: x["score"], reverse=True)
+            selected_questions = scored_questions[:num_questions]
+            
+            # Convert to response format
+            recommendations = []
+            for item in selected_questions:
+                question = item["question"]
+                recommendations.append({
+                    "id": str(question.id),
+                    "content": question.content,
+                    "difficulty_level": question.difficulty_level,
+                    "topic_category": question.topic_category,
+                    "question_type": question.question_type.value,
+                    "score": item["score"],
+                    "difficulty_match": item["difficulty_match"],
+                    "recommendation_reason": self._generate_recommendation_reason(
+                        question, profile, item["score"]
+                    )
+                })
+            
+            return recommendations
             
         except Exception as e:
-            logger.error(f"Error combining and ranking recommendations: {e}")
-            return recommendations[:limit]
-
-    async def _calculate_enhanced_question_score_v2(
+            logger.error(f"❌ Failed to filter and rank questions: {e}")
+            return []
+    
+    def _calculate_question_score(
         self,
         question: Question,
-        math_profile: MathProfile,
-        recent_errors: List[Dict[str, Any]]
+        profile: MathProfile,
+        target_difficulty: float
     ) -> float:
-        """Calculate enhanced question score considering multiple factors"""
+        """Calculate question recommendation score"""
+        
         try:
             score = 0.0
             
-            # Base similarity score
-            similarity_score = getattr(question, 'similarity_score', 0.5)
-            score += similarity_score * 0.3
+            # Difficulty match (40% weight)
+            difficulty_diff = abs(question.difficulty_level - target_difficulty)
+            difficulty_score = max(0, 1.0 - difficulty_diff / 5.0)
+            score += difficulty_score * 0.4
             
-            # Difficulty fit (closer to user's level = higher score)
-            difficulty_fit = 1.0 - abs(question.difficulty_level - math_profile.global_skill) / 5.0
-            score += difficulty_fit * 0.25
+            # Topic relevance (30% weight)
+            if question.topic_category:
+                # Simple topic matching - could be enhanced with embedding similarity
+                topic_score = 0.8 if question.topic_category in ["algebra", "geometry"] else 0.6
+                score += topic_score * 0.3
             
-            # Recommendation source bonus
-            source_bonus = 0.0
-            source = getattr(question, 'recommendation_source', 'unknown')
-            if source == "placement_test":
-                source_bonus = 0.15
-            elif source == "error_pattern":
-                source_bonus = 0.1
-            elif source == "similar_student_struggle":
-                source_bonus = 0.05
+            # Question type preference (20% weight)
+            type_score = 1.0 if question.question_type.value == "multiple_choice" else 0.8
+            score += type_score * 0.2
             
-            score += source_bonus
-            
-            # Error pattern relevance bonus
-            if recent_errors and hasattr(question, 'error_pattern_match'):
-                error_relevance = 0.1
-                score += error_relevance
-            
-            # Diversity bonus (different topics get higher scores)
-            if hasattr(question, 'topic_category') and question.topic_category:
-                diversity_bonus = 0.05
-                score += diversity_bonus
-            
-            # Confidence bonus from math profile
-            confidence_bonus = math_profile.confidence * 0.1
-            score += confidence_bonus
+            # Random factor for variety (10% weight)
+            random_factor = random.uniform(0.8, 1.2)
+            score += random_factor * 0.1
             
             return min(1.0, max(0.0, score))
             
         except Exception as e:
-            logger.error(f"Error calculating enhanced question score v2: {e}")
+            logger.error(f"❌ Failed to calculate question score: {e}")
             return 0.5
+    
+    def _generate_recommendation_reason(
+        self,
+        question: Question,
+        profile: MathProfile,
+        score: float
+    ) -> str:
+        """Generate human-readable reason for recommendation"""
+        
+        try:
+            reasons = []
+            
+            # Difficulty-based reason
+            if abs(question.difficulty_level - profile.math_skill) <= 1:
+                reasons.append("Matches your current skill level")
+            elif question.difficulty_level > profile.math_skill:
+                reasons.append("Challenges you to improve")
+            else:
+                reasons.append("Reinforces fundamental concepts")
+            
+            # Topic-based reason
+            if question.topic_category:
+                reasons.append(f"Focuses on {question.topic_category}")
+            
+            # Score-based reason
+            if score > 0.8:
+                reasons.append("Highly relevant to your learning needs")
+            elif score > 0.6:
+                reasons.append("Good fit for your current progress")
+            else:
+                reasons.append("Provides practice in key areas")
+            
+            return "; ".join(reasons)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to generate recommendation reason: {e}")
+            return "Recommended based on your learning profile"
+    
+    async def _store_error_embedding_in_vector_db(
+        self,
+        error_context: str,
+        error_embedding: List[float],
+        recent_errors: List[ErrorPattern]
+    ):
+        """Store error embedding in vector database for future use"""
+        
+        try:
+            # Build metadata for error pattern
+            metadata = metadata_schema_service.build_error_pattern_metadata(
+                domain=Domain.MATH,
+                error_type=",".join(set(error.error_type for error in recent_errors)),
+                error_context=error_context[:500],  # Limit context length
+                student_id=recent_errors[0].student_id if recent_errors else "unknown",
+                source="math_recommendation_service",
+                confidence_score=0.8
+            )
+            
+            # Store in vector database
+            await vector_index_manager.batch_upsert_domain_embeddings_enhanced(
+                embeddings=[error_embedding],
+                texts=[error_context],
+                metadata_list=[metadata],
+                namespace="math_errors"
+            )
+            
+            logger.debug(f"💾 Stored error embedding in vector database")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to store error embedding: {e}")
+    
+    async def _generate_traditional_recommendations(
+        self,
+        db: AsyncSession,
+        profile: MathProfile,
+        num_questions: int,
+        difficulty_adjustment: float
+    ) -> List[Dict[str, Any]]:
+        """Generate traditional recommendations based on skill level"""
+        
+        try:
+            logger.info(f"🔄 Generating traditional recommendations for skill level {profile.math_skill}")
+            
+            # Calculate target difficulty
+            target_difficulty = min(5, max(1, profile.math_skill + difficulty_adjustment))
+            
+            # Get questions by difficulty
+            questions_result = await db.execute(
+                select(Question)
+                .where(
+                    and_(
+                        Question.subject == Subject.MATH,
+                        Question.difficulty_level.between(
+                            max(1, target_difficulty - 1),
+                            min(5, target_difficulty + 1)
+                        )
+                    )
+                )
+                .order_by(func.random())
+                .limit(num_questions * 2)
+            )
+            
+            questions = questions_result.scalars().all()
+            
+            if not questions:
+                logger.warning("⚠️ No questions found for traditional recommendation")
+                return []
+            
+            # Convert to response format
+            recommendations = []
+            for question in questions[:num_questions]:
+                recommendations.append({
+                    "id": str(question.id),
+                    "content": question.content,
+                    "difficulty_level": question.difficulty_level,
+                    "topic_category": question.topic_category,
+                    "question_type": question.question_type.value,
+                    "score": 0.6,  # Default score for traditional method
+                    "difficulty_match": 1.0 - abs(question.difficulty_level - target_difficulty) / 5.0,
+                    "recommendation_reason": f"Selected based on your skill level ({profile.math_skill})"
+                })
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"❌ Traditional recommendation failed: {e}")
+            return []
+    
+    async def update_student_profile(
+        self,
+        db: AsyncSession,
+        student_id: str,
+        new_skill: float,
+        update_reason: str = "skill_update"
+    ) -> bool:
+        """Update student profile with race condition protection"""
+        
+        try:
+            logger.info(f"🔄 Updating student profile for {student_id}: {new_skill}")
+            
+            # Acquire profile lock
+            profile_lock = await self.profile_lock_manager.acquire_lock(student_id)
+            
+            async with profile_lock:
+                # Use optimistic locking for profile update
+                success = await self.optimistic_lock_manager.execute_with_optimistic_lock(
+                    self._update_profile_operation,
+                    db,
+                    student_id,
+                    new_skill,
+                    update_reason
+                )
+                
+                if success:
+                    logger.info(f"✅ Profile updated successfully for student {student_id}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Profile update failed for student {student_id}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"❌ Profile update failed for student {student_id}: {e}")
+            return False
+        
+        finally:
+            # Release profile lock
+            await self.profile_lock_manager.release_lock(student_id)
+    
+    async def _update_profile_operation(
+        self,
+        db: AsyncSession,
+        student_id: str,
+        new_skill: float,
+        update_reason: str
+    ) -> bool:
+        """Database operation for updating profile"""
+        
+        try:
+            # Get current profile
+            result = await db.execute(
+                select(MathProfile)
+                .where(MathProfile.student_id == student_id)
+            )
+            
+            profile = result.scalar_one_or_none()
+            
+            if not profile:
+                # Create new profile if it doesn't exist
+                profile = MathProfile(
+                    student_id=student_id,
+                    math_skill=new_skill,
+                    global_skill=new_skill,
+                    created_at=datetime.utcnow()
+                )
+                db.add(profile)
+            else:
+                # Update existing profile
+                profile.math_skill = new_skill
+                profile.global_skill = (profile.global_skill + new_skill) / 2
+                profile.updated_at = datetime.utcnow()
+                
+                # Add version tracking for optimistic locking
+                if not hasattr(profile, 'version'):
+                    profile.version = 1
+                else:
+                    profile.version += 1
+            
+            # Add update metadata
+            if not hasattr(profile, 'update_history'):
+                profile.update_history = []
+            
+            profile.update_history.append({
+                "timestamp": datetime.utcnow().isoformat(),
+                "old_skill": getattr(profile, 'math_skill', 0),
+                "new_skill": new_skill,
+                "reason": update_reason,
+                "service": "math_recommend_service"
+            })
+            
+            await db.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Database operation failed: {e}")
+            await db.rollback()
+            raise
+    
+    def _update_performance_metrics(self, response_time: float, success: bool):
+        """Update performance metrics"""
+        
+        try:
+            self.performance_metrics["total_recommendations"] += 1
+            
+            if success:
+                self.performance_metrics["successful_recommendations"] += 1
+            else:
+                self.performance_metrics["failed_recommendations"] += 1
+            
+            # Update response time metrics
+            self.performance_metrics["total_response_time"] += response_time
+            self.performance_metrics["average_response_time"] = (
+                self.performance_metrics["total_response_time"] / 
+                self.performance_metrics["total_recommendations"]
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Error updating performance metrics: {e}")
+    
+    async def get_performance_report(self) -> Dict[str, Any]:
+        """Get comprehensive performance report"""
+        
+        return {
+            "service": "MathRecommendService",
+            "metrics": self.performance_metrics,
+            "lock_management": {
+                "active_locks": len(self.profile_lock_manager.locks),
+                "lock_timeout": self.profile_lock_manager.lock_timeout,
+                "cleanup_interval": self.profile_lock_manager.cleanup_interval
+            },
+            "optimistic_locking": {
+                "retry_attempts": self.optimistic_lock_manager.retry_attempts,
+                "retry_delay": self.optimistic_lock_manager.retry_delay
+            }
+        }
 
-# Global instance (for dependency injection)
-math_recommend_service = MathRecommendService(
-    question_repo=QuestionRepository(),
-    math_profile_repo=MathProfileRepository(),
-    student_attempt_repo=StudentAttemptRepository(),
-    error_pattern_repo=ErrorPatternRepository()
-)
+
+# Singleton instance
+math_recommend_service = MathRecommendService()

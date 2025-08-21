@@ -2,6 +2,8 @@ import asyncio
 import os
 import json
 import logging
+import gc
+import psutil
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import pdfplumber
@@ -21,6 +23,47 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class MemoryManager:
+    """Memory management utility for PDF processing"""
+    
+    def __init__(self):
+        self.process = psutil.Process()
+        self.memory_threshold_mb = 500  # 500MB threshold
+        self.cleanup_interval = 5  # Every 5 pages
+    
+    def get_memory_usage(self) -> float:
+        """Get current memory usage in MB"""
+        try:
+            memory_info = self.process.memory_info()
+            return memory_info.rss / 1024 / 1024  # Convert to MB
+        except Exception:
+            return 0.0
+    
+    def should_cleanup(self, page_count: int) -> bool:
+        """Check if memory cleanup is needed"""
+        memory_usage = self.get_memory_usage()
+        return (memory_usage > self.memory_threshold_mb or 
+                page_count % self.cleanup_interval == 0)
+    
+    def force_cleanup(self):
+        """Force garbage collection and memory cleanup"""
+        try:
+            # Force garbage collection
+            collected = gc.collect()
+            logger.debug(f"🧹 Garbage collection: {collected} objects collected")
+            
+            # Force memory cleanup
+            if hasattr(gc, 'collect_generations'):
+                gc.collect_generations()
+            
+            # Log memory usage after cleanup
+            memory_after = self.get_memory_usage()
+            logger.info(f"🧹 Memory cleanup completed. Usage: {memory_after:.1f}MB")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Memory cleanup failed: {e}")
+
+
 class MonitoringPDFService:
     """Monitoring wrapper for PDF processing service"""
     
@@ -35,11 +78,15 @@ class MonitoringPDFService:
             "total_processing_time": 0.0,
             "domain_classification_accuracy": 0.0,
             "embedding_generation_success": 0,
-            "embedding_generation_failed": 0
+            "embedding_generation_failed": 0,
+            "memory_usage_peak": 0.0,
+            "memory_cleanups_performed": 0
         }
     
     async def process_pdf_upload(self, *args, **kwargs):
         start_time = time.time()
+        initial_memory = psutil.Process().memory_info().rss / 1024 / 1024
+        
         try:
             result = await self.pdf_service.process_pdf_upload(*args, **kwargs)
             processing_time = time.time() - start_time
@@ -51,6 +98,11 @@ class MonitoringPDFService:
             self.stats["average_processing_time"] = (
                 self.stats["total_processing_time"] / self.stats["total_pdfs_processed"]
             )
+            
+            # Track memory usage
+            final_memory = psutil.Process().memory_info().rss / 1024 / 1024
+            memory_peak = max(initial_memory, final_memory)
+            self.stats["memory_usage_peak"] = max(self.stats["memory_usage_peak"], memory_peak)
             
             if result.get("success"):
                 self.stats["total_questions_extracted"] += result.get("questions_extracted", 0)
@@ -69,11 +121,12 @@ class MonitoringPDFService:
 
 
 class PDFProcessingService:
-    """PDF işleme servisi - PDF'lerden soru çıkarma ve işleme"""
+    """PDF işleme servisi - Memory leak korumalı"""
     
     def __init__(self):
         self.upload_dir = settings.upload_dir
         self.max_file_size = settings.max_file_size
+        self.memory_manager = MemoryManager()
         
         # Domain-specific question indicators
         self.question_indicators = {
@@ -108,7 +161,9 @@ class PDFProcessingService:
             "total_questions_extracted": 0,
             "average_processing_time": 0.0,
             "domain_classification_accuracy": 0.0,
-            "batch_processing_efficiency": 0.0
+            "batch_processing_efficiency": 0.0,
+            "memory_cleanups_performed": 0,
+            "peak_memory_usage_mb": 0.0
         }
     
     async def process_pdf_upload(
@@ -117,10 +172,14 @@ class PDFProcessingService:
         upload_id: str,
         user_id: str
     ) -> Dict[str, Any]:
-        """PDF yüklemesini işle ve soruları çıkar"""
+        """PDF yüklemesini işle ve soruları çıkar - Memory leak korumalı"""
         
         try:
             logger.info(f"🚀 Starting PDF processing for upload {upload_id}")
+            
+            # Track initial memory
+            initial_memory = self.memory_manager.get_memory_usage()
+            logger.info(f"📊 Initial memory usage: {initial_memory:.1f}MB")
             
             # Upload kaydını al
             result = await db.execute(
@@ -136,14 +195,19 @@ class PDFProcessingService:
             upload.processing_started_at = datetime.utcnow()
             await db.commit()
             
-            # PDF dosyasını oku
+            # PDF dosyasını oku - Memory leak korumalı
             pdf_path = os.path.join(self.upload_dir, upload.file_path)
             if not os.path.exists(pdf_path):
                 raise FileNotFoundError(f"PDF file not found: {pdf_path}")
             
-            # PDF'den metin çıkar
-            extracted_text = await self._extract_text_from_pdf(pdf_path)
+            # PDF'den metin çıkar - Memory management ile
+            extracted_text = await self._extract_text_from_pdf_memory_safe(pdf_path)
             logger.info(f"📄 Extracted {len(extracted_text)} characters from PDF")
+            
+            # Memory cleanup after text extraction
+            if self.memory_manager.should_cleanup(1):
+                self.memory_manager.force_cleanup()
+                self.performance_metrics["memory_cleanups_performed"] += 1
             
             # Akıllı domain classification
             detected_domain = await self._classify_domain_intelligent(extracted_text)
@@ -181,13 +245,19 @@ class PDFProcessingService:
                 "domain": detected_domain,
                 "extraction_method": "enhanced_domain_specific",
                 "batch_processing": True,
-                "domain_classification_method": "intelligent"
+                "domain_classification_method": "intelligent",
+                "memory_usage_initial_mb": initial_memory,
+                "memory_usage_final_mb": self.memory_manager.get_memory_usage(),
+                "memory_cleanups_performed": self.performance_metrics["memory_cleanups_performed"]
             }
             
             await db.commit()
             
             # Update performance metrics
             self._update_performance_metrics(len(saved_questions), detected_domain)
+            
+            # Final memory cleanup
+            self.memory_manager.force_cleanup()
             
             logger.info(f"✅ PDF processing completed successfully for upload {upload_id}")
             
@@ -198,7 +268,12 @@ class PDFProcessingService:
                 "quality_score": upload.quality_score,
                 "processing_time": upload.processing_metadata["processing_time"],
                 "domain": detected_domain,
-                "performance_metrics": self.performance_metrics
+                "performance_metrics": self.performance_metrics,
+                "memory_usage": {
+                    "initial_mb": initial_memory,
+                    "final_mb": self.memory_manager.get_memory_usage(),
+                    "peak_mb": self.performance_metrics["peak_memory_usage_mb"]
+                }
             }
             
         except Exception as e:
@@ -210,11 +285,82 @@ class PDFProcessingService:
                 upload.processing_metadata = {
                     "error": str(e),
                     "failed_at": datetime.utcnow().isoformat(),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "memory_usage_mb": self.memory_manager.get_memory_usage()
                 }
                 await db.commit()
             
+            # Force cleanup on error
+            self.memory_manager.force_cleanup()
             raise e
+    
+    async def _extract_text_from_pdf_memory_safe(self, pdf_path: str) -> str:
+        """PDF'den metin çıkar - Memory leak korumalı"""
+        
+        try:
+            text_content = []
+            page_count = 0
+            
+            with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+                logger.info(f"📄 Processing {total_pages} pages with memory management")
+                
+                for page_num, page in enumerate(pdf.pages):
+                    try:
+                        # Extract text from page
+                        text = page.extract_text()
+                        if text:
+                            # Sayfa numarası ekle
+                            text_content.append(f"--- PAGE {page_num + 1} ---\n{text}")
+                        
+                        page_count += 1
+                        
+                        # Memory management: Clear page reference
+                        pdf.pages[page_num] = None
+                        
+                        # Periodic memory cleanup
+                        if self.memory_manager.should_cleanup(page_count):
+                            self.memory_manager.force_cleanup()
+                            self.performance_metrics["memory_cleanups_performed"] += 1
+                            
+                            # Log memory usage
+                            current_memory = self.memory_manager.get_memory_usage()
+                            self.performance_metrics["peak_memory_usage_mb"] = max(
+                                self.performance_metrics["peak_memory_usage_mb"], 
+                                current_memory
+                            )
+                            
+                            logger.debug(f"📊 Page {page_num + 1}/{total_pages} processed. Memory: {current_memory:.1f}MB")
+                        
+                        # Progress logging
+                        if (page_num + 1) % 10 == 0:
+                            logger.info(f"📄 Processed {page_num + 1}/{total_pages} pages")
+                    
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to process page {page_num + 1}: {e}")
+                        continue
+                
+                # Final memory cleanup
+                self.memory_manager.force_cleanup()
+                
+                # Clear all page references
+                pdf.pages.clear()
+                
+            extracted_text = "\n".join(text_content)
+            logger.info(f"📄 Successfully extracted text from {page_count} pages")
+            
+            return extracted_text
+            
+        except Exception as e:
+            logger.error(f"❌ PDF text extraction failed: {e}", exc_info=True)
+            # Force cleanup on error
+            self.memory_manager.force_cleanup()
+            raise Exception(f"PDF text extraction failed: {str(e)}")
+    
+    async def _extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Legacy method - use _extract_text_from_pdf_memory_safe instead"""
+        logger.warning("⚠️ Using legacy PDF extraction method. Use _extract_text_from_pdf_memory_safe for memory safety.")
+        return await self._extract_text_from_pdf_memory_safe(pdf_path)
     
     async def _classify_domain_intelligent(self, text: str) -> Subject:
         """Akıllı domain classification using multiple methods"""
@@ -413,26 +559,6 @@ class PDFProcessingService:
         except Exception as e:
             logger.error(f"❌ Batch processing failed: {e}")
             return {"success": False, "error": str(e)}
-    
-    async def _extract_text_from_pdf(self, pdf_path: str) -> str:
-        """PDF'den metin çıkar"""
-        try:
-            text_content = []
-            
-            with pdfplumber.open(pdf_path) as pdf:
-                for page_num, page in enumerate(pdf.pages):
-                    text = page.extract_text()
-                    if text:
-                        # Sayfa numarası ekle
-                        text_content.append(f"--- PAGE {page_num + 1} ---\n{text}")
-            
-            extracted_text = "\n".join(text_content)
-            logger.info(f"📄 Successfully extracted text from {len(pdf.pages)} pages")
-            return extracted_text
-            
-        except Exception as e:
-            logger.error(f"❌ PDF text extraction failed: {e}", exc_info=True)
-            raise Exception(f"PDF text extraction failed: {str(e)}")
     
     async def _extract_questions_from_text(
         self, 
@@ -745,6 +871,13 @@ class PDFProcessingService:
                 self.performance_metrics["domain_classification_accuracy"] = 0.95
             else:
                 self.performance_metrics["domain_classification_accuracy"] = 0.85
+            
+            # Update memory metrics
+            current_memory = self.memory_manager.get_memory_usage()
+            self.performance_metrics["peak_memory_usage_mb"] = max(
+                self.performance_metrics["peak_memory_usage_mb"], 
+                current_memory
+            )
                 
         except Exception as e:
             logger.error(f"❌ Error updating performance metrics: {e}")
@@ -756,7 +889,12 @@ class PDFProcessingService:
             "service": "PDFProcessingService",
             "metrics": self.performance_metrics,
             "cache_stats": await enhanced_cache_service.get_stats(),
-            "batch_stats": await batch_processing_service.get_performance_report()
+            "batch_stats": await batch_processing_service.get_performance_report(),
+            "memory_management": {
+                "current_memory_mb": self.memory_manager.get_memory_usage(),
+                "memory_threshold_mb": self.memory_manager.memory_threshold_mb,
+                "cleanup_interval": self.memory_manager.cleanup_interval
+            }
         }
     
     async def process_pdf_batch(
@@ -766,7 +904,7 @@ class PDFProcessingService:
         user_id: str,
         max_concurrent: int = 5
     ) -> List[Dict[str, Any]]:
-        """Process multiple PDFs concurrently"""
+        """Process multiple PDFs concurrently with memory management"""
         
         try:
             logger.info(f"🚀 Starting batch processing for {len(pdf_paths)} PDFs")
