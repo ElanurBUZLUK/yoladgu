@@ -375,23 +375,28 @@ async def upload_math_questions_json(
     db: AsyncSession = Depends(database_manager.get_session)
 ):
     """
-    Upload math questions from a JSON file
+    Upload math questions from a JSON file using enhanced format
     
     Expected JSON format:
     [
         {
-            "subject": "math",
-            "content": "What is 5 + 3?",
-            "question_type": "multiple_choice",
-            "difficulty_level": 1,
-            "topic_category": "addition",
-            "correct_answer": "8",
-            "options": ["6", "7", "8", "9"],
-            "source_type": "manual",
-            "question_metadata": {
+            "stem": "What is 2 + 2?",
+            "options": {
+                "A": "1",
+                "B": "2",
+                "C": "3",
+                "D": "4"
+            },
+            "correct_answer": "D",
+            "topic": "arithmetic",
+            "subtopic": "addition",
+            "difficulty": 0.5,
+            "source": "seed",
+            "metadata": {
                 "estimated_time": 30,
                 "learning_objectives": ["basic addition"],
-                "tags": ["arithmetic", "basic"]
+                "tags": ["arithmetic", "basic"],
+                "cefr_level": "A1"
             }
         }
     ]
@@ -427,45 +432,54 @@ async def upload_math_questions_json(
         
         for i, question_data in enumerate(questions_data):
             try:
-                # Validate required fields
-                required_fields = ['content', 'question_type', 'difficulty_level', 'topic_category']
+                # Validate required fields for enhanced format
+                required_fields = ['stem', 'options', 'correct_answer', 'topic']
                 for field in required_fields:
                     if field not in question_data:
                         raise ValueError(f"Missing required field: {field}")
                 
-                # Convert string values to enum types
-                subject = Subject.MATH  # Default to math for this endpoint
+                # Convert difficulty (continuous 0.0-2.0 to discrete 1-5)
+                difficulty = question_data.get('difficulty', 1.0)
+                if difficulty <= 0.5:
+                    difficulty_level = 1
+                elif difficulty <= 1.0:
+                    difficulty_level = 2
+                elif difficulty <= 1.5:
+                    difficulty_level = 3
+                elif difficulty <= 1.8:
+                    difficulty_level = 4
+                else:
+                    difficulty_level = 5
                 
-                question_type_map = {
-                    'multiple_choice': QuestionType.MULTIPLE_CHOICE,
-                    'fill_blank': QuestionType.FILL_BLANK,
-                    'open_ended': QuestionType.OPEN_ENDED,
-                    'true_false': QuestionType.TRUE_FALSE
-                }
-                question_type = question_type_map.get(
-                    question_data['question_type'].lower(), QuestionType.MULTIPLE_CHOICE
-                )
+                # Determine question type based on options
+                options = question_data['options']
+                if len(options) == 2 and all(opt in ['True', 'False', 'true', 'false'] for opt in options.values()):
+                    question_type = QuestionType.TRUE_FALSE
+                elif len(options) == 0:
+                    question_type = QuestionType.OPEN_ENDED
+                else:
+                    question_type = QuestionType.MULTIPLE_CHOICE
                 
-                source_type_map = {
-                    'manual': SourceType.MANUAL,
-                    'pdf': SourceType.PDF,
-                    'api': SourceType.API
-                }
-                source_type = source_type_map.get(
-                    question_data.get('source_type', 'manual').lower(), SourceType.MANUAL
-                )
-                
-                # Create question object
+                # Create question object with enhanced format
                 question = Question(
-                    subject=subject,
-                    content=question_data['content'],
+                    subject=Subject.MATH,
+                    content=question_data['stem'],
                     question_type=question_type,
-                    difficulty_level=question_data['difficulty_level'],
-                    topic_category=question_data['topic_category'],
-                    correct_answer=question_data.get('correct_answer'),
-                    options=question_data.get('options'),
-                    source_type=source_type,
-                    question_metadata=question_data.get('question_metadata', {}),
+                    difficulty_level=difficulty_level,
+                    original_difficulty=difficulty_level,
+                    topic_category=question_data['topic'],
+                    correct_answer=question_data['correct_answer'],
+                    options=question_data['options'],
+                    source_type=SourceType.MANUAL,
+                    estimated_difficulty=question_data.get('difficulty', 1.0),
+                    question_metadata={
+                        "subtopic": question_data.get('subtopic'),
+                        "source": question_data.get('source', 'seed'),
+                        "estimated_time": question_data.get('metadata', {}).get('estimated_time', 60),
+                        "learning_objectives": question_data.get('metadata', {}).get('learning_objectives', []),
+                        "tags": question_data.get('metadata', {}).get('tags', []),
+                        "cefr_level": question_data.get('metadata', {}).get('cefr_level', 'A1')
+                    },
                     created_by=str(current_user.id)
                 )
                 

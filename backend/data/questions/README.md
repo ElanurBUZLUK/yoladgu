@@ -13,7 +13,34 @@ backend/data/questions/
 
 ## 📋 JSON Formatı
 
+### 🆕 Gelişmiş Format (Önerilen)
+
 Her soru aşağıdaki formatta olmalıdır:
+
+```json
+{
+  "stem": "What is 2 + 2?",
+  "options": {
+    "A": "1",
+    "B": "2",
+    "C": "3",
+    "D": "4"
+  },
+  "correct_answer": "D",
+  "topic": "arithmetic",
+  "subtopic": "addition",
+  "difficulty": 0.5,
+  "source": "seed",
+  "metadata": {
+    "estimated_time": 30,
+    "learning_objectives": ["basic addition"],
+    "tags": ["arithmetic", "basic"],
+    "cefr_level": "A1"
+  }
+}
+```
+
+### 📝 Eski Format (Hala Desteklenir)
 
 ```json
 {
@@ -35,13 +62,25 @@ Her soru aşağıdaki formatta olmalıdır:
 
 ## 🔧 Desteklenen Alanlar
 
-### Zorunlu Alanlar
+### 🆕 Gelişmiş Format - Zorunlu Alanlar
+- `stem`: Soru metni (10-2000 karakter)
+- `options`: Seçenekler objesi (A, B, C, D...)
+- `correct_answer`: Doğru cevap harfi (A, B, C, D...)
+- `topic`: Ana konu kategorisi
+
+### 🆕 Gelişmiş Format - İsteğe Bağlı Alanlar
+- `subtopic`: Alt konu kategorisi
+- `difficulty`: Sürekli zorluk (0.0-2.0)
+- `source`: Kaynak bilgisi
+- `metadata`: Detaylı bilgiler
+
+### 📝 Eski Format - Zorunlu Alanlar
 - `content`: Soru metni (10-2000 karakter)
 - `question_type`: Soru tipi
 - `difficulty_level`: Zorluk seviyesi (1-5)
 - `topic_category`: Konu kategorisi
 
-### İsteğe Bağlı Alanlar
+### 📝 Eski Format - İsteğe Bağlı Alanlar
 - `correct_answer`: Doğru cevap
 - `options`: Çoktan seçmeli sorular için seçenekler
 - `source_type`: Kaynak tipi
@@ -58,6 +97,16 @@ Her soru aşağıdaki formatta olmalıdır:
 
 ## 🎯 Zorluk Seviyeleri
 
+### 🆕 Gelişmiş Format - Sürekli Zorluk (0.0-2.0)
+| Zorluk | Açıklama | Eski Seviye |
+|--------|----------|-------------|
+| 0.0-0.5 | Çok kolay | 1 |
+| 0.5-1.0 | Kolay | 2 |
+| 1.0-1.5 | Orta | 3 |
+| 1.5-1.8 | Zor | 4 |
+| 1.8-2.0 | Çok zor | 5 |
+
+### 📝 Eski Format - Kesikli Seviyeler (1-5)
 | Seviye | Açıklama |
 |--------|----------|
 | 1 | Temel aritmetik |
@@ -93,15 +142,27 @@ curl -X POST "http://localhost:8000/api/v1/math/questions/upload-json" \
   -F "file=@your_questions.json"
 ```
 
-### 3. Örnek Kullanım
+### 3. Script ile Yükleme (Embedding ile)
 ```bash
-# Örnek dosyayı kopyalayın
-cp example_math_questions.json my_questions.json
+# Tek dosya yükleme
+python scripts/load_math_questions_json.py --json data/questions/math_questions_enhanced.json
+
+# Dizin yükleme
+python scripts/load_math_questions_json.py --dir data/questions/
+```
+
+### 4. Örnek Kullanım
+```bash
+# Gelişmiş örnek dosyayı kopyalayın
+cp math_questions_enhanced.json my_questions.json
 
 # Dosyayı düzenleyin
 nano my_questions.json
 
-# Uygulamayı yeniden başlatın
+# Script ile yükleyin (embedding ile)
+python scripts/load_math_questions_json.py --json my_questions.json
+
+# Veya uygulamayı yeniden başlatın (otomatik yükleme)
 python -m app.main
 ```
 
