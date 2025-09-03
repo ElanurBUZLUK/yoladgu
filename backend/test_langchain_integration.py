@@ -12,6 +12,9 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 
+# Import faiss for the test
+import faiss
+
 from app.services.langchain_integration import langchain_service
 
 

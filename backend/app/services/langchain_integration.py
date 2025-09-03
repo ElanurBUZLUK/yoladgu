@@ -6,11 +6,12 @@ import os
 import pickle
 import time
 import numpy as np
+import faiss
 from typing import List, Dict, Any, Optional, Tuple
-from langchain.vectorstores import FAISS
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.docstore.in_memory import InMemoryDocstore
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.schema import Document
@@ -98,9 +99,17 @@ class LangChainIntegrationService:
             print("🔧 Creating Product Quantization index...")
             m = 8  # Number of sub-vectors
             bits = 8  # Bits per sub-vector
-            index = faiss.IndexPQ(dimension, m, bits)
-            index.train(embedding_array)
-            index.add(embedding_array)
+            
+            # Check if we have enough training data
+            if num_vectors < 256:
+                print(f"  ⚠️ Insufficient training data for PQ (need >=256, have {num_vectors})")
+                print(f"  🔄 Falling back to Flat index")
+                index = faiss.IndexFlatL2(dimension)
+                index.add(embedding_array)
+            else:
+                index = faiss.IndexPQ(dimension, m, bits)
+                index.train(embedding_array)
+                index.add(embedding_array)
             
         elif index_type == "IVF_PQ":
             # IVF with Product Quantization
@@ -109,10 +118,20 @@ class LangChainIntegrationService:
             quantizer = faiss.IndexFlatL2(dimension)
             m = 8
             bits = 8
-            index = faiss.IndexIVFPQ(quantizer, dimension, nlist, m, bits)
-            index.train(embedding_array)
-            index.add(embedding_array)
-            index.nprobe = min(10, nlist)
+            
+            # Check if we have enough training data
+            if num_vectors < 256:
+                print(f"  ⚠️ Insufficient training data for IVF_PQ (need >=256, have {num_vectors})")
+                print(f"  🔄 Falling back to IVF index")
+                index = faiss.IndexIVFFlat(quantizer, dimension, nlist, faiss.METRIC_L2)
+                index.train(embedding_array)
+                index.add(embedding_array)
+                index.nprobe = min(10, nlist)
+            else:
+                index = faiss.IndexIVFPQ(quantizer, dimension, nlist, m, bits)
+                index.train(embedding_array)
+                index.add(embedding_array)
+                index.nprobe = min(10, nlist)
             
         elif index_type == "IVF_SQ":
             # IVF with Scalar Quantization
@@ -245,15 +264,11 @@ class LangChainIntegrationService:
         chain_type_kwargs = {"prompt": PROMPT}
         
         # Create retrieval QA chain
-        self.qa_chain = RetrievalQA.from_chain_type(
-            llm=None,  # Will be set by the calling code
-            chain_type="stuff",
-            retriever=self.vectorstore.as_retriever(
-                search_type="similarity",
-                search_kwargs={"k": 5}  # Get 5 results
-            ),
-            chain_type_kwargs=chain_type_kwargs,
-            return_source_documents=True
+        # Note: LLM is required in new LangChain versions
+        # For now, create a basic retriever without the full chain
+        self.qa_chain = self.vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 5}  # Get 5 results
         )
         
         print("✅ Advanced RAG chain created")
@@ -462,3 +477,116 @@ class LangChainIntegrationService:
 
 # Global instance
 langchain_service = LangChainIntegrationService()
+
+
+def get_advanced_vector_store(text_chunks, index_type="IVF"):
+    """
+    Gelişmiş FAISS vector store oluşturur - User's implementation
+    
+    Args:
+        text_chunks: List of text chunks to index
+        index_type: Type of FAISS index ("IVF", "HNSW", "PQ", "Flat")
+        
+    Returns:
+        FAISS vector store instance
+    """
+    try:
+        # Initialize embeddings if not already done
+        if not langchain_service.embeddings:
+            # Use default model
+            embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        else:
+            embeddings = langchain_service.embeddings
+        
+        # Calculate embeddings
+        embedding_list = embeddings.embed_documents(text_chunks)
+        embedding_array = np.array(embedding_list).astype('float32')
+        
+        # Get dimensions and vector count
+        dimension = embedding_array.shape[1]
+        num_vectors = embedding_array.shape[0]
+        
+        # Create FAISS index based on type
+        if index_type == "IVF" and num_vectors >= 100:
+            # IVF index with quantization
+            nlist = min(100, num_vectors // 10)  # Cluster count
+            quantizer = faiss.IndexFlatL2(dimension)
+            index = faiss.IndexIVFFlat(quantizer, dimension, nlist, faiss.METRIC_L2)
+            
+            # Train the index
+            index.train(embedding_array)
+            index.add(embedding_array)
+            index.nprobe = min(10, nlist)  # Number of clusters to probe
+            
+        elif index_type == "HNSW":
+            # HNSW index
+            index = faiss.IndexHNSWFlat(dimension, 32)  # 32 connections
+            index.add(embedding_array)
+            
+        elif index_type == "PQ":
+            # Product Quantization
+            m = 8  # Number of sub-vectors
+            bits = 8  # Bits per sub-vector
+            index = faiss.IndexPQ(dimension, m, bits)
+            index.train(embedding_array)
+            index.add(embedding_array)
+            
+        else:
+            # Simple Flat index (default)
+            index = faiss.IndexFlatL2(dimension)
+            index.add(embedding_array)
+        
+        # Create docstore
+        docstore = InMemoryDocstore(
+            {str(i): doc for i, doc in enumerate(text_chunks)}
+        )
+        
+        # Index-to-docstore ID mapping
+        index_to_docstore_id = {i: str(i) for i in range(len(text_chunks))}
+        
+        # Create FAISS vector store
+        vectorstore = FAISS(
+            embedding_function=embeddings,
+            index=index,
+            docstore=docstore,
+            index_to_docstore_id=index_to_docstore_id
+        )
+        
+        return vectorstore
+        
+    except Exception as e:
+        print(f"❌ Error creating advanced vector store: {e}")
+        raise
+
+
+def save_vector_store(vectorstore, file_path):
+    """Vector store'u diske kaydet - User's implementation"""
+    try:
+        faiss.write_index(vectorstore.index, f"{file_path}.index")
+        with open(f"{file_path}.metadata", "wb") as f:
+            pickle.dump({
+                "docstore": vectorstore.docstore,
+                "index_to_docstore_id": vectorstore.index_to_docstore_id
+            }, f)
+        print(f"✅ Vector store saved to {file_path}")
+    except Exception as e:
+        print(f"❌ Error saving vector store: {e}")
+        raise
+
+
+def load_vector_store(embeddings, file_path):
+    """Vector store'u diskten yükle - User's implementation"""
+    try:
+        index = faiss.read_index(f"{file_path}.index")
+        with open(f"{file_path}.metadata", "rb") as f:
+            metadata = pickle.load(f)
+        
+        return FAISS(
+            embedding_function=embeddings,
+            index=index,
+            docstore=metadata["docstore"],
+            index_to_docstore_id=metadata["index_to_docstore_id"]
+        )
+    except Exception as e:
+        print(f"❌ Error loading vector store: {e}")
+        raise
