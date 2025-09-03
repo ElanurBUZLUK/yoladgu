@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # Database
-    DATABASE_URL: str = "sqlite:///./test.db"
+    DATABASE_URL: str = "sqlite+aiosqlite:///./test.db"
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
     

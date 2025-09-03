@@ -35,3 +35,10 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """Get database session for direct use."""
     async for session in get_async_session():
         yield session
+
+
+# Alias for FastAPI dependency injection
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Get database session for FastAPI dependency injection."""
+    async for session in get_async_session():
+        yield session

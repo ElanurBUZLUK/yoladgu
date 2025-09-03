@@ -87,7 +87,7 @@ class ErrorAwareRecommender:
         """
         try:
             vocab = set()
-    for tags in items_errors.values():
+            for tags in items_errors.values():
                 if tags:  # Check if tags is not None/empty
                     vocab.update([tag for tag in tags if tag and tag.strip()])
             return sorted(list(vocab))
@@ -148,7 +148,7 @@ class ErrorAwareRecommender:
             error_counts = Counter()
             for attempt in student_attempts:
                 if attempt.get("correct", True):  # Skip correct attempts
-            continue
+                    continue
                 
                 # Calculate weight with time decay
                 weight = 1.0
@@ -371,7 +371,7 @@ class ErrorAwareRecommender:
                 # Exact fallback using numpy
                 idx = student_ids.index(target_student_id)
                 sims = (X[idx:idx+1] @ X.T)[0]
-    order = np.argsort(-sims)
+                order = np.argsort(-sims)
                 
                 # Return neighbors excluding self
                 neighbors = [student_ids[j] for j in order if j != idx][:k]
@@ -503,7 +503,7 @@ class ErrorAwareRecommender:
                 # Sort by timestamp to ensure correct order
                 seq.sort(key=lambda x: x[0])
                 
-        seen_wrong = False
+                seen_wrong = False
                 for ts, is_correct in seq:
                     if is_correct == 0:  # Wrong answer
                         seen_wrong = True

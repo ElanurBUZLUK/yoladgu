@@ -144,7 +144,7 @@ async def generate_english_cloze(
         )
         
         if not question:
-    raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Cloze question generation failed"
             )
