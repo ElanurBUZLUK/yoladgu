@@ -530,3 +530,38 @@ async def delete_advanced_index(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/health/{index_type}")
+async def get_index_health(
+    index_type: str,
+    vector_size: int = 384,
+    metric: str = "ip"
+):
+    """Get health status of a specific index type."""
+    try:
+        # Create index instance
+        index = FAISSAdvancedIndexBackend(
+            vector_size=vector_size,
+            index_type=index_type,
+            metric=metric
+        )
+        
+        # Initialize if not already done
+        if not index._initialized:
+            await index.initialize()
+        
+        # Get health status
+        health = await index.health_check()
+        
+        return {
+            "status": "success",
+            "index_type": index_type,
+            "health": health
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }

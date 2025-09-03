@@ -8,6 +8,10 @@ import pickle
 import os
 from typing import List, Dict, Any, Optional, Tuple, Union
 import numpy as np
+import faiss
+import structlog
+
+logger = structlog.get_logger()
 
 try:
     import faiss
@@ -39,11 +43,12 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
         ef_search: int = 128,  # HNSW search parameter
         max_elements: int = 1000000,
         index_path: Optional[str] = None,
+        cache_enabled: bool = True,
         **kwargs
     ):
         super().__init__(vector_size)
         
-        self.index_type = index_type
+        self.index_type = index_type.lower()
         self.metric = metric
         self.nlist = nlist
         self.nprobe = nprobe
@@ -57,6 +62,7 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
         # Index and quantizer
         self.index = None
         self.quantizer = None
+        self._initialized = False
         
         # ID mappings
         self.id_to_metadata: Dict[str, Dict[str, Any]] = {}
@@ -76,6 +82,39 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
         
         # Additional parameters
         self._update_params(**kwargs)
+        
+        # Cache mechanism
+        self._embedding_cache = {}
+        self.cache_enabled = cache_enabled
+        
+        # IVF training requirements
+        if self.index_type.startswith("ivf"):
+            min_train_size = max(100, self.nlist * 10)
+            self.min_train_size = min_train_size
+            logger.info("IVF index requires at least %d vectors for training", min_train_size)
+
+    def _normalize_vector(self, vectors: np.ndarray) -> np.ndarray:
+        """Normalize vectors for cosine similarity with optimization."""
+        if vectors.ndim == 1:
+            norm = np.linalg.norm(vectors)
+            # Sıfır norm durumunda orijinal vektörü döndür
+            return vectors / norm if norm > 1e-10 else vectors
+        else:
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            # Sıfır normları 1 ile değiştirerek bölme hatasını önle
+            norms = np.where(norms < 1e-10, 1.0, norms)
+            return vectors / norms
+
+    def _get_cached_embedding(self, text: str) -> Optional[np.ndarray]:
+        """Önbellekten embedding al."""
+        if not self.cache_enabled:
+            return None
+        return self._embedding_cache.get(text)
+
+    def _set_cached_embedding(self, text: str, embedding: np.ndarray):
+        """Embedding'i önbelleğe kaydet."""
+        if self.cache_enabled:
+            self._embedding_cache[text] = embedding
     
     def _update_params(self, **kwargs):
         """Update index parameters."""
@@ -107,6 +146,7 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
             self._built = True
             
             print(f"✅ FAISS {self.index_type.upper()} index initialized successfully")
+            self._initialized = True
             return True
             
         except Exception as e:
@@ -233,7 +273,7 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
             int_ids = self._add_ids(ids)
             
             # Add to index
-            if hasattr(self.index, 'add_with_ids') and self.index_type not in ["pq", "sq"]:
+            if hasattr(self.index, 'add_with_ids') and self.index_type not in ["pq", "sq", "flat", "hnsw"]:
                 # Check if IVF index needs training
                 if hasattr(self.index, 'is_trained') and not self.index.is_trained:
                     # Train the index first
@@ -243,7 +283,7 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
                 
                 self.index.add_with_ids(vectors, int_ids)
             else:
-                # For PQ and SQ, use regular add
+                # For PQ, SQ, FLAT, and HNSW, use regular add
                 if hasattr(self.index, 'is_trained') and not self.index.is_trained:
                     # Train the index first
                     self.index.train(vectors)
@@ -266,6 +306,36 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
             
         except Exception as e:
             print(f"❌ Error adding items to FAISS {self.index_type} index: {e}")
+            return False
+
+    async def add_items_batch(
+        self,
+        vectors_batch: np.ndarray,
+        ids_batch: List[str],
+        metadata_batch: Optional[List[Dict[str, Any]]] = None,
+        batch_size: int = 1000
+    ) -> bool:
+        """Büyük veri kümeleri için batch ekleme."""
+        try:
+            total_batches = (len(vectors_batch) + batch_size - 1) // batch_size
+            for i in range(total_batches):
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, len(vectors_batch))
+                
+                batch_vectors = vectors_batch[start_idx:end_idx]
+                batch_ids = ids_batch[start_idx:end_idx]
+                batch_metadata = metadata_batch[start_idx:end_idx] if metadata_batch else None
+                
+                success = await self.add_items(batch_vectors, batch_ids, batch_metadata)
+                if not success:
+                    logger.error("Batch %d failed", i)
+                    return False
+                    
+                logger.info("Processed batch %d/%d", i + 1, total_batches)
+                
+            return True
+        except Exception as e:
+            logger.error("Batch processing failed: %s", e)
             return False
     
     def _add_ids(self, ids: List[str]) -> np.ndarray:
@@ -615,3 +685,35 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
         except Exception as e:
             print(f"⚠️ Error evaluating performance: {e}")
             return 0.0
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Index sağlık durumunu kontrol et."""
+        health = {
+            "initialized": self._initialized,
+            "index_type": self.index_type,
+            "total_items": self.stats["total_items"],
+            "index_size_mb": self.stats["index_size_mb"],
+            "status": "healthy"
+        }
+        
+        # Index boş mu kontrolü
+        if self.stats["total_items"] == 0:
+            health["status"] = "empty"
+            health["message"] = "Index is empty, add items first"
+        
+        # IVF index eğitilmiş mi kontrolü
+        if hasattr(self, 'index') and hasattr(self.index, 'is_trained'):
+            health["is_trained"] = self.index.is_trained
+            if not self.index.is_trained and self.stats["total_items"] > 0:
+                health["status"] = "requires_training"
+                health["message"] = "IVF index needs training before searching"
+        
+        # Bellek kullanımı kontrolü
+        try:
+            import psutil
+            process = psutil.Process()
+            health["memory_usage_mb"] = process.memory_info().rss / 1024 / 1024
+        except ImportError:
+            health["memory_usage_mb"] = "psutil not available"
+        
+        return health

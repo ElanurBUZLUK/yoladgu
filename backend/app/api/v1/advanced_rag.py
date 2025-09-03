@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File
 from pydantic import BaseModel
 import os
+from datetime import datetime
 
 from app.services.advanced_rag_system import advanced_rag_system
 from app.db.session import get_db
@@ -360,23 +361,28 @@ async def load_vector_store(
 
 
 @router.get("/health")
-async def health_check():
-    """Health check for the RAG system."""
+async def get_rag_system_health():
+    """Get health status of the Advanced RAG System."""
     try:
-        status = {
-            "status": "healthy",
-            "vector_store": advanced_rag_system.vector_store is not None,
-            "embedding_model": advanced_rag_system.embedding_model is not None
+        # Create a temporary instance to check health
+        rag_system = advanced_rag_system # Assuming advanced_rag_system is the class, not an instance
+        
+        # Check if vector store is initialized
+        if hasattr(rag_system, 'vector_store') and rag_system.vector_store:
+            health = await rag_system.get_vector_store_health()
+        else:
+            health = {"status": "not_initialized"}
+        
+        return {
+            "status": "success",
+            "system": "Advanced RAG System",
+            "health": health,
+            "timestamp": datetime.now().isoformat()
         }
-        
-        if advanced_rag_system.vector_store:
-            stats = await advanced_rag_system.get_vector_store_stats()
-            status["vector_store_stats"] = stats
-        
-        return status
         
     except Exception as e:
         return {
-            "status": "unhealthy",
-            "error": str(e)
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
         }

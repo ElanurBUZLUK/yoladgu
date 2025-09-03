@@ -80,3 +80,9 @@ mypy==1.7.1
 # Documentation
 mkdocs==1.5.3
 mkdocs-material==9.4.8
+
+# System Monitoring
+psutil>=5.9.0
+
+# Logging
+structlog>=23.0.0

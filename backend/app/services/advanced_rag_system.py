@@ -197,28 +197,61 @@ class AdvancedRAGSystem:
         
         return vector_memory * avg_overhead
     
-    async def batch_process_documents(self, documents: List[str], batch_size: int = 100) -> bool:
-        """Process documents in batches for large datasets"""
-        if not documents:
-            return False
-        
+    async def batch_process_documents(
+        self, 
+        documents: List[str], 
+        batch_size: int = 100,
+        metadata_list: Optional[List[Dict[str, Any]]] = None
+    ) -> bool:
+        """Process documents in batches for better performance."""
         try:
-            for i in range(0, len(documents), batch_size):
-                batch = documents[i:i + batch_size]
-                batch_metadata = [{"content": doc, "batch": i // batch_size} for doc in batch]
+            if not self.vector_store:
+                raise ValueError("Vector store not initialized")
+            
+            total_batches = (len(documents) + batch_size - 1) // batch_size
+            # logger.info(f"Processing {len(documents)} documents in {total_batches} batches") # Original code had this line commented out
+            
+            for i in range(total_batches):
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, len(documents))
                 
-                success = await self.add_documents(batch, batch_metadata)
+                batch_docs = documents[start_idx:end_idx]
+                batch_metadata = metadata_list[start_idx:end_idx] if metadata_list else None
+                
+                success = await self.add_documents(batch_docs, batch_metadata)
                 if not success:
-                    print(f"Failed to process batch {i // batch_size}")
+                    # logger.error(f"Batch {i + 1}/{total_batches} failed") # Original code had this line commented out
+                    print(f"Batch {i + 1}/{total_batches} failed") # Added print for logging
                     return False
                 
-                print(f"Processed batch {i // batch_size + 1}/{(len(documents) + batch_size - 1) // batch_size}")
+                # logger.info(f"Processed batch {i + 1}/{total_batches} ({len(batch_docs)} documents)") # Original code had this line commented out
+                print(f"Processed batch {i + 1}/{total_batches} ({len(batch_docs)} documents)") # Added print for logging
             
             return True
             
         except Exception as e:
-            print(f"Error in batch processing: {e}")
+            # logger.error(f"Batch processing failed: {e}") # Original code had this line commented out
+            print(f"Batch processing failed: {e}") # Added print for logging
             return False
+
+    async def get_vector_store_health(self) -> Dict[str, Any]:
+        """Get health status of the vector store."""
+        if not self.vector_store:
+            return {"status": "not_initialized"}
+        
+        try:
+            if hasattr(self.vector_store, 'health_check'):
+                return await self.vector_store.health_check()
+            else:
+                return {
+                    "status": "unknown",
+                    "message": "Health check not available for this vector store type"
+                }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }
     
     async def search_similar_documents(self, query: str, k: int = 5, threshold: float = 0.5) -> List[Dict[str, Any]]:
         """Search for similar documents with similarity threshold"""

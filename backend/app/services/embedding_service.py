@@ -83,6 +83,10 @@ class EmbeddingService:
         except Exception as e:
             print(f"❌ Error initializing embedding service: {e}")
             return False
+
+    async def list_models(self) -> List[str]:
+        """List all available models."""
+        return list(self.model_configs.keys())
     
     async def load_model(self, model_name: str) -> bool:
         """Load a specific embedding model."""
