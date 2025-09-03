@@ -129,6 +129,21 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
             # IVF index needs training
             self.index.is_trained = False
             
+        elif self.index_type == "ivf_pq":
+            # IVF with Product Quantization for better compression
+            self.index = faiss.IndexIVFPQ(
+                self.quantizer, self.vector_size, self.nlist, self.m, self.bits
+            )
+            self.index.is_trained = False
+            
+        elif self.index_type == "ivf_sq":
+            # IVF with Scalar Quantization
+            self.index = faiss.IndexIVFScalarQuantizer(
+                self.quantizer, self.vector_size, self.nlist, 
+                faiss.ScalarQuantizer.QT_8bit
+            )
+            self.index.is_trained = False
+            
         elif self.index_type == "hnsw":
             self.index = faiss.IndexHNSWFlat(
                 self.vector_size, self.m, faiss.METRIC_INNER_PRODUCT if self.metric == "ip" else faiss.METRIC_L2
