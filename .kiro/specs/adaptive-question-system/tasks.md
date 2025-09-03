@@ -1,240 +1,257 @@
 # Implementation Plan
 
-- [x] 1. Temel Proje Yapısı ve Veritabanı Kurulumu
-  - Proje klasör yapısını oluştur ve temel FastAPI konfigürasyonunu yap
-  - PostgreSQL veritabanı şemasını oluştur (users, questions, student_attempts, error_patterns, spaced_repetition, math_error_details, pdf_uploads tabloları)
-  - Redis cache konfigürasyonunu ekle
-  - Temel middleware'leri kur (CORS, authentication, rate limiting)
-  - _Requirements: 1.1, 2.1, 7.1_
+- [x] 1. Set up FastAPI project structure and core configuration
+  - Create directory structure for app/core, app/api, app/models, app/services, app/db
+  - Implement pydantic Settings for configuration management
+  - Set up environment variable handling with .env support
+  - _Requirements: 5.2, 5.3_
 
-- [x] 2. MCP Server ve Tools Altyapısı
-- [x] 2.1 MCP Server kurulumu ve temel tool interface'leri
-  - MCP server'ı kur ve temel konfigürasyonu yap
-  - QuestionGeneratorTool, AnswerEvaluatorTool, AnalyticsTool, PDFParserTool interface'lerini oluştur
-  - MCP client entegrasyonunu FastAPI'ye ekle
-  - Temel MCP resources'ları tanımla (question templates, error patterns)
-  - _Requirements: 3.1, 3.2, 3.5_
+- [ ] 2. Implement authentication and authorization system
+  - [ ] 2.1 Create JWT token generation and validation
+    - Implement JWT service with access/refresh token support
+    - Create token validation middleware for protected endpoints
+    - Add role-based claims to JWT payload (student, teacher, admin, service)
+    - _Requirements: 5.1, 5.3_
 
-- [x] 2.2 PDF Processing MCP Tools implementasyonu
-  - PDFContentReaderTool'u implement et (PyPDF2/pdfplumber kullanarak)
-  - PDFParserTool'u implement et (soru çıkarma algoritması)
-  - QuestionDeliveryTool'u implement et (öğrenciye gönderme formatı)
-  - PDF güvenlik kontrolü ve virus tarama entegrasyonu
-  - _Requirements: 6.1, 6.2, 6.3, 7.1_
+  - [ ] 2.2 Implement RBAC (Role-Based Access Control)
+    - Create permission decorators for endpoint protection
+    - Implement role hierarchy and permission matrix
+    - Add tenant isolation for multi-tenant support
+    - _Requirements: 5.3_
 
-- [x] 2.3 LLM Provider Management Sistemi
-  - Dinamik LLM provider seçimi (OpenAI GPT-4o, Claude Haiku, Local models)
-  - Cost controller ve günlük bütçe monitoring ($1/day limit)
-  - Fallback mekanizması (LLM → rule-based → template-based)
-  - Türkçe kalite test senaryoları ve provider performance tracking
-  - _Requirements: 7.1, 7.2, 7.4_
+  - [ ] 2.3 Add PII redaction middleware
+    - Create middleware to mask sensitive data in logs
+    - Implement email, IP address, and personal data redaction
+    - Add audit logging for data access
+    - _Requirements: 5.2_
 
-- [ ] 3. Kullanıcı Yönetimi ve Authentication
-- [x] 3.1 User authentication sistemi implementasyonu
-  - JWT tabanlı authentication middleware oluştur
-  - Password hashing ve verification sistemi (bcrypt)
-  - User registration ve login endpoint'lerini implement et
-  - Role-based access control (student/teacher) middleware ekle
-  - Security service'i oluştur (şifreleme, token management)
-  - _Requirements: 2.1, 2.8_
+- [x] 3. Set up database layer with SQLModel and migrations
+  - [x] 3.1 Create database models
+    - Implement User model with theta values and error profiles
+    - Create MathItem and EnglishItem models with metadata
+    - Add Attempt model for tracking student responses
+    - Create Decision and Event models for bandit logging
+    - _Requirements: 1.1, 1.2, 2.1, 2.2_
 
-- [x] 3.2 User management API endpoint'leri
-  - User CRUD operations API'leri oluştur
-  - User profile management endpoint'leri
-  - Learning style güncelleme API'si
-  - User level tracking ve güncelleme sistemi
-  - Password reset ve email verification sistemi
-  - _Requirements: 2.1, 2.2, 2.3, 2.4_
+  - [x] 3.2 Implement repository pattern
+    - Create base repository with CRUD operations
+    - Implement UserRepository with profile update methods
+    - Add ItemRepository with search and filtering capabilities
+    - Create AttemptRepository for performance tracking
+    - _Requirements: 1.1, 1.2, 4.2_
 
-- [x] 3.3 Subject selection ve dashboard API'leri
-  - Login sonrası subject selection endpoint'i (İngilizce/Matematik)
-  - Subject-specific dashboard data API'leri
-  - User progress tracking endpoint'leri
-  - Subject performance summary API'si
-  - Learning style adaptation API'si
-  - _Requirements: 2.2, 2.3, 2.4, 2.5_
+  - [x] 3.3 Set up Alembic migrations
+    - Configure Alembic for database schema management
+    - Create initial migration with all table definitions
+    - Add indexes for performance optimization (user_id, item_id, skills)
+    - _Requirements: 1.1, 1.2_
 
-- [ ] 4. Soru Yönetimi ve Öneri Sistemi
-- [x] 4.1 Question service implementasyonu
-  - Question CRUD operations service'i oluştur
-  - Question recommendation algoritması implement et
-  - Difficulty level tracking ve adjustment sistemi
-  - Question metadata ve categorization sistemi
-  - Question pool management (matematik için hazır sorular)
-  - _Requirements: 3.1, 3.2, 3.6, 2.5, 2.6, 2.7_
+- [x] 4. Implement IRT-based student profiling service
+  - [x] 4.1 Create IRT 2PL model implementation
+    - Implement theta estimation using maximum likelihood
+    - Add online theta update after each attempt
+    - Create difficulty parameter (a, b) estimation for items
+    - _Requirements: 1.1, 1.2_
 
-- [x] 4.2 Math question API endpoint'leri
-  - Matematik soru öneri endpoint'i (/api/v1/math/questions/recommend)
-  - Seviye bazlı soru filtreleme API'si
-  - Matematik soru havuzu yönetimi endpoint'leri
-  - Question difficulty adjustment API'si
-  - Math question submission ve evaluation endpoint'i
-  - _Requirements: 3.1, 3.2, 3.6, 2.5, 2.6, 2.7_
+  - [x] 4.2 Implement error profile tracking
+    - Create error categorization for math (sign_error, ratio_misuse, etc.)
+    - Add English error tracking (prepositions, articles, SVA, collocations)
+    - Implement error profile update logic based on incorrect answers
+    - _Requirements: 1.4, 2.1_
 
-- [x] 4.3 English question generation API'leri
-  - İngilizce soru üretimi endpoint'i (/api/v1/english/questions/generate)
-  - MCP QuestionGeneratorTool entegrasyonu
-  - Error pattern bazlı soru üretme API'si
-  - Grammar ve vocabulary focused question generation
-  - Generated question quality validation sistemi
-  - _Requirements: 3.3, 3.7, 1.3, 1.4_
+  - [x] 4.3 Add profile service with caching
+    - Create ProfileService with Redis caching (1h TTL)
+    - Implement profile retrieval and update methods
+    - Add profile validation and constraint checking
+    - _Requirements: 1.1, 1.2, 3.1_
 
-- [ ] 5. Answer Evaluation ve Error Analysis Sistemi
-- [x] 5.1 Answer evaluation service implementasyonu
-  - MCP AnswerEvaluatorTool entegrasyonu
-  - Answer submission processing sistemi
-  - Error categorization algoritması (math/english)
-  - StudentAttempt kayıt sistemi
-  - MathErrorDetail tracking sistemi
-  - _Requirements: 1.1, 1.2, 1.3, 1.4_
+- [x] 5. Build hybrid retrieval system
+  - [x] 5.1 Implement dense vector search
+    - Set up vector database (Qdrant/Weaviate) connection
+    - Create embedding generation for items using sentence transformers
+    - Implement dense search with metadata filtering
+    - _Requirements: 8.1, 8.2_
 
-- [x] 5.2 Answer evaluation API endpoint'leri
-  - Answer submission endpoint'i (/api/v1/answers/submit)
-  - Answer evaluation ve feedback API'si
-  - Error analysis ve categorization endpoint'i
-  - Student attempt history API'si
-  - Performance metrics calculation endpoint'i
-  - _Requirements: 1.1, 1.2, 1.3, 1.4_
+  - [x] 5.2 Add sparse (BM25) search capability
+    - Implement BM25 search using OpenSearch or PostgreSQL full-text
+    - Create keyword extraction and query preprocessing
+    - Add language-specific text processing (Turkish/English)
+    - _Requirements: 8.1, 8.2_
 
-- [ ] 5.3 Error pattern tracking ve analytics
-  - ErrorPattern service implementasyonu
-  - Error pattern detection ve tracking algoritması
-  - Similar student analysis algoritması
-  - Performance trend analysis sistemi
-  - Error pattern API endpoint'leri
-  - _Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.4_
+  - [x] 5.3 Create hybrid search fusion
+    - Implement Reciprocal Rank Fusion (RRF) for combining dense/sparse results
+    - Add metadata filtering for language, level, and skills
+    - Create retrieval caching with 24h TTL
+    - _Requirements: 8.1, 8.2, 8.4_
 
-- [x] 6. Level Management ve Spaced Repetition Sistemi
-- [x] 6.1 Level adjustment service implementasyonu
-  - Dynamic level adjustment algoritması
-  - Performance-based level calculation
-  - Level change notification sistemi
-  - Level history tracking
-  - Question difficulty adjustment based on performance
-  - _Requirements: 2.3, 2.4, 2.5, 2.6, 2.7, 2.8_
+- [x] 6. Implement re-ranking service with cross-encoder
+  - Create cross-encoder model integration for relevance scoring
+  - Implement batch inference for performance optimization
+  - Add heuristic scoring fusion (cosine + BM25 + freshness)
+  - Create re-ranking cache for frequent queries
+  - _Requirements: 8.3_
 
-- [x] 6.2 Spaced repetition service implementasyonu
-  - SM-2 algoritması implementasyonu
-  - SpacedRepetition model operations
-  - Review scheduling sistemi
-  - Ease factor calculation ve interval determination
-  - Review reminder sistemi
-  - _Requirements: 2.8, 5.1, 5.2, 5.3_
+- [x] 7. Build bandit service for adaptive question selection
+  - [x] 7.1 Implement LinUCB algorithm
+    - Create context vector generation (theta, skills, device, recency)
+    - Implement LinUCB with confidence bounds calculation
+    - Add arm selection with upper confidence bound scoring
+    - _Requirements: 7.1, 7.2_
 
-- [x] 6.3 Level ve spaced repetition API endpoint'leri
-  - Level adjustment API endpoint'leri
-  - Spaced repetition scheduling API'si
-  - Review queue management endpoint'i
-  - Level progress tracking API'si
-  - Performance-based recommendations API'si
-  - _Requirements: 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 5.1, 5.2, 5.3_
+  - [x] 7.2 Add constrained bandit implementation
+    - Implement minimum success rate constraint (60%)
+    - Add coverage constraint for topic diversity (80%)
+    - Create constraint violation detection and handling
+    - _Requirements: 7.3_
 
-- [x] 7. PDF Upload ve Processing Sistemi
-- [x] 7.1 PDF upload service implementasyonu
-  - PDF upload endpoint'i (/api/v1/pdf/upload)
-  - File validation ve security checks
-  - PDF metadata extraction
-  - File storage management
-  - Upload progress tracking
-  - _Requirements: 6.1, 6.7, 7.1, 7.2, 7.3, 7.4_
+  - [x] 7.3 Create bandit logging and propensity tracking
+    - Implement decision logging with propensity scores
+    - Add exploration/exploitation ratio tracking
+    - Create offline evaluation support (IPS/DR)
+    - _Requirements: 7.2, 4.4_
 
-- [x] 7.2 PDF processing workflow implementasyonu
-  - MCP PDFContentReaderTool ve PDFParserTool entegrasyonu
-  - PDF'den soru çıkarma workflow'u
-  - Question extraction ve validation
-  - PDF processing status tracking
-  - Extracted questions database storage
-  - _Requirements: 6.2, 6.3, 6.4, 6.5, 6.7_
+- [-] 8. Implement math question generation service
+  - [x] 8.1 Create parametric template system
+    - Implement template engine for linear equations, ratios, geometry
+    - Add parameter constraint validation and generation
+    - Create template versioning and management
+    - _Requirements: 6.1, 6.2_
 
-- [x] 7.3 PDF question delivery sistemi
-  - MCP QuestionDeliveryTool entegrasyonu
-  - PDF-based question presentation
-  - Learning style adaptation for PDF questions
-  - PDF viewer integration support
-  - Interactive PDF question elements
-  - _Requirements: 7.1, 7.2, 7.3, 7.6, 6.5_
+  - [x] 8.2 Add programmatic solver integration
+    - Integrate SymPy for equation solving and validation
+    - Implement single-solution guarantee checking
+    - Add solution step generation for explanations
+    - _Requirements: 6.2, 6.3_
 
-- [x] 8. Analytics ve Performance Tracking Sistemi
-- [x] 8.1 Analytics service implementasyonu
-  - MCP AnalyticsTool entegrasyonu
-  - Student performance analysis algoritması
-  - Similar student detection algoritması
-  - Performance trend calculation
-  - Weakness ve strength identification
-  - _Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.4_
+  - [x] 8.3 Create distractor generation
+    - Implement misconception-based wrong answer generation
+    - Add common error pattern detection and usage
+    - Create distractor uniqueness and plausibility validation
+    - _Requirements: 6.4_
 
-- [x] 8.2 Analytics API endpoint'leri
-  - Student performance analytics endpoint'i
-  - Performance comparison API'si
-  - Progress tracking endpoint'i
-  - Recommendation generation API'si
-  - Analytics dashboard data endpoint'i
-  - _Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.4_
+- [x] 9. Build English cloze question generation service
+  - [x] 9.1 Implement error taxonomy and confusion sets
+    - Create confusion sets for prepositions, articles, collocations
+    - Add error pattern matching for targeted question generation
+    - Implement CEFR level classification for passages
+    - _Requirements: 2.1, 2.2_
 
-- [x] 9. Database Services ve Repository Pattern
-- [x] 9.1 Repository pattern implementasyonu
-  - Base repository class oluştur
-  - User repository implementasyonu
-  - Question repository implementasyonu
-  - StudentAttempt repository implementasyonu
-  - ErrorPattern repository implementasyonu
-  - _Requirements: Tüm database operations için_
+  - [x] 9.2 Create cloze generation pipeline
+    - Implement rule-based blank selection for target error types
+    - Add LLM integration for context-appropriate answer generation
+    - Create personalized distractor generation based on error history
+    - _Requirements: 2.1, 2.3_
 
-- [x] 9.2 Database service layer
-  - Database connection management
-  - Transaction management sistemi
-  - Query optimization ve indexing
-  - Database migration management
-  - Connection pooling configuration
-  - _Requirements: 7.1, 7.2, 7.3, 7.4_
+  - [x] 9.3 Add grammar validation and ambiguity checking
+    - Integrate grammar checker for answer validation
+    - Implement single-answer guarantee checking
+    - Add ambiguity detection and resolution
+    - _Requirements: 2.4_
 
-- [x] 10. API Schema ve Validation Sistemi
-- [x] 10.1 Pydantic schema models
-  - Request/response schema models oluştur
-  - Validation rules implementasyonu
-  - Error response schemas
-  - API documentation schemas
-  - Data transfer object (DTO) models
-  - _Requirements: 6.6, 7.4_
+- [ ] 10. Create recommendation orchestration service
+  - [x] 10.1 Implement main recommendation pipeline
+    - Create orchestrator service coordinating all components
+    - Implement retrieval → re-ranking → diversification → bandit flow
+    - Add error handling and fallback mechanisms
+    - _Requirements: 1.1, 1.3, 2.2, 7.1_
 
-- [x] 10.2 API middleware ve error handling
-  - Request validation middleware
-  - Error handling middleware
-  - Response formatting middleware
-  - Logging middleware
-  - Rate limiting middleware implementation
-  - _Requirements: 7.1, 7.2, 7.3, 7.4_
+  - [ ] 10.2 Add diversification and curriculum coverage
+    - Implement MMR (Maximal Marginal Relevance) for diversity
+    - Add curriculum gap detection and filling
+    - Create topic coverage tracking and balancing
+    - _Requirements: 1.3, 2.2, 7.3_
 
-- [ ] 11. Sample Data ve Initial Setup
-- [x] 11.1 Sample data creation
-  - Sample math questions database seeding
-  - Sample users ve test accounts
-  - Sample error patterns ve student attempts
-  - Initial question categories ve topics
-  - Test PDF files ve sample content
-  - _Requirements: 3.1, 3.2, 6.4_
+- [ ] 11. Implement API endpoints
+  - [ ] 11.1 Create authentication endpoints
+    - Implement POST /auth/login with JWT token generation
+    - Add POST /auth/register with user creation and validation
+    - Create token refresh endpoint
+    - _Requirements: 5.1_
 
-- [x] 11.2 System initialization ve configuration
-  - Environment configuration validation
-  - Database initialization scripts
-  - LLM provider configuration testing
-  - MCP server startup verification
-  - Cache system initialization
-  - _Requirements: 7.1, 7.2, 7.3, 7.4_
+  - [ ] 11.2 Add recommendation endpoints
+    - Implement POST /v1/recommend/next for question recommendations
+    - Add GET /v1/profile/{user_id} for profile retrieval
+    - Create POST /v1/profile/update for theta and error profile updates
+    - _Requirements: 1.1, 1.2, 3.1, 3.2_
 
-- [x] 12. Testing ve Quality Assurance
-- [x] 12.1 Unit test implementation
-  - Service layer unit tests
-  - MCP tools unit tests
-  - Repository layer tests
-  - Algorithm tests (level adjustment, spaced repetition)
-  - LLM provider tests with mocking
-  - _Requirements: Tüm requirements için test coverage_
+  - [x] 11.3 Create generation endpoints
+    - Implement POST /v1/generate/math for math question generation
+    - Add POST /v1/generate/en_cloze for English cloze generation
+    - Create validation and quality assurance integration
+    - _Requirements: 6.1, 6.2, 2.1, 2.2_
 
-- [x] 12.2 Integration test implementation
-  - API endpoint integration tests
-  - Database integration tests
-  - MCP workflow integration tests
-  - LLM integration tests
-  - End-to-end workflow tests
-  - _Requirements: 7.1, 7.2, 7.3, 7.4_
+  - [ ] 11.4 Add attempt tracking endpoints
+    - Implement POST /v1/attempt for answer submission and theta update
+    - Add POST /v1/feedback for user feedback collection
+    - Create attempt history and analytics endpoints
+    - _Requirements: 1.2, 1.4, 2.1_
+
+- [ ] 12. Add quality assurance and validation
+  - [ ] 12.1 Implement math question validation
+    - Create solver-based answer key verification
+    - Add parameter constraint validation
+    - Implement template quality scoring
+    - _Requirements: 6.2, 6.3_
+
+  - [ ] 12.2 Add English question validation
+    - Implement grammar checking integration
+    - Create ambiguity detection and scoring
+    - Add CEFR level validation for passages
+    - _Requirements: 2.4_
+
+  - [ ] 12.3 Create content moderation
+    - Add toxicity detection for generated content
+    - Implement bias checking for questions and answers
+    - Create human-in-the-loop approval workflow
+    - _Requirements: 5.2_
+
+- [ ] 13. Implement observability and monitoring
+  - [ ] 13.1 Add structured logging
+    - Implement JSON structured logging with request IDs
+    - Add performance metrics logging (retrieval_ms, rerank_ms, llm_ms)
+    - Create audit logging for decisions and data access
+    - _Requirements: 4.4, 5.4_
+
+  - [ ] 13.2 Create metrics collection
+    - Implement Prometheus metrics for latency, error rate, cache hit rate
+    - Add business metrics (faithfulness, difficulty_match, coverage)
+    - Create bandit-specific metrics (exploration_ratio, constraint_violations)
+    - _Requirements: 4.1, 4.2, 4.3_
+
+  - [ ] 13.3 Add health checks and admin endpoints
+    - Implement GET /health with service status
+    - Create GET /v1/admin/metrics for system metrics
+    - Add GET /v1/admin/decisions/{request_id} for decision audit
+    - _Requirements: 4.1, 4.4_
+
+- [ ] 14. Add caching and performance optimization
+  - [ ] 14.1 Implement Redis caching
+    - Set up Redis connection and configuration
+    - Add retrieval result caching with TTL management
+    - Implement semantic caching for similar queries
+    - _Requirements: 8.4_
+
+  - [ ] 14.2 Add database optimization
+    - Create database connection pooling
+    - Add query optimization and indexing
+    - Implement read replicas for analytics queries
+    - _Requirements: 1.1, 1.2_
+
+- [ ] 15. Create comprehensive test suite
+  - [ ] 15.1 Write unit tests
+    - Create tests for IRT calculations and profile updates
+    - Add tests for bandit algorithm implementations
+    - Test math solver and English grammar validation
+    - _Requirements: 1.1, 1.2, 6.2, 2.4_
+
+  - [ ] 15.2 Add integration tests
+    - Create API endpoint integration tests
+    - Test database operations and migrations
+    - Add external service integration tests (LLM, vector DB)
+    - _Requirements: All requirements_
+
+  - [ ] 15.3 Implement performance tests
+    - Create load tests for recommendation endpoints
+    - Add latency benchmarks for p95 < 700ms target
+    - Test cache performance and hit rates
+    - _Requirements: 4.1, 4.2_

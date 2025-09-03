@@ -144,7 +144,7 @@ async def generate_english_cloze(
         )
         
         if not question:
-            raise HTTPException(
+    raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Cloze question generation failed"
             )
@@ -289,7 +289,7 @@ async def generate_english_cloze(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate English cloze: {str(e)}"
-        )
+    )
 
 
 @router.get("/templates/math")
@@ -544,13 +544,13 @@ async def list_english_templates(token: str = Depends(security)):
         }
     except Exception as e:
         logger.error(f"Error listing English templates: {e}")
-        return {
+    return {
             "message": "English cloze generation service not available",
-            "available_error_types": [
-                "prepositions", "articles", "subject_verb_agreement", 
-                "collocations", "verb_forms", "conditionals"
-            ],
-            "cefr_levels": ["A1", "A2", "B1", "B2", "C1"],
+        "available_error_types": [
+            "prepositions", "articles", "subject_verb_agreement", 
+            "collocations", "verb_forms", "conditionals"
+        ],
+        "cefr_levels": ["A1", "A2", "B1", "B2", "C1"],
             "status": "error",
             "error": str(e)
         }
