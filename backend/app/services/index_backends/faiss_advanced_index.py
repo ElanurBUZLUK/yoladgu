@@ -144,6 +144,13 @@ class FAISSAdvancedIndexBackend(BaseIndexBackend):
             )
             self.index.is_trained = False
             
+        elif self.index_type == "flat":
+            # Flat index for exact search
+            if self.metric == "ip":
+                self.index = faiss.IndexFlatIP(self.vector_size)
+            else:
+                self.index = faiss.IndexFlatL2(self.vector_size)
+            
         elif self.index_type == "hnsw":
             self.index = faiss.IndexHNSWFlat(
                 self.vector_size, self.m, faiss.METRIC_INNER_PRODUCT if self.metric == "ip" else faiss.METRIC_L2

@@ -3,6 +3,7 @@ Advanced RAG System with FAISS backend integration.
 """
 
 import asyncio
+import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from sentence_transformers import SentenceTransformer
 
@@ -24,12 +25,20 @@ class AdvancedRAGSystem:
         # Embedding boyutunu belirle (all-MiniLM-L6-v2 için 384)
         embedding_size = 384
         
+        # Adjust nlist based on expected document count
+        if index_type == "ivf":
+            nlist = min(50, max(1, 100 // 10))  # Smaller nlist for small datasets
+            nprobe = min(5, nlist)
+        else:
+            nlist = 100
+            nprobe = 10
+        
         self.vector_store = FAISSAdvancedIndexBackend(
             vector_size=embedding_size,
             index_type=index_type,
             metric="ip",  # Inner product for cosine similarity
-            nlist=100,
-            nprobe=10,
+            nlist=nlist,
+            nprobe=nprobe,
             index_path=f"data/faiss_{index_type}.index"
         )
         
@@ -56,12 +65,14 @@ class AdvancedRAGSystem:
         success = await self.vector_store.add_items(embeddings, ids, metadata_list)
         return success
     
-    def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:
+    def _generate_embeddings(self, texts: List[str]) -> np.ndarray:
         """Generate embeddings for texts"""
         if self.embedding_model is None:
             self.embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
         
-        return self.embedding_model.encode(texts).tolist()
+        # Return numpy array for FAISS compatibility
+        embeddings = self.embedding_model.encode(texts)
+        return embeddings
     
     async def query(self, question: str, k: int = 5) -> Tuple[str, List[Dict[str, Any]]]:
         """Query the RAG system"""
@@ -81,7 +92,7 @@ class AdvancedRAGSystem:
     async def _generate_answer(self, question: str, context: str) -> str:
         """Generate answer using LLM"""
         try:
-            from langchain.chat_models import ChatOpenAI
+            from langchain_community.chat_models import ChatOpenAI
             from langchain.schema import HumanMessage, SystemMessage
             
             llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
