@@ -23,9 +23,9 @@ class HNSWIndexBackend(BaseIndexBackend):
         self, 
         vector_size: int,
         space: str = "ip",  # "ip" for cosine similarity (after L2 normalization)
-        M: int = 16,  # Max number of connections per element
-        ef_construction: int = 200,  # Construction time/accuracy trade-off
-        ef_search: int = 128,  # Search time/accuracy trade-off
+        M: int = 64,  # Max number of connections per element (increased from 32)
+        ef_construction: int = 800,  # Construction time/accuracy trade-off (increased from 400)
+        ef_search: int = 512,  # Search time/accuracy trade-off (increased from 256)
         max_elements: int = 100000,
         index_path: Optional[str] = None
     ):
@@ -176,6 +176,10 @@ class HNSWIndexBackend(BaseIndexBackend):
         try:
             if not self._validate_vector(query_vector):
                 raise ValueError(f"Query vector dimensions must be {self.vector_size}")
+            
+            # Ensure query vector is 1D for HNSW (sometimes works better)
+            if query_vector.ndim == 2:
+                query_vector = query_vector.flatten()
             
             # Normalize query vector for cosine similarity
             if self.space == "ip":

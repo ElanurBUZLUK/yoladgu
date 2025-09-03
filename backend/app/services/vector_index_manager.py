@@ -53,14 +53,27 @@ class VectorIndexManager:
             
             # Initialize HNSW backend (optional)
             try:
+                # Remove old HNSW index file if exists
+                import os
+                hnsw_index_path = f"data/hnsw_index_{settings.VECTOR_DB_COLLECTION}.index"
+                if os.path.exists(hnsw_index_path):
+                    os.remove(hnsw_index_path)
+                    print(f"Removed old HNSW index: {hnsw_index_path}")
+                
+                # Also remove metadata file if exists
+                metadata_path = hnsw_index_path.replace('.index', '.metadata.pkl')
+                if os.path.exists(metadata_path):
+                    os.remove(metadata_path)
+                    print(f"Removed old HNSW metadata: {metadata_path}")
+                
                 hnsw_backend = HNSWIndexBackend(
                     vector_size=self.vector_size,
                     space="ip",  # Inner product for cosine similarity
-                    M=16,
-                    ef_construction=200,
-                    ef_search=128,
+                    M=64,
+                    ef_construction=800,
+                    ef_search=512,
                     max_elements=100000,
-                    index_path=f"data/hnsw_index_{settings.VECTOR_DB_COLLECTION}.index"
+                    index_path=hnsw_index_path
                 )
                 
                 if await hnsw_backend.initialize():

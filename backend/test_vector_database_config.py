@@ -127,7 +127,8 @@ async def test_vector_database_config():
             success = await vector_service.add_item(
                 item_id=item["id"],
                 text=item["text"],
-                metadata=item["metadata"]
+                metadata=item["metadata"],
+                backend_name="faiss"  # Use FAISS backend for testing
             )
             if success:
                 print(f"  ✅ Added item: {item['id']}")
@@ -246,7 +247,7 @@ async def test_individual_backends():
                 
                 # Test search
                 search_results = await faiss_backend.search(
-                    query_vector=test_vector,
+                    query_vector=test_vector.reshape(1, -1),
                     k=1
                 )
                 print(f"  ✅ FAISS search: {len(search_results)} results")
@@ -264,7 +265,7 @@ async def test_individual_backends():
                 vector_size=384,
                 max_elements=1000,
                 ef_construction=200,
-                m=16
+                M=16
             )
             success = await hnsw_backend.initialize()
             if success:
@@ -281,7 +282,7 @@ async def test_individual_backends():
                 
                 # Test search
                 search_results = await hnsw_backend.search(
-                    query_vector=test_vector,
+                    query_vector=test_vector.reshape(1, -1),
                     k=1
                 )
                 print(f"  ✅ HNSW search: {len(search_results)} results")
@@ -315,7 +316,7 @@ async def test_individual_backends():
                 
                 # Test search
                 search_results = await qdrant_backend.search(
-                    query_vector=test_vector,
+                    query_vector=test_vector.reshape(1, -1),
                     k=1
                 )
                 print(f"  ✅ Qdrant search: {len(search_results)} results")
