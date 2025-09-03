@@ -149,6 +149,48 @@ async def generate_english_cloze(
                 detail="Cloze question generation failed"
             )
         
+        # 1.5) Enhance with Vector DB examples for better distractors
+        try:
+            from app.services.english_vector_examples import get_vector_examples, mine_distractors_from_examples
+            
+            # Fetch similar examples from Vector DB
+            examples = await get_vector_examples(
+                session=session,
+                topic=request.topic,
+                target_error_tags=request.target_error_tags,
+                level_cefr=request.level_cefr,
+                k=5,
+            )
+            
+            # Augment distractors with example-driven candidates, then re-validate
+            if question and question.blanks and examples:
+                changed = False
+                for b in question.blanks:
+                    extra = mine_distractors_from_examples(examples, b.skill_tag, exclude=b.answer, limit=4)
+                    # merge into distractors
+                    if extra:
+                        # ensure uniqueness and cap at 6 distractors total
+                        pool = list(dict.fromkeys((b.distractors or []) + extra))
+                        pool = [x for x in pool if x.strip().lower() != str(b.answer).strip().lower()]
+                        b.distractors = pool[:6]
+                        changed = True
+
+                if changed:
+                    # Re-run the single-answer validator to ensure quality
+                    ok = english_cloze_generator.validate_cloze_question(question)
+                    if not ok.get("single_answer_guaranteed", True):
+                        # If validation fails, you may trim some distractors
+                        for b in question.blanks:
+                            b.distractors = (b.distractors or [])[:3]
+                        ok = english_cloze_generator.validate_cloze_question(question)
+                    validation = ok
+                    
+                logger.info(f"Enhanced question with {len(examples)} vector examples")
+                
+        except Exception as e:
+            logger.warning(f"Vector examples enhancement failed: {e}")
+            # Continue with original question if enhancement fails
+        
         # 2) Save to database
         item_db = EnglishItemDB(
             tenant_id="default",  # TODO: get from token/context
