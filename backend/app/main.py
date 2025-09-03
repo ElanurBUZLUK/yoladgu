@@ -1,358 +1,106 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles # Added for serving static files
+"""
+FastAPI application entry point for Adaptive Question Recommendation System.
+"""
+
 from contextlib import asynccontextmanager
-import structlog
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.core.config import settings
-from app.database_enhanced import enhanced_database_manager as database_manager
-from app.services.cache_service import cache_service
-
-# Import middleware
-from app.middleware.error_handler import error_handler
-from app.middleware.rate_limiter import rate_limiter
-from app.middleware.logging import logging_middleware
-
-logger = structlog.get_logger()
+from app.core.middleware import RateLimitMiddleware, RequestLoggingMiddleware
+from app.api.v1 import api_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Application lifespan management."""
     # Startup
-    logger.info("Starting application", 
-                environment=settings.environment.value,
-                version=settings.version,
-                debug=settings.debug)
+    print("🚀 Starting Adaptive Question Recommendation System...")
     
-    # Temporarily disable database initialization for development
-    # await database_manager.initialize()
-    logger.info("⚠️ Database initialization temporarily disabled for development")
-    await cache_service.connect()
-    
-    # Background scheduler'ı başlat (temporarily disabled)
-    # from app.services.background_scheduler import background_scheduler
-    # await background_scheduler.start()
-    logger.info("⚠️ Background scheduler temporarily disabled for development")
-    
-    # Initialize MCP
-    from app.core.mcp_utils import mcp_utils
-    from app.services.llm_gateway import llm_gateway
-    
+    # Initialize search and vector services
     try:
-        # Initialize MCP utils
-        mcp_initialized = await mcp_utils.initialize()
-        if mcp_initialized:
-            logger.info("✅ MCP Utils initialized successfully")
-            
-            # Initialize LLM Gateway with MCP
-            await llm_gateway.initialize()
-            logger.info("✅ LLM Gateway initialized with MCP")
-        else:
-            logger.warning("⚠️ MCP initialization failed, using direct LLM calls")
+        from app.services.search_service import search_service
+        from app.services.vector_service import vector_service
+        
+        print("📚 Initializing search services...")
+        
+        # Initialize Elasticsearch index
+        try:
+            await search_service.initialize_index()
+            print("✅ Elasticsearch index initialized successfully")
+        except Exception as es_error:
+            print(f"⚠️ Elasticsearch initialization failed: {es_error}")
+            print("   Search functionality may be limited")
+        
+        # Vector service is lazy-initialized, no explicit startup needed
+        print("✅ Vector service ready (lazy initialization)")
+        
     except Exception as e:
-        logger.error(f"❌ MCP initialization error: {e}")
-    
-    # Initialize monitoring service
-    from app.services.monitoring_service import monitoring_service
-    logger.info("Application startup completed")
+        print(f"⚠️ Service initialization warning: {e}")
+        print("   Some features may not be available")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down application")
+    print("🛑 Shutting down Adaptive Question Recommendation System...")
+
+
+def create_application() -> FastAPI:
+    """Create and configure FastAPI application."""
     
-    # Cleanup MCP
-    from app.core.mcp_utils import mcp_utils
-    from app.services.llm_gateway import llm_gateway
+    app = FastAPI(
+        title="Adaptive Question Recommendation System",
+        description="AI-powered personalized question recommendation system for Math and English",
+        version="1.0.0",
+        docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
+        redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
+        lifespan=lifespan,
+        servers=[
+            {"url": settings.API_BASE_URL, "description": "API Server"}
+        ]
+    )
     
-    try:
-        await mcp_utils.cleanup()
-        await llm_gateway.cleanup()
-        logger.info("MCP cleanup completed")
-    except Exception as e:
-        logger.error(f"MCP cleanup error: {e}")
+    # Add middleware
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)
     
-    # await background_scheduler.stop()
-    await database_manager.close()
-    await cache_service.close()
-    logger.info("Application shutdown completed")
+    # Include routers
+    app.include_router(api_router, prefix="/api")
+    
+    return app
 
 
-app = FastAPI(
-    title=settings.api_docs_title,
-    version=settings.api_docs_version,
-    description=settings.api_docs_description,
-    contact={
-        "name": settings.api_docs_contact_name,
-        "email": settings.api_docs_contact_email,
-    },
-    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
-    docs_url="/docs" if settings.api_docs_enabled else None,
-    redoc_url="/redoc" if settings.api_docs_enabled else None,
-    lifespan=lifespan
-)
+app = create_application()
 
-# Add middleware (order matters - last added is first executed)
-# Error handling middleware
-app.middleware("http")(error_handler)
 
-# Rate limiting middleware (only if enabled)
-if settings.rate_limit_enabled:
-    app.middleware("http")(rate_limiter)
-    logger.info("Rate limiting middleware enabled")
-
-# Logging middleware
-app.middleware("http")(logging_middleware)
-
-# CORS middleware with enhanced configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=settings.cors_allow_methods,
-    allow_headers=settings.cors_allow_headers,
-)
-
-@app.get("/health", include_in_schema=False)
+@app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    from app.services.monitoring_service import monitoring_service
-    
-    try:
-        health_status = monitoring_service.get_health_status()
-        return {
-            "status": health_status["status"],
-            "version": settings.version,
-            "environment": settings.environment.value,
-            "timestamp": health_status["timestamp"]
+    """Health check endpoint."""
+    return {
+        "status": "up",
+        "version": "1.0.0",
+        "service": "adaptive-question-system"
+    }
+
+
+@app.get("/version")
+async def version_info():
+    """Version information endpoint."""
+    return {
+        "app_version": "1.0.0",
+        "model_versions": {
+            "retrieval": "retr_v4.1",
+            "rerank": "ce_int8_v2", 
+            "llm": "llama3-70b-q4",
+            "bandit": "linucb_v1.3"
         }
-    except Exception as e:
-        logger.error("Health check failed", error=str(e))
-        return {
-            "status": "unhealthy",
-            "version": settings.version,
-            "environment": settings.environment.value,
-            "error": str(e)
-        }
-
-@app.get("/health/simple", include_in_schema=False)
-async def simple_health_check():
-    """Simple health check for load balancers"""
-    return {"status": "ok"}
-
-
-@app.get("/healthz", include_in_schema=False)
-async def healthz():
-    """Process health check (uptime)"""
-    return {
-        "status": "ok",
-        "uptime": "running",
-        "timestamp": "2024-01-01T00:00:00Z"
     }
-
-
-@app.get("/readyz", include_in_schema=False)
-async def readyz():
-    """Readiness check (DB/Redis/pgvector)"""
-    from app.database import database_manager
-    from redis.asyncio import Redis
-    from app.core.config import settings
-    from app.services.system_initialization_service import system_initialization_service
-    
-    db_status = "not_ok"
-    redis_status = "not_ok"
-    pgvector_status = {"extension": False, "vector_column": False, "index": False}
-    
-    try:
-        # Database check
-        async with database_manager.get_session() as db:
-            await db.execute("SELECT 1")
-            db_status = "ok"
-    except Exception as e:
-        logger.error(f"Readiness check failed: Database - {e}")
-
-    try:
-        # Redis check
-        redis_client = Redis.from_url(settings.redis_url)
-        await redis_client.ping()
-        await redis_client.close()
-        redis_status = "ok"
-    except Exception as e:
-        logger.error(f"Readiness check failed: Redis - {e}")
-
-    try:
-        # PgVector check
-        async with database_manager.get_session() as db:
-            pgvector_status = await system_initialization_service.run_all(db)
-    except Exception as e:
-        logger.error(f"Readiness check failed: PgVector - {e}")
-
-    overall_status = "ready"
-    if db_status != "ok" or redis_status != "ok" or not all(pgvector_status.values()):
-        overall_status = "not_ready"
-
-    return {
-        "status": overall_status,
-        "database": db_status,
-        "redis": redis_status,
-        "pgvector": pgvector_status
-    }
-
-
-@app.get("/system/cache-health", include_in_schema=False)
-async def cache_health():
-    """Cache health check endpoint"""
-    try:
-        pong = await cache_service.ping()
-        return {"ok": bool(pong)}
-    except Exception as e:
-        logger.error("Cache health check failed", error=str(e))
-        return {"ok": False, "error": str(e)}
-
-# Import routers - Temporarily disabled problematic ones
-from app.api.v1 import (
-    users, dashboard,
-    analytics, sample_data, system_init,
-    assess, system, question_generation, database_enhanced, math, english, answers,
-    math_rag, english_rag, vector_management
-)
-from app.api.v1 import mcp_monitoring, mcp_demo
-
-# Disabled due to missing dependencies:
-# math, english, mcp, answers, english_rag, math_rag, rag, mcp_enhanced
-
-# Add routers - Working ones
-app.include_router(users.router)
-app.include_router(dashboard.router)
-app.include_router(analytics.router)
-app.include_router(sample_data.router)
-app.include_router(system_init.router)
-app.include_router(assess.router)
-app.include_router(question_generation.router)
-app.include_router(database_enhanced.router)
-app.include_router(mcp_monitoring.router)
-app.include_router(mcp_demo.router)
-app.include_router(system.router)
-
-# Disabled due to missing dependencies:
-# app.include_router(pdf.router) - needs pdfplumber
-# app.include_router(scheduler.router) - needs pdfplumber
-
-# Add math and english routers
-app.include_router(math.router)
-app.include_router(english.router)
-app.include_router(answers.router)
-
-# Add RAG routers
-app.include_router(english_rag.router)
-app.include_router(math_rag.router)
-
-# Add Vector Management router
-app.include_router(vector_management.router)
-
-# Temporarily disabled due to missing dependencies:
-# app.include_router(mcp.router)
-app.include_router(system.router) # System API (health checks)
-app.include_router(question_generation.router) # Question Generation API
-app.include_router(database_enhanced.router) # Enhanced Database API
-app.include_router(mcp_monitoring.router) # MCP Monitoring API
-app.include_router(mcp_demo.router) # MCP Demo API
-
-@app.get("/", include_in_schema=False)
-async def root():
-    """Root endpoint"""
-    return {
-        "message": "Adaptive Question System API",
-        "version": settings.version,
-        "environment": settings.environment.value,
-        "docs": "/docs" if settings.api_docs_enabled else "Documentation disabled",
-        "health": "/health",
-        "metrics": "/api/v1/monitoring/metrics" if settings.prometheus_enabled else "Metrics disabled"
-    }
-
-# Serve static files for the frontend
-# IMPORTANT: The 'directory' path should point to your Angular project's 'dist' folder  
-# after you build it (e.g., by running 'ng build --configuration production' in frontend)
-# The default Angular build output is usually 'dist/<project-name>/'
-
-# Static serving temporarily disabled for testing
-# Uncomment when ready to serve frontend:
-# app.mount(
-#     "/app",
-#     StaticFiles(directory="../frontend/dist/adaptive-question-system-frontend", html=True),
-#     name="frontend_app"
-# )
-
-@app.get("/test")
-async def test():
-    """Test endpoint"""
-    return {"message": "Backend is working!"}
-
-@app.get("/config", include_in_schema=False)
-async def config_info():
-    """Configuration information (non-sensitive)"""
-    return {
-        "environment": settings.environment.value,
-        "version": settings.version,
-        "debug": settings.debug,
-        "api_docs_enabled": settings.api_docs_enabled,
-        "prometheus_enabled": settings.prometheus_enabled,
-        "rate_limit_enabled": settings.rate_limit_enabled,
-        "storage_backend": settings.storage_backend.value,
-        "content_moderation_enabled": settings.content_moderation_enabled,
-        "cost_monitoring_enabled": settings.content_monitoring_enabled,
-        "llm_providers_available": len(settings.llm_providers_available),
-        "cors_origins_count": len(settings.cors_origins_list),
-    }
-
-# Progress Save Models
-from pydantic import BaseModel, Field
-from typing import Optional
-from datetime import datetime
-
-class QuizResult(BaseModel):
-    userId: int = Field(..., description="User ID")
-    subject: str = Field(..., description="Subject (math/english)")
-    score: float = Field(..., ge=0, le=100, description="Score percentage")
-    totalQuestions: int = Field(..., ge=1, description="Total questions in quiz")
-    correctAnswers: int = Field(..., ge=0, description="Number of correct answers")
-    timeSpent: int = Field(..., ge=0, description="Time spent in seconds")
-    difficulty: str = Field(..., description="Difficulty level")
-    timestamp: str = Field(..., description="ISO timestamp")
-
-class ProgressSaveResponse(BaseModel):
-    success: bool
-    message: str
-    progress_id: Optional[str] = None
-    saved_at: str
-
-@app.post("/api/v1/progress/save", response_model=ProgressSaveResponse)
-async def save_progress(progress: QuizResult):
-    """Save quiz progress to database"""
-    
-    try:
-        # For now, just log the progress (database not ready)
-        logger.info(
-            "Progress received",
-            user_id=progress.userId,
-            subject=progress.subject,
-            score=progress.score,
-            total_questions=progress.totalQuestions,
-            correct_answers=progress.correctAnswers,
-            time_spent=progress.timeSpent,
-            difficulty=progress.difficulty
-        )
-        
-        return ProgressSaveResponse(
-            success=True,
-            message="Progress saved successfully (logged)",
-            progress_id="temp_123",
-            saved_at=datetime.utcnow().isoformat()
-        )
-        
-    except Exception as e:
-        logger.error("Failed to save progress", error=str(e))
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save progress: {str(e)}"
-        )
