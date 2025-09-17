@@ -1,429 +1,413 @@
 """
-Hybrid retrieval service combining dense and sparse search with RRF fusion.
+Retrieval Service with Comprehensive Logging
+Tracks dense and sparse search results for ML backend selector training
 """
 
 import asyncio
-import json
-from typing import List, Dict, Any, Optional, Tuple, Set
-from datetime import datetime, timedelta
-import redis.asyncio as redis
+import time
+import uuid
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Tuple
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text
+from pydantic import BaseModel
 
-from app.core.config import settings
-from app.services.vector_service import vector_service
-from app.services.search_service import search_service
-from app.db.repositories.user import user_repository
+from app.db.session import get_db
+from app.services.vector_service import VectorService
+from app.services.recommenders.error_aware import ErrorAwareRecommender
 
+logger = structlog.get_logger()
+
+class RetrievalCandidate(BaseModel):
+    """Single retrieval candidate result"""
+    item_id: str
+    score: float
+    backend: str
+    metadata: Dict[str, Any] = {}
+
+class RetrievalLog(BaseModel):
+    """Retrieval log entry"""
+    user_id: str
+    request_id: str
+    query: str
+    candidates: List[RetrievalCandidate]
+    bm25_scores: Dict[str, float] = {}
+    dense_scores: Dict[str, float] = {}
+    durations: Dict[str, float] = {}
+    selected_backend: str
+    top_k: int
+    filters: Dict[str, Any] = {}
+    timestamp: datetime
 
 class RetrievalService:
-    """Hybrid retrieval service with caching and fusion."""
+    """Service for retrieval operations with comprehensive logging"""
     
     def __init__(self):
-        self.redis_client = None
-        self.cache_ttl = 24 * 3600  # 24 hours
-        self.cache_prefix = "retrieval:"
+        self.vector_service = VectorService()
+        self.error_aware_recommender = ErrorAwareRecommender()
+        self.logs_buffer: List[RetrievalLog] = []
+        self.buffer_size = 100
+        self.flush_interval = 30  # seconds
         
-        # Fusion weights
-        self.dense_weight = 0.6
-        self.sparse_weight = 0.4
+        # Background logging task will be started when first used
         
-        # RRF parameters
-        self.rrf_k = 60  # RRF constant
+        logger.info("Retrieval service initialized with logging")
     
-    async def _get_redis_client(self) -> redis.Redis:
-        """Get Redis client for caching."""
-        if self.redis_client is None:
-            self.redis_client = redis.from_url(settings.REDIS_URL)
-        return self.redis_client
-    
-    def _get_cache_key(self, query_hash: str) -> str:
-        """Generate cache key for retrieval results."""
-        return f"{self.cache_prefix}{query_hash}"
-    
-    def _hash_query(self, query_params: Dict[str, Any]) -> str:
-        """Create hash for query parameters."""
-        import hashlib
-        query_str = json.dumps(query_params, sort_keys=True)
-        return hashlib.md5(query_str.encode()).hexdigest()
-    
-    async def _get_from_cache(self, query_hash: str) -> Optional[List[Dict[str, Any]]]:
-        """Get results from cache."""
-        try:
-            redis_client = await self._get_redis_client()
-            cached_data = await redis_client.get(self._get_cache_key(query_hash))
-            if cached_data:
-                return json.loads(cached_data)
-        except Exception as e:
-            print(f"Cache get error: {e}")
-        return None
-    
-    async def _set_cache(self, query_hash: str, results: List[Dict[str, Any]]) -> None:
-        """Set results in cache."""
-        try:
-            redis_client = await self._get_redis_client()
-            await redis_client.setex(
-                self._get_cache_key(query_hash),
-                self.cache_ttl,
-                json.dumps(results, default=str)
-            )
-        except Exception as e:
-            print(f"Cache set error: {e}")
-    
-    def _reciprocal_rank_fusion(
+    async def search_with_logging(
         self,
-        dense_results: List[Dict[str, Any]],
-        sparse_results: List[Dict[str, Any]],
-        k: int = 60
-    ) -> List[Dict[str, Any]]:
-        """
-        Combine dense and sparse results using Reciprocal Rank Fusion (RRF).
-        
-        RRF Score = sum(1 / (k + rank)) for each ranking
-        
-        Args:
-            dense_results: Results from vector search
-            sparse_results: Results from BM25 search
-            k: RRF constant (typically 60)
-            
-        Returns:
-            Fused and ranked results
-        """
-        # Create item score maps
-        item_scores = {}
-        
-        # Process dense results
-        for rank, result in enumerate(dense_results):
-            item_id = result["item_id"]
-            rrf_score = 1.0 / (k + rank + 1)  # +1 because rank is 0-indexed
-            
-            if item_id not in item_scores:
-                item_scores[item_id] = {
-                    "item_id": item_id,
-                    "dense_score": result["score"],
-                    "sparse_score": 0.0,
-                    "dense_rank": rank + 1,
-                    "sparse_rank": None,
-                    "rrf_score": 0.0,
-                    "metadata": result.get("metadata", {})
-                }
-            
-            item_scores[item_id]["rrf_score"] += self.dense_weight * rrf_score
-        
-        # Process sparse results
-        for rank, result in enumerate(sparse_results):
-            item_id = result["item_id"]
-            rrf_score = 1.0 / (k + rank + 1)
-            
-            if item_id not in item_scores:
-                item_scores[item_id] = {
-                    "item_id": item_id,
-                    "dense_score": 0.0,
-                    "sparse_score": result["score"],
-                    "dense_rank": None,
-                    "sparse_rank": rank + 1,
-                    "rrf_score": 0.0,
-                    "metadata": result.get("metadata", {})
-                }
-            else:
-                item_scores[item_id]["sparse_score"] = result["score"]
-                item_scores[item_id]["sparse_rank"] = rank + 1
-            
-            item_scores[item_id]["rrf_score"] += self.sparse_weight * rrf_score
-        
-        # Sort by RRF score and return
-        fused_results = sorted(
-            item_scores.values(),
-            key=lambda x: x["rrf_score"],
-            reverse=True
-        )
-        
-        return fused_results
-    
-    def _apply_metadata_filters(
-        self,
-        results: List[Dict[str, Any]],
-        filters: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """Apply metadata filters to results."""
-        if not filters:
-            return results
-        
-        filtered_results = []
-        
-        for result in results:
-            metadata = result.get("metadata", {})
-            include_item = True
-            
-            for key, value in filters.items():
-                if key in metadata:
-                    if isinstance(value, list):
-                        # Check if any value matches
-                        if metadata[key] not in value:
-                            include_item = False
-                            break
-                    else:
-                        # Exact match
-                        if metadata[key] != value:
-                            include_item = False
-                            break
-                else:
-                    # Required field missing
-                    include_item = False
-                    break
-            
-            if include_item:
-                filtered_results.append(result)
-        
-        return filtered_results
-    
-    async def hybrid_search(
-        self,
-        query: str,
-        item_type: Optional[str] = None,
-        lang: str = "tr",
-        skills: Optional[List[str]] = None,
-        difficulty_range: Optional[Tuple[float, float]] = None,
-        limit: int = 200,
-        use_cache: bool = True
-    ) -> List[Dict[str, Any]]:
-        """
-        Perform hybrid search combining dense and sparse retrieval.
-        
-        Args:
-            query: Search query text
-            item_type: "math" or "english"
-            lang: Language code
-            skills: Skill tags to filter by
-            difficulty_range: (min, max) difficulty for math items
-            limit: Maximum results to return
-            use_cache: Whether to use caching
-            
-        Returns:
-            Hybrid search results with RRF scores
-        """
-        # Create query parameters for caching
-        query_params = {
-            "query": query,
-            "item_type": item_type,
-            "lang": lang,
-            "skills": skills,
-            "difficulty_range": difficulty_range,
-            "limit": limit
-        }
-        
-        query_hash = self._hash_query(query_params)
-        
-        # Try cache first
-        if use_cache:
-            cached_results = await self._get_from_cache(query_hash)
-            if cached_results:
-                return cached_results[:limit]
-        
-        # Perform parallel dense and sparse searches
-        dense_task = vector_service.search_by_skills(
-            skills=skills or [],
-            item_type=item_type or "math",
-            lang=lang,
-            difficulty_range=difficulty_range,
-            limit=limit
-        )
-        
-        sparse_task = search_service.search_by_skills(
-            skills=skills or [],
-            item_type=item_type or "math",
-            lang=lang,
-            difficulty_range=difficulty_range,
-            limit=limit
-        )
-        
-        # Execute searches in parallel
-        dense_results, sparse_results = await asyncio.gather(
-            dense_task, sparse_task, return_exceptions=True
-        )
-        
-        # Handle exceptions
-        if isinstance(dense_results, Exception):
-            print(f"Dense search error: {dense_results}")
-            dense_results = []
-        
-        if isinstance(sparse_results, Exception):
-            print(f"Sparse search error: {sparse_results}")
-            sparse_results = []
-        
-        # Fuse results using RRF
-        fused_results = self._reciprocal_rank_fusion(
-            dense_results, sparse_results, self.rrf_k
-        )
-        
-        # Apply additional filters
-        filters = {"lang": lang, "status": "active"}
-        if item_type:
-            filters["type"] = item_type
-        
-        filtered_results = self._apply_metadata_filters(fused_results, filters)
-        
-        # Limit results
-        final_results = filtered_results[:limit]
-        
-        # Cache results
-        if use_cache and final_results:
-            await self._set_cache(query_hash, final_results)
-        
-        return final_results
-    
-    async def search_for_user(
-        self,
-        session: AsyncSession,
         user_id: str,
-        target_skills: Optional[List[str]] = None,
-        item_type: str = "math",
-        limit: int = 200,
-        use_personalization: bool = True
-    ) -> List[Dict[str, Any]]:
+        query: str,
+        top_k: int = 10,
+        backend_preference: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        db: Optional[AsyncSession] = None
+    ) -> Tuple[List[Dict[str, Any]], RetrievalLog]:
         """
-        Search items personalized for a specific user.
+        Perform retrieval with comprehensive logging
         
         Args:
-            session: Database session
             user_id: User ID
-            target_skills: Skills to focus on
-            item_type: "math" or "english"
-            limit: Maximum results
-            use_personalization: Whether to use user profile for personalization
+            query: Search query
+            top_k: Number of results to return
+            backend_preference: Preferred backend (optional)
+            filters: Search filters
+            db: Database session
             
         Returns:
-            Personalized search results
+            Tuple of (results, retrieval_log)
         """
-        # Get user profile for personalization
-        user = await user_repository.get(session, user_id)
-        if not user:
+        request_id = str(uuid.uuid4())
+        start_time = time.time()
+        
+        logger.info("Starting retrieval with logging", 
+                   user_id=user_id, request_id=request_id, query=query, top_k=top_k)
+        
+        # Initialize tracking
+        candidates = []
+        bm25_scores = {}
+        dense_scores = {}
+        durations = {}
+        selected_backend = backend_preference or "auto"
+        
+        try:
+            # Try multiple backends if no preference specified
+            if not backend_preference:
+                backends_to_try = ["faiss", "hnsw", "qdrant"]
+            else:
+                backends_to_try = [backend_preference]
+            
+            best_results = []
+            best_backend = None
+            best_score = -1
+            
+            for backend in backends_to_try:
+                try:
+                    backend_start = time.time()
+                    
+                    # Perform search with specific backend
+                    if backend == "faiss":
+                        results = await self._search_faiss(user_id, query, top_k, filters)
+                    elif backend == "hnsw":
+                        results = await self._search_hnsw(user_id, query, top_k, filters)
+                    elif backend == "qdrant":
+                        results = await self._search_qdrant(user_id, query, top_k, filters)
+                    else:
+                        continue
+                    
+                    backend_duration = time.time() - backend_start
+                    durations[backend] = backend_duration
+                    
+                    # Calculate average score for backend selection
+                    if results:
+                        avg_score = sum(r.get("score", 0) for r in results) / len(results)
+                        
+                        # Store scores by type
+                        if backend in ["faiss", "hnsw"]:
+                            dense_scores[backend] = avg_score
+                        else:
+                            bm25_scores[backend] = avg_score
+                        
+                        # Create candidates
+                        for i, result in enumerate(results):
+                            candidate = RetrievalCandidate(
+                                item_id=result.get("id", f"item_{i}"),
+                                score=result.get("score", 0),
+                                backend=backend,
+                                metadata=result.get("metadata", {})
+                            )
+                            candidates.append(candidate)
+                        
+                        # Select best backend based on score
+                        if avg_score > best_score:
+                            best_score = avg_score
+                            best_results = results
+                            best_backend = backend
+                    
+                    logger.debug("Backend search completed", 
+                               backend=backend, duration=backend_duration, 
+                               results_count=len(results), avg_score=avg_score if results else 0)
+                
+                except Exception as e:
+                    logger.warning("Backend search failed", backend=backend, error=str(e))
+                    durations[backend] = -1  # Mark as failed
+                    continue
+            
+            # Update selected backend
+            selected_backend = best_backend or backends_to_try[0]
+            
+            # If no results from any backend, try error-aware recommendation
+            if not best_results:
+                logger.info("No results from vector backends, trying error-aware recommendation")
+                error_start = time.time()
+                
+                best_results = await self.error_aware_recommender.recommend(
+                    user_id=user_id,
+                    n_recommendations=top_k,
+                    db=db
+                )
+                
+                durations["error_aware"] = time.time() - error_start
+                selected_backend = "error_aware"
+                
+                # Create candidates for error-aware results
+                for i, result in enumerate(best_results):
+                    candidate = RetrievalCandidate(
+                        item_id=result.get("id", f"item_{i}"),
+                        score=result.get("score", 0.5),
+                        backend="error_aware",
+                        metadata=result.get("metadata", {})
+                    )
+                    candidates.append(candidate)
+            
+            total_duration = time.time() - start_time
+            
+            # Create retrieval log
+            retrieval_log = RetrievalLog(
+                user_id=user_id,
+                request_id=request_id,
+                query=query,
+                candidates=candidates,
+                bm25_scores=bm25_scores,
+                dense_scores=dense_scores,
+                durations=durations,
+                selected_backend=selected_backend,
+                top_k=top_k,
+                filters=filters or {},
+                timestamp=datetime.now()
+            )
+            
+            # Add to buffer for batch writing
+            await self._add_log_to_buffer(retrieval_log)
+            
+            logger.info("Retrieval completed with logging", 
+                       user_id=user_id, request_id=request_id,
+                       selected_backend=selected_backend, 
+                       results_count=len(best_results),
+                       total_duration=total_duration)
+            
+            return best_results, retrieval_log
+            
+        except Exception as e:
+            logger.error("Retrieval failed", user_id=user_id, request_id=request_id, error=str(e))
+            
+            # Create error log
+            error_log = RetrievalLog(
+                user_id=user_id,
+                request_id=request_id,
+                query=query,
+                candidates=[],
+                durations=durations,
+                selected_backend="error",
+                top_k=top_k,
+                filters=filters or {},
+                timestamp=datetime.now()
+            )
+            
+            await self._add_log_to_buffer(error_log)
+            raise
+    
+    async def _search_faiss(self, user_id: str, query: str, top_k: int, 
+                          filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search using FAISS backend"""
+        try:
+            # Get query embedding
+            query_vector = await self.vector_service.get_query_embedding(query)
+            
+            # Search with FAISS
+            results = await self.vector_service.search(
+                query_vector=query_vector,
+                k=top_k,
+                backend_name="faiss",
+                filters=filters
+            )
+            
+            return results
+            
+        except Exception as e:
+            logger.warning("FAISS search failed", error=str(e))
             return []
-        
-        # Determine search parameters based on user profile
-        lang = user.lang
-        query_skills = target_skills or []
-        
-        if use_personalization:
-            # Get user's weak skills for targeting
-            error_profile = (
-                user.error_profile_math if item_type == "math"
-                else user.error_profile_en
-            ) or {}
-            
-            # Add weak skills to search if no specific skills provided
-            if not target_skills and error_profile:
-                weak_skills = [
-                    skill for skill, error_rate in error_profile.items()
-                    if error_rate >= 0.3  # High error rate threshold
-                ]
-                query_skills.extend(weak_skills[:3])  # Top 3 weak skills
-            
-            # Get optimal difficulty range for math items
-            if item_type == "math":
-                theta = user.theta_math or 0.0
-                # Target slightly easier items for practice
-                difficulty_range = (theta - 0.5, theta + 0.3)
-            else:
-                difficulty_range = None
-        else:
-            difficulty_range = None
-        
-        # Create search query from skills
-        query = " ".join(query_skills) if query_skills else ""
-        
-        # Perform hybrid search
-        results = await self.hybrid_search(
-            query=query,
-            item_type=item_type,
-            lang=lang,
-            skills=query_skills,
-            difficulty_range=difficulty_range,
-            limit=limit
-        )
-        
-        return results
     
-    async def get_similar_items(
-        self,
-        item_id: str,
-        item_type: str,
-        limit: int = 10,
-        use_cache: bool = True
-    ) -> List[Dict[str, Any]]:
-        """Get items similar to a given item."""
-        # Try vector similarity first (more accurate for content similarity)
-        similar_items = await vector_service.get_similar_items(
-            item_id=item_id,
-            limit=limit,
-            filters={"type": item_type, "status": "active"}
-        )
-        
-        return similar_items
-    
-    async def search_by_content(
-        self,
-        content: str,
-        item_type: str,
-        lang: str = "tr",
-        limit: int = 50
-    ) -> List[Dict[str, Any]]:
-        """Search for items with similar content."""
-        return await self.hybrid_search(
-            query=content,
-            item_type=item_type,
-            lang=lang,
-            limit=limit
-        )
-    
-    async def get_retrieval_stats(self) -> Dict[str, Any]:
-        """Get retrieval service statistics."""
+    async def _search_hnsw(self, user_id: str, query: str, top_k: int, 
+                         filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search using HNSW backend"""
         try:
-            # Get cache stats
-            redis_client = await self._get_redis_client()
-            cache_info = await redis_client.info("memory")
+            # Get query embedding
+            query_vector = await self.vector_service.get_query_embedding(query)
             
-            # Get search engine stats
-            search_stats = await search_service.get_index_stats()
+            # Search with HNSW
+            results = await self.vector_service.search(
+                query_vector=query_vector,
+                k=top_k,
+                backend_name="hnsw",
+                filters=filters
+            )
             
-            # Get vector DB stats
-            vector_stats = await vector_service.get_collection_info()
+            return results
             
-            return {
-                "cache": {
-                    "memory_used": cache_info.get("used_memory_human", "N/A"),
-                    "hit_rate": "N/A"  # Would need to track this separately
-                },
-                "search_engine": search_stats,
-                "vector_db": vector_stats,
-                "fusion_weights": {
-                    "dense": self.dense_weight,
-                    "sparse": self.sparse_weight
+        except Exception as e:
+            logger.warning("HNSW search failed", error=str(e))
+            return []
+    
+    async def _search_qdrant(self, user_id: str, query: str, top_k: int, 
+                           filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search using Qdrant backend"""
+        try:
+            # Get query embedding
+            query_vector = await self.vector_service.get_query_embedding(query)
+            
+            # Search with Qdrant
+            results = await self.vector_service.search(
+                query_vector=query_vector,
+                k=top_k,
+                backend_name="qdrant",
+                filters=filters
+            )
+            
+            return results
+            
+        except Exception as e:
+            logger.warning("Qdrant search failed", error=str(e))
+            return []
+    
+    async def _add_log_to_buffer(self, log: RetrievalLog):
+        """Add log to buffer for batch writing"""
+        self.logs_buffer.append(log)
+        
+        # Flush if buffer is full
+        if len(self.logs_buffer) >= self.buffer_size:
+            await self._flush_logs_to_db()
+    
+    async def _periodic_flush_logs(self):
+        """Periodically flush logs to database"""
+        while True:
+            try:
+                await asyncio.sleep(self.flush_interval)
+                if self.logs_buffer:
+                    await self._flush_logs_to_db()
+            except Exception as e:
+                logger.error("Failed to flush logs periodically", error=str(e))
+    
+    async def _flush_logs_to_db(self):
+        """Flush buffered logs to database"""
+        if not self.logs_buffer:
+            return
+        
+        try:
+            async with get_db() as db:
+                # Prepare batch insert data
+                log_data = []
+                for log in self.logs_buffer:
+                    log_data.append({
+                        "user_id": log.user_id,
+                        "request_id": log.request_id,
+                        "query": log.query,
+                        "candidates": [c.dict() for c in log.candidates],
+                        "bm25_scores": log.bm25_scores,
+                        "dense_scores": log.dense_scores,
+                        "durations": log.durations,
+                        "selected_backend": log.selected_backend,
+                        "top_k": log.top_k,
+                        "filters": log.filters,
+                        "timestamp": log.timestamp
+                    })
+                
+                # Batch insert using raw SQL for performance
+                insert_sql = text("""
+                    INSERT INTO retrieval_logs (
+                        user_id, request_id, query, candidates, 
+                        bm25_scores, dense_scores, durations,
+                        selected_backend, top_k, filters, timestamp
+                    ) VALUES (
+                        :user_id, :request_id, :query, :candidates,
+                        :bm25_scores, :dense_scores, :durations,
+                        :selected_backend, :top_k, :filters, :timestamp
+                    )
+                """)
+                
+                await db.execute(insert_sql, log_data)
+                await db.commit()
+                
+                logger.info("Flushed retrieval logs to database", count=len(log_data))
+                
+                # Clear buffer
+                self.logs_buffer.clear()
+                
+        except Exception as e:
+            logger.error("Failed to flush logs to database", error=str(e))
+            # Keep logs in buffer for retry
+    
+    async def get_retrieval_stats(self, user_id: Optional[str] = None, 
+                                hours: int = 24) -> Dict[str, Any]:
+        """Get retrieval statistics"""
+        try:
+            async with get_db() as db:
+                # Build query
+                where_clause = "WHERE timestamp >= NOW() - INTERVAL :hours HOUR"
+                params = {"hours": hours}
+                
+                if user_id:
+                    where_clause += " AND user_id = :user_id"
+                    params["user_id"] = user_id
+                
+                # Get basic stats
+                stats_sql = text(f"""
+                    SELECT 
+                        COUNT(*) as total_requests,
+                        COUNT(DISTINCT user_id) as unique_users,
+                        AVG(EXTRACT(EPOCH FROM durations->>'faiss')) as avg_faiss_duration,
+                        AVG(EXTRACT(EPOCH FROM durations->>'hnsw')) as avg_hnsw_duration,
+                        AVG(EXTRACT(EPOCH FROM durations->>'qdrant')) as avg_qdrant_duration,
+                        COUNT(CASE WHEN selected_backend = 'faiss' THEN 1 END) as faiss_selections,
+                        COUNT(CASE WHEN selected_backend = 'hnsw' THEN 1 END) as hnsw_selections,
+                        COUNT(CASE WHEN selected_backend = 'qdrant' THEN 1 END) as qdrant_selections,
+                        COUNT(CASE WHEN selected_backend = 'error_aware' THEN 1 END) as error_aware_selections
+                    FROM retrieval_logs 
+                    {where_clause}
+                """)
+                
+                result = await db.execute(stats_sql, params)
+                stats = result.fetchone()
+                
+                return {
+                    "total_requests": stats.total_requests or 0,
+                    "unique_users": stats.unique_users or 0,
+                    "avg_durations": {
+                        "faiss": stats.avg_faiss_duration or 0,
+                        "hnsw": stats.avg_hnsw_duration or 0,
+                        "qdrant": stats.avg_qdrant_duration or 0
+                    },
+                    "backend_selections": {
+                        "faiss": stats.faiss_selections or 0,
+                        "hnsw": stats.hnsw_selections or 0,
+                        "qdrant": stats.qdrant_selections or 0,
+                        "error_aware": stats.error_aware_selections or 0
+                    }
                 }
-            }
+                
         except Exception as e:
-            print(f"Error getting retrieval stats: {e}")
+            logger.error("Failed to get retrieval stats", error=str(e))
             return {}
-    
-    async def invalidate_cache(self, pattern: Optional[str] = None) -> int:
-        """Invalidate cache entries matching pattern."""
-        try:
-            redis_client = await self._get_redis_client()
-            
-            if pattern:
-                # Delete keys matching pattern
-                keys = await redis_client.keys(f"{self.cache_prefix}{pattern}*")
-            else:
-                # Delete all retrieval cache
-                keys = await redis_client.keys(f"{self.cache_prefix}*")
-            
-            if keys:
-                deleted = await redis_client.delete(*keys)
-                return deleted
-            return 0
-        except Exception as e:
-            print(f"Error invalidating cache: {e}")
-            return 0
 
-
-# Create service instance
+# Global retrieval service instance
 retrieval_service = RetrievalService()

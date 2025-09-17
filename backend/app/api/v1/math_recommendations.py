@@ -366,6 +366,49 @@ async def get_user_stats(user_id: str, db: AsyncSession = Depends(get_db)):
             detail=f"Failed to get user stats: {str(e)}"
         )
 
+@router.post("/irt/calibrate")
+async def calibrate_irt_model(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Trigger IRT model batch calibration (Protected endpoint)
+    
+    Args:
+        days: Number of days to look back for training data
+        
+    Returns:
+        Calibration job status
+    """
+    try:
+        logger.info("Starting IRT calibration job", days=days)
+        
+        # Import calibrator
+        from jobs.irt_batch_calibrate import irt_calibrator
+        
+        # Run calibration in background
+        results = await irt_calibrator.run_calibration(days=days)
+        
+        if results.get("success"):
+            return {
+                "status": "completed",
+                "message": "IRT model calibrated successfully",
+                "results": results,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Calibration failed: {results.get('error', 'Unknown error')}"
+            )
+        
+    except Exception as e:
+        logger.error("IRT calibration endpoint failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Calibration failed: {str(e)}"
+        )
+
 @router.get("/health")
 async def health_check():
     """Health check for math recommendation system"""

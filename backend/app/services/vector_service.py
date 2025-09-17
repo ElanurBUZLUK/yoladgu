@@ -3,6 +3,7 @@ Vector database service for dense retrieval using multiple backends.
 """
 
 import asyncio
+from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -20,6 +21,15 @@ class VectorService:
         
         # Initialize index manager
         self._initialized = False
+        
+        # ML backend selection
+        self.ml_selector = None
+        self.use_ml_selection = True
+        self.dynamic_hybrid_weights = {
+            "faiss": 0.4,
+            "hnsw": 0.3,
+            "qdrant": 0.3
+        }
     
     async def _ensure_initialized(self):
         """Ensure the index manager is initialized."""
@@ -29,6 +39,138 @@ class VectorService:
                 self._initialized = True
             else:
                 raise RuntimeError("Failed to initialize vector index manager")
+    
+    async def _load_ml_selector(self):
+        """Load ML backend selector model if available"""
+        if self.ml_selector is None and self.use_ml_selection:
+            try:
+                import joblib
+                import os
+                
+                model_path = "backend/data/ml/backend_selector.joblib"
+                if os.path.exists(model_path):
+                    self.ml_selector = joblib.load(model_path)
+                    print(f"Loaded ML backend selector from {model_path}")
+                else:
+                    print("ML backend selector model not found, using rule-based selection")
+            except Exception as e:
+                print(f"Failed to load ML backend selector: {e}")
+                self.ml_selector = None
+    
+    async def _predict_best_backend(self, query: str, query_vector: np.ndarray, 
+                                  filters: Optional[Dict[str, Any]] = None) -> str:
+        """Predict best backend using ML model or fallback to dynamic weights"""
+        try:
+            await self._load_ml_selector()
+            
+            if self.ml_selector:
+                # Extract features for ML prediction
+                features = self._extract_query_features(query, query_vector, filters)
+                
+                # Make prediction
+                backend_prediction = self.ml_selector['model'].predict([features])[0]
+                backend_name = self.ml_selector['label_encoder'].inverse_transform([backend_prediction])[0]
+                
+                print(f"ML backend prediction: {backend_name}")
+                return backend_name
+            else:
+                # Fallback to dynamic weights
+                return self._select_backend_by_weights(filters)
+                
+        except Exception as e:
+            print(f"ML backend prediction failed: {e}")
+            return self._select_backend_by_weights(filters)
+    
+    def _extract_query_features(self, query: str, query_vector: np.ndarray, 
+                               filters: Optional[Dict[str, Any]] = None) -> List[float]:
+        """Extract features for ML backend selection"""
+        features = []
+        
+        # Query-based features
+        features.append(len(query))  # query_length
+        features.append(len(query.split()))  # query_word_count
+        features.append(1.0 if any(char.isdigit() for char in query) else 0.0)  # has_numbers
+        features.append(1.0 if any(not char.isalnum() and char != ' ' for char in query) else 0.0)  # has_special_chars
+        features.append(np.mean([len(word) for word in query.split()]) if query.split() else 0.0)  # avg_word_length
+        
+        # Query complexity
+        features.append(self._calculate_entropy(query))  # entropy
+        features.append(1.0 if '?' in query else 0.0)  # has_questions
+        features.append(1.0 if any(op in query.lower() for op in ['and', 'or', 'not', '+', '-']) else 0.0)  # has_operators
+        
+        # Filter features
+        features.append(1.0 if filters and 'difficulty' in filters else 0.0)  # has_difficulty_filter
+        features.append(1.0 if filters and 'subject' in filters else 0.0)  # has_subject_filter
+        features.append(1.0 if filters and 'skills' in filters else 0.0)  # has_skill_filter
+        features.append(len(filters) if filters else 0)  # filter_count
+        
+        # Time features
+        current_hour = datetime.now().hour
+        features.append(1.0 if 9 <= current_hour <= 17 else 0.0)  # is_business_hours
+        features.append(1.0 if datetime.now().weekday() >= 5 else 0.0)  # is_weekend
+        
+        # Vector features (simplified)
+        features.append(np.mean(query_vector))  # vector_mean
+        features.append(np.std(query_vector))  # vector_std
+        features.append(np.max(query_vector))  # vector_max
+        features.append(np.min(query_vector))  # vector_min
+        
+        return features
+    
+    def _calculate_entropy(self, text: str) -> float:
+        """Calculate Shannon entropy of text"""
+        if not text:
+            return 0.0
+        
+        char_counts = {}
+        for char in text.lower():
+            char_counts[char] = char_counts.get(char, 0) + 1
+        
+        total_chars = len(text)
+        entropy = 0.0
+        for count in char_counts.values():
+            p = count / total_chars
+            if p > 0:
+                entropy -= p * np.log2(p)
+        
+        return entropy
+    
+    def _select_backend_by_weights(self, filters: Optional[Dict[str, Any]] = None) -> str:
+        """Select backend using dynamic weights based on filters"""
+        try:
+            # Adjust weights based on filters
+            weights = self.dynamic_hybrid_weights.copy()
+            
+            if filters:
+                # Prefer FAISS for complex queries with many filters
+                if len(filters) > 2:
+                    weights["faiss"] += 0.2
+                    weights["hnsw"] -= 0.1
+                    weights["qdrant"] -= 0.1
+                
+                # Prefer HNSW for skill-based queries
+                if "skills" in filters:
+                    weights["hnsw"] += 0.2
+                    weights["faiss"] -= 0.1
+                    weights["qdrant"] -= 0.1
+            
+            # Normalize weights
+            total = sum(weights.values())
+            normalized_weights = {k: v/total for k, v in weights.items()}
+            
+            # Select backend based on weights
+            import random
+            backend = random.choices(
+                list(normalized_weights.keys()),
+                weights=list(normalized_weights.values())
+            )[0]
+            
+            print(f"Dynamic backend selection: {backend}")
+            return backend
+            
+        except Exception as e:
+            print(f"Dynamic backend selection failed: {e}")
+            return "faiss"  # Safe fallback
     
     def _get_encoder(self) -> SentenceTransformer:
         """Get sentence transformer model (lazy initialization)."""
@@ -221,29 +363,7 @@ class VectorService:
             
             # ML-based backend selection
             if use_ml_selection and backend_name in (None, "", "auto"):
-                try:
-                    from app.services.ml.feature_extractor import extract_query_features, dynamic_hybrid_weights
-                    from app.services.ml.backend_selector import BackendSelector
-                    
-                    # Get index statistics
-                    index_stats = await vector_index_manager.get_manager_stats()
-                    
-                    # Extract query features
-                    feats = extract_query_features(
-                        query, query_array[0], k=limit, 
-                        filters=filters, index_stats=index_stats
-                    )
-                    
-                    # Load and use ML model
-                    sel = BackendSelector.load("data/ml/backend_selector.joblib")
-                    chosen = sel.predict_backend(feats) if sel else None
-                    
-                    # Use ML prediction or fallback to rule-based selection
-                    backend = chosen or vector_index_manager.choose_backend(k=limit, filters=filters)
-                    
-                except Exception as e:
-                    print(f"ML-based backend selection failed: {e}")
-                    backend = vector_index_manager.choose_backend(k=limit, filters=filters)
+                backend = await self._predict_best_backend(query, query_array[0], filters)
             else:
                 backend = backend_name
             
