@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
+import json
 import structlog
 
 from app.db.session import get_db
@@ -190,8 +191,8 @@ async def get_next_question(
                 item_params = ItemParams.from_dict(question["irt_params"])
                 irt_model.add_item(item_params)
         
-        # Get recent questions (simplified - in production, query database)
-        recent_questions = []  # TODO: Implement recent questions tracking
+        # Get recent questions from database
+        recent_questions = await self._get_recent_questions(request.user_id, db)
         
         # Select next question
         selected_question = math_selector.select_next_question(
@@ -268,6 +269,17 @@ async def process_answer_event(
             correct=request.correct,
             response_time=request.response_time,
             skills=request.skills
+        )
+        
+        # Save attempt to database
+        await self._save_attempt_to_db(
+            user_id=request.user_id,
+            item_id=request.item_id,
+            correct=request.correct,
+            duration=request.response_time,
+            skills=request.skills,
+            predicted_p=expected_score,
+            db=db
         )
         
         # Update Elo ratings
@@ -365,6 +377,69 @@ async def get_user_stats(user_id: str, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get user stats: {str(e)}"
         )
+
+    async def _save_attempt_to_db(
+        self,
+        user_id: str,
+        item_id: str,
+        correct: bool,
+        duration: Optional[float],
+        skills: Optional[List[str]],
+        predicted_p: float,
+        db: AsyncSession
+    ):
+        """Save attempt record to database"""
+        try:
+            from sqlalchemy import text
+            
+            insert_sql = text("""
+                INSERT INTO attempts (
+                    user_id, item_id, correct, duration, skills, predicted_p, created_at
+                ) VALUES (
+                    :user_id, :item_id, :correct, :duration, :skills, :predicted_p, NOW()
+                )
+            """)
+            
+            await db.execute(insert_sql, {
+                "user_id": user_id,
+                "item_id": item_id,
+                "correct": correct,
+                "duration": duration,
+                "skills": json.dumps(skills) if skills else None,
+                "predicted_p": predicted_p
+            })
+            
+            await db.commit()
+            logger.debug("Attempt saved to database", user_id=user_id, item_id=item_id)
+            
+        except Exception as e:
+            logger.error("Failed to save attempt to database", error=str(e))
+            await db.rollback()
+    
+    async def _get_recent_questions(self, user_id: str, db: AsyncSession, limit: int = 10) -> List[str]:
+        """Get recent questions answered by user from database"""
+        try:
+            from sqlalchemy import text
+            
+            query_sql = text("""
+                SELECT DISTINCT item_id 
+                FROM attempts 
+                WHERE user_id = :user_id 
+                ORDER BY created_at DESC 
+                LIMIT :limit
+            """)
+            
+            result = await db.execute(query_sql, {"user_id": user_id, "limit": limit})
+            rows = result.fetchall()
+            
+            recent_questions = [row.item_id for row in rows]
+            logger.debug("Retrieved recent questions", user_id=user_id, count=len(recent_questions))
+            
+            return recent_questions
+            
+        except Exception as e:
+            logger.error("Failed to get recent questions", user_id=user_id, error=str(e))
+            return []  # Return empty list on error
 
 @router.post("/irt/calibrate")
 async def calibrate_irt_model(

@@ -34,6 +34,35 @@ class Settings(BaseSettings):
     # Vector Database
     VECTOR_DB_URL: str = "http://localhost:6333"
     VECTOR_DB_COLLECTION: str = "questions"
+    VECTOR_DB_SIZE: int = 384
+    
+    # HNSW Configuration
+    HNSW_M: int = 64
+    HNSW_EF_CONSTRUCTION: int = 800
+    HNSW_EF_SEARCH: int = 512
+    HNSW_MAX_ELEMENTS: int = 100000
+    
+    # FAISS Configuration
+    FAISS_NLIST: int = 100
+    FAISS_NPROBE: int = 10
+    FAISS_M: int = 8
+    FAISS_BITS: int = 8
+    
+    # RRF Configuration
+    RRF_K: int = 60
+    
+    # E5 Model Configuration
+    E5_MODEL_NAME: str = "intfloat/e5-large-v2"
+    E5_DIM: int = 1024
+    
+    # ML Backend Selector Configuration
+    ML_SELECTOR_ENABLED: bool = True
+    ML_SELECTOR_MODEL_PATH: str = "backend/data/ml/backend_selector.joblib"
+    ML_SELECTOR_FEATURE_ORDER_PATH: str = "backend/data/ml/feature_order.json"
+    
+    # Retrieval Logging Configuration
+    RETRIEVAL_LOG_BUFFER_SIZE: int = 100
+    RETRIEVAL_LOG_FLUSH_INTERVAL: int = 30
     
     # Search Engine
     SEARCH_ENGINE_URL: str = "http://localhost:9200"
