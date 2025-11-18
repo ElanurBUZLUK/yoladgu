@@ -20,6 +20,8 @@ from app.api.v1 import (
     math_recommendations,
     search_orchestration,
     math_rag,
+    math_adaptive,
+    english_adaptive,
 )
 
 api_router = APIRouter(prefix="/v1")
@@ -31,23 +33,24 @@ api_router.include_router(admin.router, prefix="/admin", tags=["Administration"]
 
 # Core recommendation & generation
 api_router.include_router(recommend.router, prefix="/recommend", tags=["Recommendations"])
+api_router.include_router(recommendations.router, prefix="/recommendations", tags=["Recommendations"])
 api_router.include_router(generate.router, prefix="/generate", tags=["Generation"])
-api_router.include_router(
-    math_next.router,
-    prefix="/math",
-    tags=["Math Next Question"],
-)
+
+# Search related endpoints
+api_router.include_router(search_orchestration.router, prefix="/search", tags=["Search"])
+api_router.include_router(hybrid_search.router, prefix="/search/hybrid", tags=["Search"])
 
 # Vector / RAG related
-api_router.include_router(vector.router, prefix="/vector", tags=["Vector Operations"])
-api_router.include_router(vector_advanced.router, prefix="/vector", tags=["Advanced Vector Operations"])
-api_router.include_router(langchain_rag.router, prefix="/langchain", tags=["LangChain RAG Operations"])
-api_router.include_router(advanced_rag.router, prefix="/advanced-rag", tags=["Advanced RAG System"])
+api_router.include_router(vector.router, prefix="/vector", tags=["Vector"])
+api_router.include_router(vector_advanced.router, prefix="/vector/advanced", tags=["Advanced RAG & Vector"])
+api_router.include_router(langchain_rag.router, prefix="/langchain", tags=["Advanced RAG & Vector"])
+api_router.include_router(advanced_rag.router, prefix="/advanced-rag", tags=["Advanced RAG & Vector"])
 
-# Error-aware & math recommendation pipelines
-api_router.include_router(recommendations.router, prefix="/recommendations", tags=["Error-Aware Recommendations"])
-api_router.include_router(math_recommendations.router, prefix="/math", tags=["Math Recommendations (IRT + Multi-Skill Elo)"])
-api_router.include_router(search_orchestration.router, prefix="/search", tags=["Search Orchestration (E5 + RRF)"])
+# Math related endpoints
+api_router.include_router(math_next.router, prefix="/math", tags=["Math"])
+api_router.include_router(math_recommendations.router, prefix="/math", tags=["Math"])
+api_router.include_router(math_adaptive.router, prefix="/math/adaptive", tags=["Math"])
+api_router.include_router(math_rag.router, prefix="/math/rag", tags=["Math"])
 
-# (Şimdilik boş ama ileride doldurmak için bırakıyoruz)
-api_router.include_router(math_rag.router, prefix="/math-rag", tags=["Math RAG"])
+# English related endpoints
+api_router.include_router(english_adaptive.router, prefix="/english/adaptive", tags=["English"])

@@ -13,7 +13,7 @@ from app.db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-router = APIRouter(prefix="/advanced-rag", tags=["Advanced RAG System"])
+router = APIRouter()
 
 
 class DocumentRequest(BaseModel):

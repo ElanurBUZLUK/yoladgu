@@ -15,6 +15,7 @@ from app.db.session import get_db
 from ml.math.irt import irt_model, ItemParams, StudentAbility
 from ml.math.multiskill_elo import multiskill_elo
 from ml.math.selector import math_selector
+from sqlalchemy import text
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -155,6 +156,64 @@ SAMPLE_QUESTIONS = [
     }
 ]
 
+async def _save_attempt_to_db(
+    user_id: str,
+    item_id: str,
+    correct: bool,
+    duration: Optional[float],
+    skills: Optional[List[str]],
+    predicted_p: float,
+    db: AsyncSession
+):
+    """Save attempt record to database"""
+    try:
+        insert_sql = text("""
+            INSERT INTO attempts (
+                user_id, item_id, correct, duration, skills, predicted_p, created_at
+            ) VALUES (
+                :user_id, :item_id, :correct, :duration, :skills, :predicted_p, NOW()
+            )
+        """)
+        
+        await db.execute(insert_sql, {
+            "user_id": user_id,
+            "item_id": item_id,
+            "correct": correct,
+            "duration": duration,
+            "skills": json.dumps(skills) if skills else None,
+            "predicted_p": predicted_p
+        })
+        
+        await db.commit()
+        logger.debug("Attempt saved to database", user_id=user_id, item_id=item_id)
+        
+    except Exception as e:
+        logger.error("Failed to save attempt to database", error=str(e))
+        await db.rollback()
+
+async def _get_recent_questions(user_id: str, db: AsyncSession, limit: int = 10) -> List[str]:
+    """Get recent questions answered by user from database"""
+    try:
+        query_sql = text("""
+            SELECT DISTINCT item_id 
+            FROM attempts 
+            WHERE user_id = :user_id 
+            ORDER BY created_at DESC 
+            LIMIT :limit
+        """)
+        
+        result = await db.execute(query_sql, {"user_id": user_id, "limit": limit})
+        rows = result.fetchall()
+        
+        recent_questions = [row.item_id for row in rows]
+        logger.debug("Retrieved recent questions", user_id=user_id, count=len(recent_questions))
+        
+        return recent_questions
+        
+    except Exception as e:
+        logger.error("Failed to get recent questions", user_id=user_id, error=str(e))
+        return []  # Return empty list on error
+
 @router.post("/next", response_model=NextQuestionResponse)
 async def get_next_question(
     request: NextQuestionRequest,
@@ -192,7 +251,7 @@ async def get_next_question(
                 irt_model.add_item(item_params)
         
         # Get recent questions from database
-        recent_questions = await self._get_recent_questions(request.user_id, db)
+        recent_questions = await _get_recent_questions(request.user_id, db)
         
         # Select next question
         selected_question = math_selector.select_next_question(
@@ -262,6 +321,15 @@ async def process_answer_event(
             student = StudentAbility(user_id=request.user_id, theta=0.0)
             irt_model.add_student(student)
         
+        # Update Elo ratings first to get expected_score
+        expected_score, actual_score = multiskill_elo.update_ratings(
+            user_id=request.user_id,
+            item_id=request.item_id,
+            correct=request.correct,
+            response_time=request.response_time,
+            skill_weights=request.skill_weights
+        )
+
         # Add response to IRT model
         irt_model.add_response(
             user_id=request.user_id,
@@ -272,7 +340,7 @@ async def process_answer_event(
         )
         
         # Save attempt to database
-        await self._save_attempt_to_db(
+        await _save_attempt_to_db(
             user_id=request.user_id,
             item_id=request.item_id,
             correct=request.correct,
@@ -280,15 +348,6 @@ async def process_answer_event(
             skills=request.skills,
             predicted_p=expected_score,
             db=db
-        )
-        
-        # Update Elo ratings
-        expected_score, actual_score = multiskill_elo.update_ratings(
-            user_id=request.user_id,
-            item_id=request.item_id,
-            correct=request.correct,
-            response_time=request.response_time,
-            skill_weights=request.skill_weights
         )
         
         # Get updated ratings
@@ -377,69 +436,6 @@ async def get_user_stats(user_id: str, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get user stats: {str(e)}"
         )
-
-    async def _save_attempt_to_db(
-        self,
-        user_id: str,
-        item_id: str,
-        correct: bool,
-        duration: Optional[float],
-        skills: Optional[List[str]],
-        predicted_p: float,
-        db: AsyncSession
-    ):
-        """Save attempt record to database"""
-        try:
-            from sqlalchemy import text
-            
-            insert_sql = text("""
-                INSERT INTO attempts (
-                    user_id, item_id, correct, duration, skills, predicted_p, created_at
-                ) VALUES (
-                    :user_id, :item_id, :correct, :duration, :skills, :predicted_p, NOW()
-                )
-            """)
-            
-            await db.execute(insert_sql, {
-                "user_id": user_id,
-                "item_id": item_id,
-                "correct": correct,
-                "duration": duration,
-                "skills": json.dumps(skills) if skills else None,
-                "predicted_p": predicted_p
-            })
-            
-            await db.commit()
-            logger.debug("Attempt saved to database", user_id=user_id, item_id=item_id)
-            
-        except Exception as e:
-            logger.error("Failed to save attempt to database", error=str(e))
-            await db.rollback()
-    
-    async def _get_recent_questions(self, user_id: str, db: AsyncSession, limit: int = 10) -> List[str]:
-        """Get recent questions answered by user from database"""
-        try:
-            from sqlalchemy import text
-            
-            query_sql = text("""
-                SELECT DISTINCT item_id 
-                FROM attempts 
-                WHERE user_id = :user_id 
-                ORDER BY created_at DESC 
-                LIMIT :limit
-            """)
-            
-            result = await db.execute(query_sql, {"user_id": user_id, "limit": limit})
-            rows = result.fetchall()
-            
-            recent_questions = [row.item_id for row in rows]
-            logger.debug("Retrieved recent questions", user_id=user_id, count=len(recent_questions))
-            
-            return recent_questions
-            
-        except Exception as e:
-            logger.error("Failed to get recent questions", user_id=user_id, error=str(e))
-            return []  # Return empty list on error
 
 @router.post("/irt/calibrate")
 async def calibrate_irt_model(

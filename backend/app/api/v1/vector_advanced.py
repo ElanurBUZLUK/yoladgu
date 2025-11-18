@@ -12,7 +12,7 @@ from app.services.embedding_service import embedding_service
 from app.db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/vector/advanced", tags=["Advanced Vector Operations"])
+router = APIRouter()
 
 
 class AdvancedIndexRequest(BaseModel):

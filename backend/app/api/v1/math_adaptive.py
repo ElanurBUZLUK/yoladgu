@@ -14,7 +14,7 @@ router = APIRouter()
 security = HTTPBearer()
 
 
-@router.post("/adaptive-question", response_model=MathQuestionResponse)
+@router.post("/question", response_model=MathQuestionResponse)
 async def get_adaptive_math_question(
     request: AdaptiveMathRequest,
     token: str = Depends(security),

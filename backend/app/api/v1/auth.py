@@ -20,10 +20,7 @@ async def login(request: LoginRequest):
     # - Generate JWT tokens
     # - Return access and refresh tokens
     
-    raise HTTPException(
-        status_code=501,
-        detail="Authentication not implemented yet"
-    )
+    raise NotImplementedError("Authentication not implemented yet")
 
 
 @router.post("/register", response_model=UserResponse)
@@ -35,10 +32,7 @@ async def register(request: RegisterRequest):
     # - Create new user in database
     # - Return user information
     
-    raise HTTPException(
-        status_code=501,
-        detail="User registration not implemented yet"
-    )
+    raise NotImplementedError("User registration not implemented yet")
 
 
 @router.post("/refresh")
@@ -49,7 +43,4 @@ async def refresh_token():
     # - Generate new access token
     # - Return new tokens
     
-    raise HTTPException(
-        status_code=501,
-        detail="Token refresh not implemented yet"
-    )
+    raise NotImplementedError("Token refresh not implemented yet")

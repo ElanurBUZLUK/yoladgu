@@ -11,7 +11,7 @@ from numpy.typing import NDArray
 from app.services.recommenders.error_aware import ErrorAwareRecommender, ErrorAwareConfig
 from app.services.vector_service import vector_service
 
-router = APIRouter(prefix="/recommendations", tags=["recommendations"])
+router = APIRouter()
 
 # Global recommender instance
 error_aware_recommender = ErrorAwareRecommender()
@@ -136,44 +136,12 @@ async def get_batch_error_aware_recommendations(
     try:
         results = []
         
+        # Use a single mock data generation for the whole batch for consistency
+        mock_data = _generate_mock_data()
+
         for req in request.requests:
-            # Generate recommendations for each student
-            mock_data = _generate_mock_data()
-            
-            recommender = ErrorAwareRecommender()
-            recommendations = await recommender.recommend_error_aware(
-                attempts=mock_data["attempts"],
-                items_errors=mock_data["items_errors"],
-                student_ids=mock_data["student_ids"],
-                student_vectors=mock_data["student_vectors"],
-                target_student_id=req.student_id,
-                alpha=req.alpha,
-                k=req.k
-            )
-            
-            scores = _calculate_recommendation_scores(
-                recommendations, 
-                mock_data["items_errors"], 
-                mock_data["vocab"]
-            )
-            
-            stats = recommender.get_stats()
-            
-            results.append(RecommendationResponse(
-                student_id=req.student_id,
-                recommendations=recommendations,
-                scores=scores,
-                metadata={
-                    "total_questions": len(mock_data["items_errors"]),
-                    "vocab_size": len(mock_data["vocab"]),
-                    "total_students": len(mock_data["student_ids"])
-                },
-                performance={
-                    "response_time_ms": stats.get("avg_response_time_ms", 0.0),
-                    "hnsw_usage": stats.get("hnsw_usage", 0),
-                    "exact_fallback": stats.get("exact_fallback", 0)
-                }
-            ))
+            response = await get_error_aware_recommendations(req)
+            results.append(response)
         
         # Calculate summary statistics
         total_recommendations = sum(len(r.recommendations) for r in results)

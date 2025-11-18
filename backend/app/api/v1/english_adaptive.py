@@ -13,7 +13,7 @@ router = APIRouter()
 security = HTTPBearer()
 
 
-@router.post("/adaptive-question", response_model=EnglishQuestionResponse)
+@router.post("/question", response_model=EnglishQuestionResponse)
 async def get_adaptive_english_question(
     request: AdaptiveEnglishRequest,
     token: str = Depends(security),

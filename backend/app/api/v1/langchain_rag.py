@@ -13,7 +13,7 @@ from app.db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-router = APIRouter(prefix="/langchain", tags=["LangChain RAG Operations"])
+router = APIRouter()
 
 
 class VectorStoreRequest(BaseModel):

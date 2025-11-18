@@ -11,7 +11,7 @@ from app.services.vector_service import vector_service
 from app.models.vector_item import VectorItem
 from app.models.mmr_search_request import MMRSearchRequest
 
-router = APIRouter(prefix="/vector", tags=["vector"])
+router = APIRouter()
 
 
 @router.get("/health")

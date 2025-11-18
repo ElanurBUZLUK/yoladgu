@@ -37,10 +37,7 @@ async def get_system_metrics(
     # - Apply tenant filtering if specified
     # - Return formatted metrics
     
-    raise HTTPException(
-        status_code=501,
-        detail="Metrics collection not implemented yet"
-    )
+    raise NotImplementedError("Metrics collection not implemented yet")
 
 
 @router.get("/decisions/{request_id}", response_model=DecisionResponse)
@@ -63,10 +60,7 @@ async def get_decision_audit(
     # - Include all relevant context
     # - Return audit trail
     
-    raise HTTPException(
-        status_code=501,
-        detail="Decision audit not implemented yet"
-    )
+    raise NotImplementedError("Decision audit not implemented yet")
 
 
 @router.get("/health/detailed")
@@ -80,10 +74,7 @@ async def get_detailed_health(token: str = Depends(security)):
     # - Check search engine status
     # - Return component-wise health
     
-    raise HTTPException(
-        status_code=501,
-        detail="Detailed health check not implemented yet"
-    )
+    raise NotImplementedError("Detailed health check not implemented yet")
 
 
 @router.get("/users")
@@ -100,10 +91,7 @@ async def list_users(
     # - Implement pagination
     # - Return user list with metadata
     
-    raise HTTPException(
-        status_code=501,
-        detail="User listing not implemented yet"
-    )
+    raise NotImplementedError("User listing not implemented yet")
 
 
 @router.get("/questions/quality")
@@ -120,10 +108,7 @@ async def get_question_quality_metrics(
     # - Grammar validation rates (English)
     # - Return quality dashboard data
     
-    raise HTTPException(
-        status_code=501,
-        detail="Question quality metrics not implemented yet"
-    )
+    raise NotImplementedError("Question quality metrics not implemented yet")
 
 
 @router.get("/bandit/performance")
@@ -140,10 +125,7 @@ async def get_bandit_performance(
     # - Compare policy performance
     # - Return bandit analytics
     
-    raise HTTPException(
-        status_code=501,
-        detail="Bandit performance analysis not implemented yet"
-    )
+    raise NotImplementedError("Bandit performance analysis not implemented yet")
 
 
 @router.post("/cache/invalidate")
@@ -159,10 +141,7 @@ async def invalidate_cache(
     # - Apply pattern matching if provided
     # - Return invalidation results
     
-    raise HTTPException(
-        status_code=501,
-        detail="Cache invalidation not implemented yet"
-    )
+    raise NotImplementedError("Cache invalidation not implemented yet")
 
 
 @router.post("/models/reload")
@@ -179,7 +158,4 @@ async def reload_models(
     # - Perform health checks
     # - Return reload status
     
-    raise HTTPException(
-        status_code=501,
-        detail="Model reloading not implemented yet"
-    )
+    raise NotImplementedError("Model reloading not implemented yet")
