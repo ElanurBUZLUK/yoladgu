@@ -20,6 +20,7 @@ from app.db.repositories.user import UserRepository
 from app.db.repositories.item import EnglishItemRepository
 from app.db.repositories.attempt import AttemptRepository
 from app.core.config import settings
+from app.db.base import get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -146,15 +147,19 @@ class RecommendationPipeline:
     ) -> Dict[str, Any]:
         """Get comprehensive user context for recommendations."""
         try:
-            # Get user profile
+            # Get user profile (session'i kendi içinde açıyor)
             profile = await profile_service.get_profile(user_id)
-            
-            # Get recent attempts for context
-            recent_attempts = await self.attempt_repo.get_recent_attempts(
-                user_id=user_id,
-                limit=20
-            )
-            
+
+            # Get recent attempts for context (burada session açıyoruz)
+            recent_attempts = []
+            async for session in get_async_session():
+                recent_attempts = await self.attempt_repo.get_recent_attempts(
+                    session=session,
+                    user_id=user_id,
+                    hours=24,
+                )
+                break
+
             # Calculate skill gaps and preferences
             skill_analysis = self._analyze_skill_gaps(profile, recent_attempts)
             

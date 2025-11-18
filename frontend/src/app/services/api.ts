@@ -2,6 +2,8 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 
+import { AuthService } from './auth.service';
+
 export interface Question {
   id?: number;
   question: string;
@@ -44,13 +46,44 @@ export interface AIRecommendation {
   targetScore: number;
 }
 
+export interface MathQuestionResponse {
+  item_id: string;
+  question_text: string;
+  choices?: string[];
+  correct_answer?: string;
+  solution_steps?: string;
+  skills: string[];
+  source_context?: string;
+}
+
+export interface AttemptRequest {
+  user_id: string;
+  item_id: string;
+  answer: string;
+  correct: boolean;
+  time_ms?: number;
+  hints_used?: number;
+  context?: Record<string, any>;
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class ApiService {
   private baseUrl = 'http://localhost:8000/api/v1'; // Test Backend API URL
 
-  constructor(private http: HttpClient) { }
+  constructor(private http: HttpClient, private authService: AuthService) { }
+
+  private getAuthHeaders(): HttpHeaders {
+    let headers = new HttpHeaders();
+    const token = this.authService.getAccessToken();
+
+    if (token) {
+      headers = headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    return headers;
+  }
 
   // Auth endpoints
   login(email: string, password: string): Observable<any> {
@@ -121,6 +154,21 @@ export class ApiService {
       subject,
       topic,
       count
+    });
+  }
+
+  getNextMathQuestion(userId: string): Observable<MathQuestionResponse> {
+    const params = new HttpParams().set('user_id', userId);
+
+    return this.http.get<MathQuestionResponse>(`${this.baseUrl}/math/next-question`, {
+      headers: this.getAuthHeaders(),
+      params
+    });
+  }
+
+  recordAttempt(payload: AttemptRequest): Observable<any> {
+    return this.http.post(`${this.baseUrl}/profile/attempt`, payload, {
+      headers: this.getAuthHeaders()
     });
   }
 

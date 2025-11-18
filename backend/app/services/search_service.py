@@ -52,7 +52,10 @@ class SearchService:
                         },
                         "passage": {
                             "type": "text",
-                            "analyzer": "standard"
+                            "analyzer": "standard",
+                            "fields": {
+                                "keyword": {"type": "keyword"}
+                            }
                         },
                         "solution": {
                             "type": "text",
@@ -412,6 +415,50 @@ class SearchService:
         except Exception as e:
             print(f"Error updating item {item_id}: {e}")
             return False
+
+    async def index_math_item(self, item) -> bool:
+        """
+        Helper to index MathItem ORM objects via index_item().
+        """
+        item_data = {
+            "id": str(getattr(item, "id", None)),
+            "type": "math",
+            "lang": getattr(item, "lang", "tr"),
+            "status": getattr(item, "status", "active"),
+            "stem": getattr(item, "stem", "") or "",
+            "solution": getattr(item, "solution", "") or "",
+            "skills": getattr(item, "skills", []) or [],
+            "difficulty_a": getattr(item, "difficulty_a", 1.0),
+            "difficulty_b": getattr(item, "difficulty_b", 0.0),
+            "bloom_level": getattr(item, "bloom_level", None),
+            "topic": getattr(item, "topic", None),
+            "created_at": getattr(item, "created_at", None),
+            "updated_at": getattr(item, "updated_at", None),
+        }
+        return await self.index_item(item_data)
+
+    async def index_english_item(self, item) -> bool:
+        """
+        Helper to index EnglishItem ORM objects via index_item().
+        """
+        passage = (
+            getattr(item, "passage", None)
+            or getattr(item, "text", None)
+            or ""
+        )
+        item_data = {
+            "id": str(getattr(item, "id", None)),
+            "type": "english",
+            "lang": getattr(item, "lang", "en"),
+            "status": getattr(item, "status", "active"),
+            "passage": passage,
+            "error_tags": getattr(item, "error_tags", []) or [],
+            "level_cefr": getattr(item, "level_cefr", None),
+            "topic": getattr(item, "topic", None),
+            "created_at": getattr(item, "created_at", None),
+            "updated_at": getattr(item, "updated_at", None),
+        }
+        return await self.index_item(item_data)
     
     async def get_index_stats(self) -> Dict[str, Any]:
         """Get search index statistics."""

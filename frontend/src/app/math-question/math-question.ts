@@ -1,206 +1,185 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterModule, Router } from '@angular/router';
-import { ApiService, Question, QuizResult } from '../services/api';
-import mathQuestions from '../../assets/math-questions.json';
+import { FormsModule } from '@angular/forms';
+import { Router, RouterModule } from '@angular/router';
+
+import { ApiService, MathQuestionResponse, AttemptRequest } from '../services/api';
+import { AuthService } from '../services/auth.service';
 
 @Component({
   selector: 'app-math-question',
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, FormsModule, RouterModule],
   templateUrl: './math-question.html',
   styleUrl: './math-question.scss'
 })
 export class MathQuestionComponent implements OnInit, OnDestroy {
-  questions: Question[] = [];
-  currentQuestionIndex = 0;
-  currentQuestion: Question | null = null;
-  selectedAnswer: number | null = null;
-  showResult = false;
-  isCorrect = false;
-  score = 0;
-  timeLeft = 135; // 2:15 in seconds
-  timerInterval: any;
-  startTime: number = 0;
-  loading = true;
+  currentQuestion: MathQuestionResponse | null = null;
+  loadingQuestion = false;
+  submittingAnswer = false;
   error = '';
+  feedback = '';
+  selectedChoiceIndex: number | null = null;
+  freeFormAnswer = '';
+  questionStartTime = 0;
+  private nextQuestionTimer: ReturnType<typeof setTimeout> | null = null;
+  userId: string | null = null;
 
-  constructor(private apiService: ApiService, private router: Router) {}
+  constructor(
+    private apiService: ApiService,
+    private authService: AuthService,
+    private router: Router
+  ) {}
 
-  ngOnInit() {
-    this.loadQuestions();
+  ngOnInit(): void {
+    if (!this.authService.isAuthenticated()) {
+      this.router.navigate(['/login']);
+      return;
+    }
+
+    this.userId = this.authService.getUserId();
+    this.loadNextQuestion();
   }
 
-  ngOnDestroy() {
-    if (this.timerInterval) {
-      clearInterval(this.timerInterval);
+  ngOnDestroy(): void {
+    if (this.nextQuestionTimer) {
+      clearTimeout(this.nextQuestionTimer);
     }
   }
 
-  loadQuestions() {
-    this.loading = true;
-    
-    // For now, try API first but fallback to static questions immediately if it fails
-    this.apiService.getMathQuestions(1, 5).subscribe({
-      next: (response) => {
-        console.log('API Response:', response);
-        // Try to parse backend response format
-        if (response && (response as any).question) {
-          // Single question from backend
-          const backendQuestion = (response as any).question;
-          this.questions = [{
-            question: backendQuestion.content || backendQuestion.question,
-            options: backendQuestion.options,
-            correctAnswer: parseInt(backendQuestion.correct_answer) || backendQuestion.correctAnswer,
-            explanation: `Difficulty: ${backendQuestion.difficulty_level}`,
-            subject: "math",
-            difficulty: "medium"
-          }];
-        } else if (Array.isArray(response)) {
-          // Multiple questions
-          this.questions = response.map((q: any) => ({
-            question: q.content || q.question,
-            options: q.options,
-            correctAnswer: q.correct_answer || q.correctAnswer,
-            explanation: q.explanation,
-            subject: "math",
-            difficulty: "medium"
-          }));
-        } else {
-          throw new Error('Invalid response format');
-        }
-        
-        this.loadQuestion();
-        this.startTime = Date.now();
-        this.loading = false;
+  loadNextQuestion(): void {
+    if (this.nextQuestionTimer) {
+      clearTimeout(this.nextQuestionTimer);
+      this.nextQuestionTimer = null;
+    }
+
+    if (!this.userId) {
+      this.userId = this.authService.getUserId();
+    }
+
+    if (!this.userId) {
+      this.router.navigate(['/login']);
+      return;
+    }
+
+    this.loadingQuestion = true;
+    this.error = '';
+    this.feedback = '';
+    this.selectedChoiceIndex = null;
+    this.freeFormAnswer = '';
+
+    this.apiService.getNextMathQuestion(this.userId).subscribe({
+      next: (question) => {
+        this.currentQuestion = question;
+        this.questionStartTime = Date.now();
+        this.loadingQuestion = false;
       },
-      error: (error) => {
-        console.error('Error loading questions:', error);
-        console.log('Falling back to static questions...');
-        this.loadStaticQuestions();
-        this.loading = false;
+      error: (err) => {
+        this.error = this.extractError(err, 'Bir sonraki soru alınamadı.');
+        this.loadingQuestion = false;
       }
     });
   }
 
-  loadStaticQuestions() {
-    // Load questions from the JSON file
-    const allQuestions = mathQuestions as any[];
-    
-    // Convert format and take first 5 questions
-    this.questions = allQuestions
-      .slice(0, 5)
-      .map(q => ({
-        question: q.stem,
-        options: Object.values(q.options) as string[],
-        correctAnswer: this.getCorrectAnswerIndex(q.correct_answer, q.options),
-        formula: q.stem, // Use stem as formula for now
-        explanation: `Topic: ${q.topic} - ${q.subtopic}. CEFR Level: ${q.metadata?.cefr_level || 'Unknown'}. Difficulty: ${q.difficulty}`,
-        subject: "math",
-        difficulty: q.metadata?.cefr_level || "medium"
-      }));
-    
-    this.loadQuestion();
-    this.startTime = Date.now();
-  }
-
-  private getCorrectAnswerIndex(correctAnswer: string, options: any): number {
-    const optionKeys = Object.keys(options);
-    return optionKeys.indexOf(correctAnswer);
-  }
-
-  loadQuestion() {
-    if (this.questions.length > 0) {
-      this.currentQuestion = this.questions[this.currentQuestionIndex];
-      this.selectedAnswer = null;
-      this.showResult = false;
-      this.timeLeft = 135; // Reset timer for each question
-      this.startTimer();
+  selectChoice(index: number): void {
+    if (this.submittingAnswer) {
+      return;
     }
+    this.selectedChoiceIndex = index;
   }
 
-  startTimer() {
-    this.timerInterval = setInterval(() => {
-      this.timeLeft--;
-      if (this.timeLeft <= 0) {
-        clearInterval(this.timerInterval);
-        this.autoSubmit();
-      }
-    }, 1000);
-  }
-
-  formatTime(seconds: number): string {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-  }
-
-  selectAnswer(index: number) {
-    if (!this.showResult) {
-      this.selectedAnswer = index;
+  submitAnswer(): void {
+    if (!this.currentQuestion || !this.userId || this.submittingAnswer || !this.canSubmit()) {
+      return;
     }
-  }
 
-  submitAnswer() {
-    if (this.selectedAnswer === null || this.showResult) return;
-
-    clearInterval(this.timerInterval);
-    this.showResult = true;
-    this.isCorrect = this.selectedAnswer === this.currentQuestion!.correctAnswer;
-    
-    if (this.isCorrect) {
-      this.score++;
+    const answerValue = this.resolveAnswer();
+    if (!answerValue) {
+      this.feedback = 'Lütfen bir cevap gir.';
+      return;
     }
-  }
 
-  autoSubmit() {
-    if (!this.showResult) {
-      this.submitAnswer();
-    }
-  }
+    const correctAnswer = this.currentQuestion.correct_answer;
+    const normalizedAnswer = this.normalizeAnswer(answerValue);
+    const isCorrect = correctAnswer
+      ? normalizedAnswer === this.normalizeAnswer(correctAnswer)
+      : false;
 
-  nextQuestion() {
-    if (this.currentQuestionIndex < this.questions.length - 1) {
-      this.currentQuestionIndex++;
-      this.loadQuestion();
-    }
-  }
+    const timeSpent = Math.max(Date.now() - this.questionStartTime, 0);
 
-  finishQuiz() {
-    const timeSpent = Math.floor((Date.now() - this.startTime) / 1000);
-    const percentage = (this.score / this.questions.length) * 100;
-    
-    // Save progress to backend
-    const quizResult: QuizResult = {
-      userId: 1, // TODO: Get from auth service
-      subject: 'math',
-      score: percentage,
-      totalQuestions: this.questions.length,
-      correctAnswers: this.score,
-      timeSpent: timeSpent,
-      difficulty: 'medium',
-      timestamp: new Date().toISOString()
+    const payload: AttemptRequest = {
+      user_id: this.userId,
+      item_id: this.currentQuestion.item_id,
+      answer: answerValue,
+      correct: isCorrect,
+      time_ms: timeSpent,
+      hints_used: 0,
+      context: {}
     };
 
-    this.apiService.saveProgress(quizResult).subscribe({
-      next: (response) => {
-        console.log('Progress saved:', response);
-        alert(`Test tamamlandı!\nDoğru: ${this.score}/${this.questions.length}\nBaşarı oranı: %${percentage.toFixed(0)}\nSüre: ${Math.floor(timeSpent / 60)}:${(timeSpent % 60).toString().padStart(2, '0')}`);
-        this.goHome();
+    this.submittingAnswer = true;
+    this.apiService.recordAttempt(payload).subscribe({
+      next: () => {
+        this.feedback = isCorrect
+          ? 'Doğru cevap! Yeni soru hazırlanıyor...'
+          : correctAnswer
+            ? `Yanlış cevap. Doğru: ${correctAnswer}`
+            : 'Cevabın kaydedildi.';
+
+        this.submittingAnswer = false;
+        this.queueNextQuestion();
       },
-      error: (error) => {
-        console.error('Error saving progress:', error);
-        alert(`Test tamamlandı!\nDoğru: ${this.score}/${this.questions.length}\nBaşarı oranı: %${percentage.toFixed(0)}`);
-        this.goHome();
+      error: (err) => {
+        this.error = this.extractError(err, 'Cevap gönderilirken hata oluştu.');
+        this.submittingAnswer = false;
       }
     });
   }
 
-  goHome() {
-    // Navigate to dashboard after quiz completion
-    this.router.navigate(['/']);
+  hasChoices(): boolean {
+    return !!this.currentQuestion?.choices && this.currentQuestion.choices.length > 0;
   }
 
-  getOptionLetter(index: number): string {
-    return String.fromCharCode(65 + index); // A, B, C, D...
+  canSubmit(): boolean {
+    if (!this.currentQuestion) {
+      return false;
+    }
+    if (this.hasChoices()) {
+      return this.selectedChoiceIndex !== null;
+    }
+
+    return this.freeFormAnswer.trim().length > 0;
+  }
+
+  getChoiceLetter(index: number): string {
+    return String.fromCharCode(65 + index);
+  }
+
+  logout(): void {
+    this.authService.clearSession();
+    this.router.navigate(['/login']);
+  }
+
+  private resolveAnswer(): string {
+    if (this.hasChoices() && this.selectedChoiceIndex !== null && this.currentQuestion?.choices) {
+      return this.currentQuestion.choices[this.selectedChoiceIndex];
+    }
+
+    return this.freeFormAnswer.trim();
+  }
+
+  private queueNextQuestion(): void {
+    if (this.nextQuestionTimer) {
+      clearTimeout(this.nextQuestionTimer);
+    }
+
+    this.nextQuestionTimer = setTimeout(() => this.loadNextQuestion(), 1500);
+  }
+
+  private normalizeAnswer(value: string): string {
+    return value.trim().toLowerCase();
+  }
+
+  private extractError(error: any, fallback: string): string {
+    return error?.error?.detail || error?.message || fallback;
   }
 }

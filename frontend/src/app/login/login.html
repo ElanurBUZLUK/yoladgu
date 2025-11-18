@@ -1,0 +1,55 @@
+<div class="login-container">
+  <div class="login-card">
+    <div class="login-header">
+      <p class="eyebrow">Adaptive Question System</p>
+      <h1>Giriş yap</h1>
+      <p class="subtitle">Önce token alıyoruz, sonra math akışını başlatıyoruz.</p>
+    </div>
+
+    <form (ngSubmit)="submit()">
+      <label>
+        Email
+        <input
+          type="email"
+          [(ngModel)]="email"
+          name="email"
+          placeholder="student@example.com"
+          required
+        />
+      </label>
+
+      <label>
+        Şifre
+        <input
+          type="password"
+          [(ngModel)]="password"
+          name="password"
+          placeholder="••••••••"
+          required
+        />
+      </label>
+
+      <label>
+        Kullanıcı ID
+        <input
+          type="text"
+          [(ngModel)]="userId"
+          name="userId"
+          placeholder="student_1"
+          required
+        />
+        <small class="hint">GET /v1/math/next-question?user_id=... içinde kullanılacak değer.</small>
+      </label>
+
+      <div class="error" *ngIf="error">{{ error }}</div>
+
+      <button type="submit" [disabled]="loading">
+        {{ loading ? 'Giriş yapılıyor...' : 'Giriş yap ve testi başlat' }}
+      </button>
+    </form>
+
+    <div class="helper-text">
+      Backend hazır değilse bile bu adımla UI akışını test edebiliyoruz.
+    </div>
+  </div>
+</div>

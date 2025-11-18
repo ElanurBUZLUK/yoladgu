@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
 from app.core.config import settings
+from app.db.base import get_async_session
 from app.db.repositories.user import user_repository
 from app.db.repositories.attempt import attempt_repository
 from app.services.irt_service import irt_service, error_profile_service
@@ -63,6 +64,22 @@ class ProfileService:
         except Exception as e:
             print(f"Cache invalidation error: {e}")
     
+    async def get_profile(
+        self,
+        user_id: str,
+        use_cache: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Convenience wrapper: DB session yönetmeden profil almak için.
+        RecommendationPipeline gibi servisler bu fonksiyonu kullanabilir.
+        """
+        async for session in get_async_session():
+            return await self.get_user_profile(
+                session=session,
+                user_id=user_id,
+                use_cache=use_cache,
+            )
+
     async def get_user_profile(
         self,
         session: AsyncSession,

@@ -1518,3 +1518,116 @@ def get_available_cefr_levels():
 # Attach methods to the generator instance
 english_cloze_generator.get_available_error_patterns = get_available_error_patterns
 english_cloze_generator.get_available_cefr_levels = get_available_cefr_levels
+
+
+# ------------------------------------------------------------
+# High-level service wrapper used by API (english_generation_service)
+# ------------------------------------------------------------
+class EnglishGenerationService:
+    """
+    Convenience wrapper used by API endpoints for cloze generation.
+    Provides simple template metadata and item generation helpers.
+    """
+
+    def __init__(self, generator: EnglishClozeGenerator):
+        self._generator = generator
+
+    def _map_difficulty_to_cefr(self, difficulty_hint: Optional[float]) -> CEFRLevel:
+        """Map numeric difficulty hints to coarse CEFR levels."""
+        if difficulty_hint is None:
+            return CEFRLevel.B1
+
+        try:
+            difficulty_value = float(difficulty_hint)
+        except (TypeError, ValueError):
+            return CEFRLevel.B1
+
+        if difficulty_value <= -0.5:
+            return CEFRLevel.A2
+        if difficulty_value <= 0.0:
+            return CEFRLevel.B1
+        if difficulty_value <= 0.5:
+            return CEFRLevel.B2
+        return CEFRLevel.C1
+
+    def get_available_templates(self) -> List[Dict[str, Any]]:
+        """
+        Return synthetic template metadata combining CEFR levels and error tags.
+        Enables adaptive endpoint filtering even though templates are generated dynamically.
+        """
+        templates: List[Dict[str, Any]] = []
+
+        for level, passages in self._generator.passage_templates.items():
+            _ = passages  # silence unused variable warning
+            for error_type in ErrorType:
+                templates.append(
+                    {
+                        "template_id": f"{level.value}_{error_type.value}",
+                        "level_cefr": level.value,
+                        "error_tags": [error_type.value],
+                        "skills": [error_type.value],
+                    }
+                )
+
+        return templates
+
+    def generate_cloze_item(
+        self,
+        template_id: Optional[str] = None,
+        difficulty_hint: Optional[float] = None,
+        language: str = "en",
+        tags: Optional[List[str]] = None,
+        target_error_tags: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generate a cloze question dict + validation payload for API responses.
+        """
+        _ = language  # Reserved for future multilingual support
+
+        if target_error_tags:
+            error_tags = target_error_tags
+        elif tags:
+            error_tags = tags
+        else:
+            error_tags = [ErrorType.ARTICLES.value, ErrorType.PREPOSITIONS.value]
+
+        level_cefr = self._map_difficulty_to_cefr(difficulty_hint)
+
+        question, validation = self._generator.generate_validated_cloze_question(
+            level_cefr=level_cefr,
+            target_error_tags=error_tags,
+            topic=None,
+            personalization=None,
+            passage_text=None,
+            max_attempts=3,
+        )
+
+        item_dict: Dict[str, Any] = {
+            "passage": question.passage,
+            "blanks": [
+                {
+                    "span": blank.span,
+                    "answer": blank.answer,
+                    "distractors": blank.distractors,
+                    "skill_tag": blank.skill_tag,
+                    "position": blank.position,
+                    "rationale": blank.rationale,
+                }
+                for blank in question.blanks
+            ],
+            "error_tags": question.error_tags,
+            "level_cefr": question.level_cefr.value,
+            "topic": question.topic,
+        }
+
+        return {
+            "item": item_dict,
+            "raw_model_output": {
+                "validation": validation,
+                "template_id_used": template_id,
+            },
+        }
+
+
+# API-facing service instance
+english_generation_service = EnglishGenerationService(english_cloze_generator)

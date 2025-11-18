@@ -131,9 +131,10 @@ class AttemptRepository(BaseRepository[Attempt]):
         session: AsyncSession,
         user_id: str,
         hours: int = 24,
+        limit: int = 50,
         item_type: Optional[str] = None
     ) -> List[Attempt]:
-        """Get user's recent attempts."""
+        """Get user's recent attempts limited to the most recent entries."""
         since_time = datetime.utcnow() - timedelta(hours=hours)
         
         conditions = [
@@ -144,9 +145,12 @@ class AttemptRepository(BaseRepository[Attempt]):
         if item_type:
             conditions.append(Attempt.item_type == item_type)
         
-        statement = select(Attempt).where(
-            and_(*conditions)
-        ).order_by(desc(Attempt.created_at))
+        statement = (
+            select(Attempt)
+            .where(and_(*conditions))
+            .order_by(desc(Attempt.created_at))
+            .limit(limit)
+        )
         
         result = await session.exec(statement)
         return result.all()
